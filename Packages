@@ -1,1 +1,33 @@
+Package: com.aosaid.appdatamgr
+Name: AppData Manager
+Description: Professional iOS App Data Manager - Wipe, Backup & Restore
+Maintainer: ZAIN <@Zainqkvd>
+Author: ZAIN <@Zainqkvd>
+Section: Utilities
+Depends: firmware (>= 15.0)
+Architecture: iphoneos-arm64
+Version: 1.4.0-1+debug
+Installed-Size: 1076
+Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.4.0-1+debug_iphoneos-arm64.deb
+Size: 316368
+MD5sum: ba345c2dc5f675b5c68f93797dd6a014
+SHA1: 9904a61a77004a30190892b062067422171753eb
+SHA256: f7d3733ae407253c4929ca2955b5fc3aa18b78cf816554b7c83f955b7e2f9143
+
+Package: com.aosaid.ipainstallerpro
+Name: IPA Installer Pro
+Description: Professional IPA Installer for iOS Jailbreak — Self-Contained Installation Stack
+Maintainer: ZAIN <@Zainqkvd>
+Author: ZAIN <@Zainqkvd>
+Section: Utilities
+Depends: firmware (>= 15.0), ai.akemi.appsyncunified, unzip
+Pre-Depends: dpkg (>= 1.14.25)
+Architecture: iphoneos-arm64
+Version: 1.0.0-1+debug
+Installed-Size: 756
+Filename: pool/main/iphoneos-arm64/com.aosaid.ipainstallerpro_1.0.0-1+debug_iphoneos-arm64.deb
+Size: 114438
+MD5sum: 805b7a9526ec7056caabdb665530532d
+SHA1: 1b40a04caf04e3097f802f8198644eac8847193a
+SHA256: 60250e8706821b57c8819c1671d0f62fa73a83dbed912053ac552879fa4e8fb7
 
