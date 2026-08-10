@@ -1,0 +1,59 @@
+/* AppData Manager - Arabic (forced for all languages) */
+
+/* Navigation titles */
+"AppData Manager" = "مدير بيانات التطبيقات";
+"Backup Manager" = "مدير النسخ الاحتياطي";
+"All Backups" = "كل النسخ الاحتياطية";
+
+/* Actions */
+"Wipe Data" = "مسح البيانات";
+"Backup" = "نسخ احتياطي";
+"Restore" = "استعادة";
+"Delete" = "حذف";
+"Cancel" = "إلغاء";
+"OK" = "موافق";
+
+/* Alerts */
+"About" = "حول";
+"Warning" = "تحذير";
+"Error" = "خطأ";
+"Success" = "نجاح";
+"Confirm Wipe" = "تأكيد المسح";
+"Confirm Backup" = "تأكيد النسخ الاحتياطي";
+"Confirm Restore" = "تأكيد الاستعادة";
+"Confirm Delete" = "تأكيد الحذف";
+
+/* Messages */
+"This will permanently delete all data for %@. This action cannot be undone." = "سيتم حذف جميع بيانات %@ بشكل دائم. لا يمكن التراجع عن هذا الإجراء.";
+"This will create a backup of all data for %@." = "سيتم إنشاء نسخة احتياطية لجميع بيانات %@.";
+"This will replace current data with this backup for %@. Continue?" = "سيؤدي ذلك إلى استبدال البيانات الحالية بهذه النسخة الاحتياطية لـ %@. هل تريد المتابعة؟";
+"This backup will be permanently deleted." = "سيتم حذف هذه النسخة الاحتياطية بشكل دائم.";
+"No backups found" = "لم يتم العثور على نسخ احتياطية";
+
+/* Results */
+"✅ Data wiped successfully!" = "✅ تم مسح البيانات بنجاح!";
+"✅ Backup created successfully!" = "✅ تم إنشاء النسخة الاحتياطية بنجاح!";
+"✅ Restore completed!" = "✅ تمت الاستعادة بنجاح!";
+"✅ Backup deleted!" = "✅ تم حذف النسخة الاحتياطية!";
+"❌ Failed to wipe data!" = "❌ فشل مسح البيانات!";
+"❌ Failed to create backup!" = "❌ فشل إنشاء النسخة الاحتياطية!";
+"❌ Restore failed!" = "❌ فشلت الاستعادة!";
+"❌ Failed to delete!" = "❌ فشل الحذف!";
+
+/* Backup options */
+"Backup Options" = "خيارات النسخ الاحتياطي";
+"🔄 Restore Backup" = "🔄 استعادة النسخة الاحتياطية";
+"🗑 Delete Backup" = "🗑 حذف النسخة الاحتياطية";
+"🔄 Restore" = "🔄 استعادة";
+"🗑 Delete" = "🗑 حذف";
+
+/* Search */
+"Search apps..." = "البحث في التطبيقات...";
+
+/* App types */
+"System" = "نظام";
+"User" = "مستخدم";
+
+/* Cell identifiers */
+"AppCell" = "AppCell";
+"BackupCell" = "BackupCell";
