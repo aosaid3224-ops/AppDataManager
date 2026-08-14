@@ -1,16 +1,16 @@
 Package: com.aosaid.appdatamgr
 Name: AppData Manager
-Description: Professional iOS Jailbreak App - Wipe & Backup App Data (Rootless/Dopamine Compatible)
+Description: Professional iOS Jailbreak App - Wipe & Backup App Data (Rootless/Dopamine Compatible) [Crash-Resilient Build]
 Maintainer: ZAIN <@Zainqkvd>
 Author: ZAIN <@Zainqkvd>
 Section: Utilities
 Depends: firmware (>= 15.0)
 Architecture: iphoneos-arm64
-Version: 1.4.1
-Installed-Size: 824
-Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.4.1_iphoneos-arm64.deb
-Size: 283644
-MD5sum: 4d4931d418d18b415829bbff4f338fc0
-SHA1: 59777627adf375358c37e281581a54391063efe7
-SHA256: a81e222130fd96ccd90abcfd460708c1b10f971286a193c23c1d4e74393c7d31
+Version: 1.6.0
+Installed-Size: 792
+Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.6.0_iphoneos-arm64.deb
+Size: 278582
+MD5sum: 740e402afac9edc5b06bde97c4911d81
+SHA1: c5fec9b1b4314a4a569d066a8838bb3990710a42
+SHA256: 26a7b78ba4d2cd685bbeaa2bc8f0e1b70fe21bd420493b380f7c2a725d4a4f7e
 
