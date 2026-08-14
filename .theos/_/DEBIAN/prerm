@@ -1,9 +1,0 @@
-#!/bin/bash
-set -e
-
-echo "🗑 Removing AppData Manager..."
-
-# تنظيف (اختياري - يمكن إبقاء النسخ الاحتياطية)
-# rm -rf /var/mobile/Documents/AppDataBackups
-
-exit 0
