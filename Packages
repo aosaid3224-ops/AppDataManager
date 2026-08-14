@@ -9,8 +9,8 @@ Architecture: iphoneos-arm64
 Version: 1.4.1
 Installed-Size: 808
 Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamanager_1.4.1_iphoneos-arm64.deb
-Size: 281662
-MD5sum: dd9c6672e87e85f8290ba5a7a347f6e3
-SHA1: 07eb0409a5fe76e73783fab4ab3e4003901c76ce
-SHA256: 49317239ca5b4188b5bd9975743c02bf656e5fc19b98d37301cea4c99d1d2bbb
+Size: 281506
+MD5sum: 8ad92d2657206657820d6cb4f7211dd3
+SHA1: b1744a26da84bf1c52cc043366a73e0a7f24fe84
+SHA256: f9f2e00f8a2d4321c4727fecc88892941f23ea96c97c2204456952b7968cebc5
 
