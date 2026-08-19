@@ -6,11 +6,11 @@ Author: ZAIN <@Zainqkvd>
 Section: Utilities
 Depends: firmware (>= 15.0)
 Architecture: iphoneos-arm64
-Version: 1.4.4
+Version: 1.4.5
 Installed-Size: 872
-Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.4.4_iphoneos-arm64.deb
-Size: 291634
-MD5sum: 82623e0c920bf3eab2e0a1699bc36958
-SHA1: 4c8000511864c7eb914c786f92102865d9637d82
-SHA256: 29e1b61918758f6235839c70b655cae9e2647f9716ba4f44031cab11797691c7
+Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.4.5_iphoneos-arm64.deb
+Size: 291124
+MD5sum: 502a7f0b0af03ae457a99234b72eca6c
+SHA1: 40d943e48305f303ab3abfee44080a4eb8e7e7f7
+SHA256: 2c7a8e504051d919cdac51d6a0d9e630bfa635433166a14a8e064a6a633421ff
 
