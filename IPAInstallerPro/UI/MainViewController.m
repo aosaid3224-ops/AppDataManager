@@ -197,7 +197,7 @@
 
                 NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
                 NSString *cacheKey = [self ipaCacheKeyForPath:path attributes:attrs];
-                NSDictionary *cachedRecord = nil;
+                __block NSDictionary *cachedRecord = nil;
                 dispatch_sync(self.ipaCacheQueue, ^{
                     cachedRecord = self.ipaMetadataCache[path];
                 });
