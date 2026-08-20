@@ -10,6 +10,8 @@
 #import "JailbreakEnvironment.h"
 #import "RootlessManager.h"
 #import "Logger.h"
+#import "IPAStructuralAnalyzer.h"
+#import "IPAStructuralResult.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
@@ -81,10 +83,31 @@
     self.capLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.scrollView addSubview:self.capLabel];
 
+    // ===== 🔍 زر اختبار Analyzer (مؤقت) =====
+    UILabel *testHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 620, w - 32, 30)];
+    testHeader.text = @"🧪 اختبار Analyzer";
+    testHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    testHeader.textColor = [UIColor whiteColor];
+    testHeader.textAlignment = NSTextAlignmentRight;
+    testHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.scrollView addSubview:testHeader];
+
+    UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    testButton.frame = CGRectMake(16, top + 660, w - 32, 50);
+    testButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    [testButton setTitle:@"🔍 تحليل IPA في Documents" forState:UIControlStateNormal];
+    [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    testButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    testButton.layer.cornerRadius = 12;
+    testButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [testButton addTarget:self action:@selector(runAnalyzerTest) forControlEvents:UIControlEventTouchUpInside];
+    [self.scrollView addSubview:testButton];
+    // ==========================================
+
     [self refreshData];
 
-    // Set scroll content size
-    self.scrollView.contentSize = CGSizeMake(w, top + 620);
+    // Set scroll content size (زودناها للزر)
+    self.scrollView.contentSize = CGSizeMake(w, top + 750);
 }
 
 - (void)viewDidLayoutSubviews {
@@ -119,6 +142,79 @@
     }
 
     self.capLabel.text = capStr;
+}
+
+#pragma mark - Analyzer Test (مؤقت)
+
+- (void)runAnalyzerTest {
+    // ابحث عن أول IPA في Documents
+    NSString *docsPath = @"/var/mobile/Documents";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *files = [fm contentsOfDirectoryAtPath:docsPath error:nil];
+
+    NSString *targetIPA = nil;
+    for (NSString *f in files) {
+        if ([f.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
+            targetIPA = [docsPath stringByAppendingPathComponent:f];
+            break;
+        }
+    }
+
+    if (!targetIPA) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"لا يوجد IPA"
+                                                                       message:@"ضع ملف IPA في /var/mobile/Documents/ وجرب مرة ثانية"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    // شغل التحليل في background
+    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"جاري التحليل..."
+                                                                           message:targetIPA.lastPathComponent
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:progressAlert animated:YES completion:nil];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSLog(@"🔍 [Analyzer Test] بدأ تحليل: %@", targetIPA);
+
+        IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:targetIPA];
+
+        // احفظ JSON
+        NSString *jsonPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ipa_analysis.json"];
+        [[result jsonRepresentation] writeToFile:jsonPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        NSLog(@"🔍 [Analyzer Test] انتهى التحليل. JSON: %@", jsonPath);
+        NSLog(@"\n========== ANALYZER REPORT ==========\n%@", [result summaryReport]);
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [progressAlert dismissViewControllerAnimated:YES completion:^{
+                NSString *msg = [NSString stringWithFormat:
+                    @"✅ Success: %@\n"
+                    @"⏱ Duration: %.1f ms\n\n"
+                    @"📦 Bundles: %ld\n"
+                    @"⚙️ Executables: %ld\n"
+                    @"📚 Frameworks: %ld\n"
+                    @"🔗 Dependencies: %ld\n"
+                    @"🍕 Slices: %ld\n\n"
+                    @"📄 JSON saved to:\n%@",
+                    result.success ? @"YES" : @"NO",
+                    result.analysisDurationMs,
+                    (long)result.bundleCount,
+                    (long)result.executableCount,
+                    (long)result.frameworkCount,
+                    (long)result.dependencyCount,
+                    (long)result.sliceCount,
+                    jsonPath];
+
+                UIAlertController *resultAlert = [UIAlertController alertControllerWithTitle:@"✅ نتيجة التحليل"
+                                                                                     message:msg
+                                                                              preferredStyle:UIAlertControllerStyleAlert];
+                [resultAlert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:resultAlert animated:YES completion:nil];
+            }];
+        });
+    });
 }
 
 @end
