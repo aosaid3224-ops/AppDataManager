@@ -14,9 +14,9 @@
 #import "IPAStructuralResult.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
+#import <MobileCoreServices/MobileCoreServices.h>
 
-@interface SettingsViewController ()
+@interface SettingsViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UILabel *envLabel;
 @property (nonatomic, strong) UILabel *capLabel;
@@ -93,12 +93,12 @@
     UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
     testButton.frame = CGRectMake(16, top + 660, w - 32, 50);
     testButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
-    [testButton setTitle:@"🔍 تحليل IPA في Documents" forState:UIControlStateNormal];
+    [testButton setTitle:@"🔍 اختيار وتحليل IPA" forState:UIControlStateNormal];
     [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     testButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
     testButton.layer.cornerRadius = 12;
     testButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [testButton addTarget:self action:@selector(runAnalyzerTest) forControlEvents:UIControlEventTouchUpInside];
+    [testButton addTarget:self action:@selector(pickIPAFile) forControlEvents:UIControlEventTouchUpInside];
     [self.scrollView addSubview:testButton];
 
     [self refreshData];
@@ -139,38 +139,45 @@
     self.capLabel.text = capStr;
 }
 
-#pragma mark - Analyzer Test
+#pragma mark - IPA File Picker
 
-- (void)runAnalyzerTest {
-    NSString *docsPath = @"/var/mobile/Documents";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *files = [fm contentsOfDirectoryAtPath:docsPath error:nil];
+- (void)pickIPAFile {
+    // Allow picking any file (IPA is a ZIP, not always recognized as a specific UTI)
+    NSArray *types = @[(NSString *)kUTTypeItem, (NSString *)kUTTypeData];
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:types inMode:UIDocumentPickerModeOpen];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationFullScreen;
+    [self presentViewController:picker animated:YES completion:nil];
+}
 
-    NSString *targetIPA = nil;
-    for (NSString *f in files) {
-        if ([f.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
-            targetIPA = [docsPath stringByAppendingPathComponent:f];
-            break;
-        }
-    }
+#pragma mark - UIDocumentPickerDelegate
 
-    if (!targetIPA) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"لا يوجد IPA"
-                                                                       message:@"ضع ملف IPA في /var/mobile/Documents/"
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if (urls.count == 0) return;
+
+    NSURL *url = urls[0];
+    NSString *path = url.path;
+
+    // Security: verify it's an IPA
+    if (![path.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ملف غير صالح"
+                                                                       message:@"الملف المختار ليس IPA. اختر ملفًا ينتهي بـ .ipa"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
+    // Start analysis
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"⏳ جاري التحليل..."
-                                                                      message:targetIPA.lastPathComponent
+                                                                      message:url.lastPathComponent
                                                                preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:progress animated:YES completion:nil];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:targetIPA];
+        IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:path];
 
+        // Save JSON
         NSString *jsonPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ipa_analysis.json"];
         [[result jsonRepresentation] writeToFile:jsonPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 
@@ -185,9 +192,15 @@
     });
 }
 
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    // User cancelled — do nothing
+}
+
+#pragma mark - Raw Result Viewer
+
 - (void)showRawResultViewer {
     UIViewController *vc = [[UIViewController alloc] init];
-    vc.title = @"📋 التحليل الخام";
+    vc.title = @"📋 لوغات التحليل الخام";
     vc.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
 
     CGFloat w = vc.view.bounds.size.width;
@@ -197,21 +210,22 @@
         safeTop = vc.view.safeAreaInsets.top;
     }
 
-    // Segment control
+    // Segment control: Report | JSON
     UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
     seg.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
     seg.selectedSegmentIndex = 0;
     seg.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
-    seg.tintColor = [UIColor systemBlueColor];
     if (@available(iOS 13.0, *)) {
         seg.selectedSegmentTintColor = [UIColor systemBlueColor];
         [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
         [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateSelected];
+    } else {
+        seg.tintColor = [UIColor systemBlueColor];
     }
     [seg addTarget:self action:@selector(rawSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [vc.view addSubview:seg];
 
-    // TextView
+    // TextView for raw logs
     UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
     tv.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
     tv.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
