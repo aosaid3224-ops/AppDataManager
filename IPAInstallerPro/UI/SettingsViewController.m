@@ -197,7 +197,7 @@
 #pragma mark - IPA File Picker
 
 - (void)pickIPAFile {
-    NSArray *types = @[(NSString *)kUTTypeItem, (NSString *)kUTTypeData];
+    NSArray *types = @[@"public.item", @"public.data"];
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:types inMode:UIDocumentPickerModeOpen];
     picker.delegate = self;
     picker.modalPresentationStyle = UIModalPresentationFullScreen;
