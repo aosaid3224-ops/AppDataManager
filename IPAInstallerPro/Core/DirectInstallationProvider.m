@@ -493,15 +493,26 @@ extern char **environ;
     NSString *rec4 = [opLog beginPhase:OperationPhaseAppIdentify operation:@"find .app in Payload" target:payload input:@"" transactionID:txnID];
     NSArray *items = [fm contentsOfDirectoryAtPath:payload error:nil];
     NSString *appFolder = nil;
-    for (NSString *i in items) { if ([i hasSuffix:@".app"]) { appFolder = i; break; } }
+    NSString *fallbackAppFolder = nil;
+    for (NSString *i in items) {
+        if (![i.lowercaseString hasSuffix:@".app"]) continue;
+        if (!fallbackAppFolder) fallbackAppFolder = i;
+        NSString *candidateApp = [payload stringByAppendingPathComponent:i];
+        NSDictionary *candidateInfo = [NSDictionary dictionaryWithContentsOfFile:[candidateApp stringByAppendingPathComponent:@"Info.plist"]];
+        NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
+        if (candidateExecutable.length > 0 && [fm fileExistsAtPath:[candidateApp stringByAppendingPathComponent:candidateExecutable]]) {
+            appFolder = i;
+            break;
+        }
+    }
     BOOL appFound = (appFolder != nil);
-    [opLog endPhase:rec4 exitCode:appFound ? 0 : 1 rawOutput:@"" rawError:appFound ? @"" : @"No .app folder found"
-     verification:[NSString stringWithFormat:@"found=%@ name=%@", appFound ? @"YES" : @"NO", appFolder ?: @"N/A"] verified:appFound duration:0];
+    [opLog endPhase:rec4 exitCode:appFound ? 0 : 1 rawOutput:@"" rawError:appFound ? @"" : @"No installable .app executable found"
+     verification:[NSString stringWithFormat:@"found=%@ name=%@ fallback=%@", appFound ? @"YES" : @"NO", appFolder ?: @"N/A", fallbackAppFolder ?: @"N/A"] verified:appFound duration:0];
 
     if (!appFound) {
         [fm removeItemAtPath:tmp error:nil];
         [opLog endTransaction:txnID finalResult:OperationResultFailed];
-        if (completion) completion([InstallationResult failureResult:@"No .app found" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+        if (completion) completion([InstallationResult failureResult:@"No installable .app executable found in Payload" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
         return;
     }
 

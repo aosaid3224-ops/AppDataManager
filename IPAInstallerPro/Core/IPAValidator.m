@@ -208,16 +208,52 @@ extern char **environ;
 
     NSString *infoEntry = nil;
     NSString *appRootEntry = nil;
-    for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+    NSString *fallbackInfoEntry = nil;
+    NSString *fallbackAppRootEntry = nil;
+    NSString *probeDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    [fm createDirectoryAtPath:probeDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSArray<NSString *> *listingLines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSUInteger probeIndex = 0;
+
+    for (NSString *rawLine in listingLines) {
         NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         NSString *lowerEntry = entry.lowercaseString;
         if (![lowerEntry hasPrefix:@"payload/"] || ![lowerEntry hasSuffix:@"/info.plist"]) continue;
         NSArray<NSString *> *components = [entry pathComponents];
-        if (components.count >= 3 && [components[1].lowercaseString hasSuffix:@".app"]) {
+        if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+
+        NSString *candidateRoot = [NSString stringWithFormat:@"%@/%@", components[0], components[1]];
+        if (!fallbackInfoEntry) {
+            fallbackInfoEntry = entry;
+            fallbackAppRootEntry = candidateRoot;
+        }
+
+        NSString *probePath = [probeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"candidate-%lu.plist", (unsigned long)probeIndex++]];
+        BOOL probeExtracted = [self runCmd:self.unzipPath args:@[@"-p", ipaPath, entry] stdin:nil stdout:probePath stderrToDevNull:YES];
+        NSDictionary *candidateInfo = probeExtracted ? [NSDictionary dictionaryWithContentsOfFile:probePath] : nil;
+        [fm removeItemAtPath:probePath error:nil];
+        NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
+        if (candidateExecutable.length == 0) continue;
+
+        NSString *expectedExecutable = [[candidateRoot stringByAppendingPathComponent:candidateExecutable] lowercaseString];
+        BOOL executableEntryExists = NO;
+        for (NSString *candidateRawLine in listingLines) {
+            NSString *candidateEntry = [candidateRawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if ([candidateEntry.lowercaseString isEqualToString:expectedExecutable]) {
+                executableEntryExists = YES;
+                break;
+            }
+        }
+        if (executableEntryExists) {
             infoEntry = entry;
-            appRootEntry = [NSString stringWithFormat:@"Payload/%@", components[1]];
+            appRootEntry = candidateRoot;
             break;
         }
+    }
+    [fm removeItemAtPath:probeDir error:nil];
+    if (!infoEntry) {
+        infoEntry = fallbackInfoEntry;
+        appRootEntry = fallbackAppRootEntry;
     }
 
     if (!infoEntry || !appRootEntry) {

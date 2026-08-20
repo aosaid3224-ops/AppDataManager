@@ -69,20 +69,47 @@ extern char **environ;
     return [data copy];
 }
 
-- (NSString *)findAppInfoEntryInListing:(NSString *)listing appRoot:(NSString **)appRootOut {
-    for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+- (NSString *)findAppInfoEntryInListing:(NSString *)listing ipaPath:(NSString *)ipaPath appRoot:(NSString **)appRootOut {
+    NSString *fallbackEntry = nil;
+    NSString *fallbackRoot = nil;
+    NSArray<NSString *> *lines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+
+    for (NSString *rawLine in lines) {
         NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (entry.length == 0) continue;
         NSString *lower = entry.lowercaseString;
         if (![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
 
         NSArray<NSString *> *components = [entry pathComponents];
-        if (components.count < 3) continue;
-        if (![components[1].lowercaseString hasSuffix:@".app"]) continue;
-        if (appRootOut) *appRootOut = [NSString stringWithFormat:@"Payload/%@", components[1]];
-        return entry;
+        if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+        NSString *candidateRoot = [NSString stringWithFormat:@"%@/%@", components[0], components[1]];
+        if (!fallbackEntry) {
+            fallbackEntry = entry;
+            fallbackRoot = candidateRoot;
+        }
+
+        NSData *candidateData = [self runUnzipDataForIPA:ipaPath entry:entry];
+        NSDictionary *candidateInfo = candidateData.length > 0 ? [NSPropertyListSerialization propertyListWithData:candidateData options:NSPropertyListImmutable format:NULL error:nil] : nil;
+        NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
+        if (candidateExecutable.length == 0) continue;
+
+        NSString *expectedExecutable = [[candidateRoot stringByAppendingPathComponent:candidateExecutable] lowercaseString];
+        BOOL executableExists = NO;
+        for (NSString *candidateRawLine in lines) {
+            NSString *candidateEntry = [candidateRawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if ([candidateEntry.lowercaseString isEqualToString:expectedExecutable]) {
+                executableExists = YES;
+                break;
+            }
+        }
+        if (executableExists) {
+            if (appRootOut) *appRootOut = candidateRoot;
+            return entry;
+        }
     }
-    return nil;
+
+    if (appRootOut) *appRootOut = fallbackRoot;
+    return fallbackEntry;
 }
 
 - (NSString *)findExecutableEntryInListing:(NSString *)listing appRoot:(NSString *)appRoot executable:(NSString *)executable {
@@ -173,7 +200,7 @@ extern char **environ;
     if (listing.length == 0) return info;
 
     NSString *appRoot = nil;
-    listingEntry = [self findAppInfoEntryInListing:listing appRoot:&appRoot];
+    listingEntry = [self findAppInfoEntryInListing:listing ipaPath:ipaPath appRoot:&appRoot];
     if (listingEntry.length == 0 || appRoot.length == 0) return info;
 
     NSData *plistData = [self runUnzipDataForIPA:ipaPath entry:listingEntry];
