@@ -2,7 +2,7 @@
 // SettingsViewController.m
 // IPA Installer Pro
 //
-// v2.4 — Frame-based layout for reliability
+// v2.5 — Auto Layout, clean analyzer test section
 //
 
 #import "SettingsViewController.h"
@@ -18,6 +18,7 @@
 
 @interface SettingsViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UILabel *envLabel;
 @property (nonatomic, strong) UILabel *capLabel;
 @property (nonatomic, copy) NSString *lastReportText;
@@ -31,27 +32,53 @@
     self.title = @"الإعدادات";
     self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
 
-    CGFloat w = self.view.bounds.size.width;
-    CGFloat h = self.view.bounds.size.height;
-    CGFloat top = 20;
-    if (@available(iOS 11.0, *)) {
-        top = self.view.safeAreaInsets.top + 20;
-    }
+    [self setupScrollView];
+    [self setupEnvironmentSection];
+    [self setupCapabilitiesSection];
+    [self setupAnalyzerSection];
+    [self refreshData];
+}
 
-    self.scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
-    self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+#pragma mark - ScrollView + ContentView
+
+- (void)setupScrollView {
+    self.scrollView = [[UIScrollView alloc] init];
+    self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     self.scrollView.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.scrollView];
 
-    UILabel *envHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top, w - 32, 30)];
-    envHeader.text = @"🔧 بيئة التشغيل";
-    envHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    envHeader.textColor = [UIColor whiteColor];
-    envHeader.textAlignment = NSTextAlignmentRight;
-    envHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.scrollView addSubview:envHeader];
+    self.contentView = [[UIView alloc] init];
+    self.contentView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.contentView.backgroundColor = [UIColor clearColor];
+    [self.scrollView addSubview:self.contentView];
 
-    self.envLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 40, w - 32, 200)];
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.scrollView.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [self.scrollView.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [self.scrollView.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [self.scrollView.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+
+        [self.contentView.topAnchor constraintEqualToAnchor:self.scrollView.topAnchor],
+        [self.contentView.leadingAnchor constraintEqualToAnchor:self.scrollView.leadingAnchor],
+        [self.contentView.trailingAnchor constraintEqualToAnchor:self.scrollView.trailingAnchor],
+        [self.contentView.bottomAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor],
+        [self.contentView.widthAnchor constraintEqualToAnchor:self.scrollView.widthAnchor]
+    ]];}
+
+#pragma mark - Environment Section
+
+- (void)setupEnvironmentSection {
+    UILabel *header = [[UILabel alloc] init];
+    header.translatesAutoresizingMaskIntoConstraints = NO;
+    header.text = @"🔧 بيئة التشغيل";
+    header.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    header.textColor = [UIColor whiteColor];
+    header.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:header];
+
+    self.envLabel = [[UILabel alloc] init];
+    self.envLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.envLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.envLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     self.envLabel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
@@ -59,18 +86,32 @@
     self.envLabel.clipsToBounds = YES;
     self.envLabel.numberOfLines = 0;
     self.envLabel.textAlignment = NSTextAlignmentRight;
-    self.envLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.scrollView addSubview:self.envLabel];
+    [self.contentView addSubview:self.envLabel];
 
-    UILabel *capHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 260, w - 32, 30)];
-    capHeader.text = @"⚙️ القدرات";
-    capHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    capHeader.textColor = [UIColor whiteColor];
-    capHeader.textAlignment = NSTextAlignmentRight;
-    capHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.scrollView addSubview:capHeader];
+    [NSLayoutConstraint activateConstraints:@[
+        [header.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:16],
+        [header.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [header.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
 
-    self.capLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 300, w - 32, 300)];
+        [self.envLabel.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
+        [self.envLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [self.envLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [self.envLabel.heightAnchor constraintGreaterThanOrEqualToConstant:180]
+    ]];}
+
+#pragma mark - Capabilities Section
+
+- (void)setupCapabilitiesSection {
+    UILabel *header = [[UILabel alloc] init];
+    header.translatesAutoresizingMaskIntoConstraints = NO;
+    header.text = @"⚙️ القدرات";
+    header.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    header.textColor = [UIColor whiteColor];
+    header.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:header];
+
+    self.capLabel = [[UILabel alloc] init];
+    self.capLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.capLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.capLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     self.capLabel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
@@ -78,39 +119,53 @@
     self.capLabel.clipsToBounds = YES;
     self.capLabel.numberOfLines = 0;
     self.capLabel.textAlignment = NSTextAlignmentRight;
-    self.capLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.scrollView addSubview:self.capLabel];
+    [self.contentView addSubview:self.capLabel];
 
-    // ===== 🔍 زر اختبار Analyzer (مؤقت) =====
-    UILabel *testHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 620, w - 32, 30)];
-    testHeader.text = @"🧪 اختبار Analyzer";
-    testHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    testHeader.textColor = [UIColor whiteColor];
-    testHeader.textAlignment = NSTextAlignmentRight;
-    testHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.scrollView addSubview:testHeader];
+    [NSLayoutConstraint activateConstraints:@[
+        [header.topAnchor constraintEqualToAnchor:self.envLabel.bottomAnchor constant:24],
+        [header.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [header.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
 
-    UIButton *testButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    testButton.frame = CGRectMake(16, top + 660, w - 32, 50);
-    testButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
-    [testButton setTitle:@"🔍 اختيار وتحليل IPA" forState:UIControlStateNormal];
-    [testButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    testButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    testButton.layer.cornerRadius = 12;
-    testButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [testButton addTarget:self action:@selector(pickIPAFile) forControlEvents:UIControlEventTouchUpInside];
-    [self.scrollView addSubview:testButton];
+        [self.capLabel.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
+        [self.capLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [self.capLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [self.capLabel.heightAnchor constraintGreaterThanOrEqualToConstant:260]
+    ]];}
 
-    [self refreshData];
-    self.scrollView.contentSize = CGSizeMake(w, top + 750);
-}
+#pragma mark - Analyzer Test Section
 
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    CGFloat w = self.view.bounds.size.width;
-    CGFloat h = self.view.bounds.size.height;
-    self.scrollView.frame = CGRectMake(0, 0, w, h);
-}
+- (void)setupAnalyzerSection {
+    UILabel *header = [[UILabel alloc] init];
+    header.translatesAutoresizingMaskIntoConstraints = NO;
+    header.text = @"🧪 اختبار Analyzer";
+    header.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    header.textColor = [UIColor whiteColor];
+    header.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:header];
+
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    btn.translatesAutoresizingMaskIntoConstraints = NO;
+    btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    [btn setTitle:@"🔍 اختيار وتحليل IPA" forState:UIControlStateNormal];
+    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    btn.layer.cornerRadius = 12;
+    [btn addTarget:self action:@selector(pickIPAFile) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:btn];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [header.topAnchor constraintEqualToAnchor:self.capLabel.bottomAnchor constant:32],
+        [header.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [header.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+
+        [btn.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
+        [btn.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [btn.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [btn.heightAnchor constraintEqualToConstant:52],
+        [btn.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-24]
+    ]];}
+
+#pragma mark - Data
 
 - (void)refreshData {
     JailbreakEnvironment *env = [JailbreakEnvironment sharedEnvironment];
@@ -142,7 +197,6 @@
 #pragma mark - IPA File Picker
 
 - (void)pickIPAFile {
-    // Allow picking any file (IPA is a ZIP, not always recognized as a specific UTI)
     NSArray *types = @[(NSString *)kUTTypeItem, (NSString *)kUTTypeData];
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:types inMode:UIDocumentPickerModeOpen];
     picker.delegate = self;
@@ -158,7 +212,6 @@
     NSURL *url = urls[0];
     NSString *path = url.path;
 
-    // Security: verify it's an IPA
     if (![path.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ملف غير صالح"
                                                                        message:@"الملف المختار ليس IPA. اختر ملفًا ينتهي بـ .ipa"
@@ -168,7 +221,6 @@
         return;
     }
 
-    // Start analysis
     UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"⏳ جاري التحليل..."
                                                                       message:url.lastPathComponent
                                                                preferredStyle:UIAlertControllerStyleAlert];
@@ -177,7 +229,6 @@
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:path];
 
-        // Save JSON
         NSString *jsonPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ipa_analysis.json"];
         [[result jsonRepresentation] writeToFile:jsonPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 
@@ -193,7 +244,7 @@
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    // User cancelled — do nothing
+    // User cancelled
 }
 
 #pragma mark - Raw Result Viewer
@@ -210,7 +261,6 @@
         safeTop = vc.view.safeAreaInsets.top;
     }
 
-    // Segment control: Report | JSON
     UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
     seg.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
     seg.selectedSegmentIndex = 0;
@@ -225,7 +275,6 @@
     [seg addTarget:self action:@selector(rawSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [vc.view addSubview:seg];
 
-    // TextView for raw logs
     UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
     tv.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
     tv.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
@@ -237,7 +286,6 @@
     tv.tag = 9001;
     [vc.view addSubview:tv];
 
-    // Close button
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(16, h - 44, w - 32, 36);
     closeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
