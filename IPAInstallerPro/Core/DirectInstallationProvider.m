@@ -333,13 +333,12 @@ extern char **environ;
 
 - (BOOL)verifySignature:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSLog(@"[IPAInstallerPro] verifySignature: path=%@ ldid=%@", path, self.ldidPath);
-    NSString *output = [self runCmdOutput:self.ldidPath args:@[@"-d", path]];
-    BOOL hasSig = (output && output.length > 0);
+    // ldid -d reports entitlements. A valid signed binary may have no textual
+    // entitlements, so output length must not be used as the signature test.
     NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -d signature check" target:path input:@"" transactionID:txnID];
-    [opLog endPhase:rec exitCode:hasSig ? 0 : 1 rawOutput:output ?: @"" rawError:hasSig ? @"" : @"No signature detected"
-     verification:hasSig ? @"Signature present" : @"No signature" verified:hasSig duration:0];
-    NSLog(@"[IPAInstallerPro] verifySignature result: hasSig=%d output=%@", hasSig, output);
-    return hasSig;
+    BOOL commandOK = [self runCmd:self.ldidPath args:@[@"-d", path] opLog:opLog recordID:rec];
+    NSLog(@"[IPAInstallerPro] verifySignature result: commandOK=%d", commandOK);
+    return commandOK;
 }
 
 #pragma mark - Rollback
