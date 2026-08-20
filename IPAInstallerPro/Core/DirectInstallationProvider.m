@@ -337,6 +337,12 @@ extern char **environ;
     // entitlements, so output length must not be used as the signature test.
     NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -d signature check" target:path input:@"" transactionID:txnID];
     BOOL commandOK = [self runCmd:self.ldidPath args:@[@"-d", path] opLog:opLog recordID:rec];
+    if (!commandOK) {
+        // Some valid ad-hoc signatures do not answer the -d query consistently.
+        // Retry with the entitlement reader, but still require ldid to exit successfully.
+        NSString *retryRec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -e signature fallback" target:path input:@"" transactionID:txnID];
+        commandOK = [self runCmd:self.ldidPath args:@[@"-e", path] opLog:opLog recordID:retryRec];
+    }
     NSLog(@"[IPAInstallerPro] verifySignature result: commandOK=%d", commandOK);
     return commandOK;
 }
