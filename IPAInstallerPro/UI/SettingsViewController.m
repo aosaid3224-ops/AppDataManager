@@ -14,11 +14,14 @@
 #import "IPAStructuralResult.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
 @interface SettingsViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UILabel *envLabel;
 @property (nonatomic, strong) UILabel *capLabel;
+@property (nonatomic, copy) NSString *lastReportText;
+@property (nonatomic, copy) NSString *lastJsonText;
 @end
 
 @implementation SettingsViewController
@@ -35,13 +38,11 @@
         top = self.view.safeAreaInsets.top + 20;
     }
 
-    // ScrollView
     self.scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
     self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.scrollView.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.scrollView];
 
-    // Environment Header
     UILabel *envHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top, w - 32, 30)];
     envHeader.text = @"🔧 بيئة التشغيل";
     envHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
@@ -50,7 +51,6 @@
     envHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.scrollView addSubview:envHeader];
 
-    // Environment Info
     self.envLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 40, w - 32, 200)];
     self.envLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.envLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
@@ -62,7 +62,6 @@
     self.envLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.scrollView addSubview:self.envLabel];
 
-    // Capabilities Header
     UILabel *capHeader = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 260, w - 32, 30)];
     capHeader.text = @"⚙️ القدرات";
     capHeader.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
@@ -71,7 +70,6 @@
     capHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [self.scrollView addSubview:capHeader];
 
-    // Capabilities Info
     self.capLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, top + 300, w - 32, 300)];
     self.capLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.capLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
@@ -102,11 +100,8 @@
     testButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [testButton addTarget:self action:@selector(runAnalyzerTest) forControlEvents:UIControlEventTouchUpInside];
     [self.scrollView addSubview:testButton];
-    // ==========================================
 
     [self refreshData];
-
-    // Set scroll content size (زودناها للزر)
     self.scrollView.contentSize = CGSizeMake(w, top + 750);
 }
 
@@ -144,10 +139,9 @@
     self.capLabel.text = capStr;
 }
 
-#pragma mark - Analyzer Test (مؤقت)
+#pragma mark - Analyzer Test
 
 - (void)runAnalyzerTest {
-    // ابحث عن أول IPA في Documents
     NSString *docsPath = @"/var/mobile/Documents";
     NSFileManager *fm = [NSFileManager defaultManager];
     NSArray *files = [fm contentsOfDirectoryAtPath:docsPath error:nil];
@@ -162,59 +156,108 @@
 
     if (!targetIPA) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"لا يوجد IPA"
-                                                                       message:@"ضع ملف IPA في /var/mobile/Documents/ وجرب مرة ثانية"
+                                                                       message:@"ضع ملف IPA في /var/mobile/Documents/"
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
-    // شغل التحليل في background
-    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"جاري التحليل..."
-                                                                           message:targetIPA.lastPathComponent
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:progressAlert animated:YES completion:nil];
+    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"⏳ جاري التحليل..."
+                                                                      message:targetIPA.lastPathComponent
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:progress animated:YES completion:nil];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSLog(@"🔍 [Analyzer Test] بدأ تحليل: %@", targetIPA);
-
         IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:targetIPA];
 
-        // احفظ JSON
         NSString *jsonPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ipa_analysis.json"];
         [[result jsonRepresentation] writeToFile:jsonPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 
-        NSLog(@"🔍 [Analyzer Test] انتهى التحليل. JSON: %@", jsonPath);
-        NSLog(@"\n========== ANALYZER REPORT ==========\n%@", [result summaryReport]);
+        self.lastReportText = [result summaryReport];
+        self.lastJsonText = [result jsonRepresentation];
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            [progressAlert dismissViewControllerAnimated:YES completion:^{
-                NSString *msg = [NSString stringWithFormat:
-                    @"✅ Success: %@\n"
-                    @"⏱ Duration: %.1f ms\n\n"
-                    @"📦 Bundles: %ld\n"
-                    @"⚙️ Executables: %ld\n"
-                    @"📚 Frameworks: %ld\n"
-                    @"🔗 Dependencies: %ld\n"
-                    @"🍕 Slices: %ld\n\n"
-                    @"📄 JSON saved to:\n%@",
-                    result.success ? @"YES" : @"NO",
-                    result.analysisDurationMs,
-                    (long)result.bundleCount,
-                    (long)result.executableCount,
-                    (long)result.frameworkCount,
-                    (long)result.dependencyCount,
-                    (long)result.sliceCount,
-                    jsonPath];
-
-                UIAlertController *resultAlert = [UIAlertController alertControllerWithTitle:@"✅ نتيجة التحليل"
-                                                                                     message:msg
-                                                                              preferredStyle:UIAlertControllerStyleAlert];
-                [resultAlert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
-                [self presentViewController:resultAlert animated:YES completion:nil];
+            [progress dismissViewControllerAnimated:YES completion:^{
+                [self showRawResultViewer];
             }];
         });
     });
+}
+
+- (void)showRawResultViewer {
+    UIViewController *vc = [[UIViewController alloc] init];
+    vc.title = @"📋 التحليل الخام";
+    vc.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+
+    CGFloat w = vc.view.bounds.size.width;
+    CGFloat h = vc.view.bounds.size.height;
+    CGFloat safeTop = 0;
+    if (@available(iOS 11.0, *)) {
+        safeTop = vc.view.safeAreaInsets.top;
+    }
+
+    // Segment control
+    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
+    seg.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
+    seg.selectedSegmentIndex = 0;
+    seg.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    seg.tintColor = [UIColor systemBlueColor];
+    if (@available(iOS 13.0, *)) {
+        seg.selectedSegmentTintColor = [UIColor systemBlueColor];
+        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
+        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateSelected];
+    }
+    [seg addTarget:self action:@selector(rawSegmentChanged:) forControlEvents:UIControlEventValueChanged];
+    [vc.view addSubview:seg];
+
+    // TextView
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
+    tv.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
+    tv.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+    tv.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
+    tv.editable = NO;
+    tv.selectable = YES;
+    tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tv.text = self.lastReportText ?: @"No data";
+    tv.tag = 9001;
+    [vc.view addSubview:tv];
+
+    // Close button
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(16, h - 44, w - 32, 36);
+    closeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    [closeBtn setTitle:@"❌ إغلاق" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+    closeBtn.layer.cornerRadius = 8;
+    closeBtn.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+    [closeBtn addTarget:self action:@selector(closeRawViewer:) forControlEvents:UIControlEventTouchUpInside];
+    [vc.view addSubview:closeBtn];
+
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    nav.navigationBar.barStyle = UIBarStyleBlack;
+    nav.navigationBar.tintColor = [UIColor whiteColor];
+    nav.modalPresentationStyle = UIModalPresentationFullScreen;
+    [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)rawSegmentChanged:(UISegmentedControl *)sender {
+    UIViewController *presented = self.presentedViewController;
+    if ([presented isKindOfClass:[UINavigationController class]]) {
+        UIViewController *top = [(UINavigationController *)presented topViewController];
+        for (UIView *v in top.view.subviews) {
+            if ([v isKindOfClass:[UITextView class]] && v.tag == 9001) {
+                UITextView *tv = (UITextView *)v;
+                tv.text = (sender.selectedSegmentIndex == 0) ? self.lastReportText : self.lastJsonText;
+                break;
+            }
+        }
+    }
+}
+
+- (void)closeRawViewer:(UIButton *)sender {
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
