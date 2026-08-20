@@ -199,118 +199,34 @@ extern char **environ;
         return [self result:IPAValidationStatusInvalidZip errors:errors warnings:warnings missing:missing ready:NO];
     }
 
-    // Read the ZIP directory only. Do not unpack a large IPA during preflight.
-    NSString *listing = [self runCmdOutput:self.unzipPath args:@[@"-Z1", ipaPath]];
-    if (listing.length == 0) {
-        [errors addObject:@"Unable to read IPA directory"];
+    // Extract IPA using unzip directly (NO /bin/sh)
+    NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil];
+
+    if (![self runCmd:self.unzipPath args:@[@"-o", ipaPath, @"-d", tmp]]) {
+        [errors addObject:@"Unzip failed"];
+        [fm removeItemAtPath:tmp error:nil];
         return [self result:IPAValidationStatusInvalidZip errors:errors warnings:warnings missing:missing ready:NO];
     }
 
-    NSString *infoEntry = nil;
-    NSString *appRootEntry = nil;
-    NSString *fallbackInfoEntry = nil;
-    NSString *fallbackAppRootEntry = nil;
-    NSString *probeDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    [fm createDirectoryAtPath:probeDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSArray<NSString *> *listingLines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-    NSUInteger probeIndex = 0;
-
-    for (NSString *rawLine in listingLines) {
-        NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSString *lowerEntry = entry.lowercaseString;
-        if (![lowerEntry hasPrefix:@"payload/"] || ![lowerEntry hasSuffix:@"/info.plist"]) continue;
-        NSArray<NSString *> *components = [entry pathComponents];
-        if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
-
-        NSString *candidateRoot = [NSString stringWithFormat:@"%@/%@", components[0], components[1]];
-        if (!fallbackInfoEntry) {
-            fallbackInfoEntry = entry;
-            fallbackAppRootEntry = candidateRoot;
-        }
-
-        NSString *probePath = [probeDir stringByAppendingPathComponent:[NSString stringWithFormat:@"candidate-%lu.plist", (unsigned long)probeIndex++]];
-        BOOL probeExtracted = [self runCmd:self.unzipPath args:@[@"-p", ipaPath, entry] stdin:nil stdout:probePath stderrToDevNull:YES];
-        NSDictionary *candidateInfo = probeExtracted ? [NSDictionary dictionaryWithContentsOfFile:probePath] : nil;
-        [fm removeItemAtPath:probePath error:nil];
-        NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
-        if (candidateExecutable.length == 0) continue;
-
-        NSString *expectedExecutable = [[candidateRoot stringByAppendingPathComponent:candidateExecutable] lowercaseString];
-        BOOL executableEntryExists = NO;
-        for (NSString *candidateRawLine in listingLines) {
-            NSString *candidateEntry = [candidateRawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if ([candidateEntry.lowercaseString isEqualToString:expectedExecutable]) {
-                executableEntryExists = YES;
-                break;
-            }
-        }
-        if (executableEntryExists) {
-            infoEntry = entry;
-            appRootEntry = candidateRoot;
-            break;
-        }
-    }
-    [fm removeItemAtPath:probeDir error:nil];
-    if (!infoEntry) {
-        infoEntry = fallbackInfoEntry;
-        appRootEntry = fallbackAppRootEntry;
+    NSString *payload = [tmp stringByAppendingPathComponent:@"Payload"];
+    if (![fm fileExistsAtPath:payload]) {
+        [errors addObject:@"Payload missing"];
+        [fm removeItemAtPath:tmp error:nil];
+        return [self result:IPAValidationStatusMissingPayload errors:errors warnings:warnings missing:missing ready:NO];
     }
 
-    if (!infoEntry || !appRootEntry) {
-        [errors addObject:@"No .app Info.plist in Payload"];
+    NSString *appFolder = nil;
+    for (NSString *i in [fm contentsOfDirectoryAtPath:payload error:nil]) {
+        if ([i hasSuffix:@".app"]) { appFolder = i; break; }
+    }
+    if (!appFolder) {
+        [errors addObject:@"No .app in Payload"];
+        [fm removeItemAtPath:tmp error:nil];
         return [self result:IPAValidationStatusMissingAppBundle errors:errors warnings:warnings missing:missing ready:NO];
     }
 
-    NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    NSString *appPath = [tmp stringByAppendingPathComponent:[appRootEntry lastPathComponent]];
-    [fm createDirectoryAtPath:appPath withIntermediateDirectories:YES attributes:nil error:nil];
-
-    NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
-    BOOL infoExtracted = [self runCmd:self.unzipPath
-                                 args:@[@"-p", ipaPath, infoEntry]
-                               stdin:nil
-                              stdout:infoPath
-                   stderrToDevNull:YES];
-    if (!infoExtracted || ![fm fileExistsAtPath:infoPath]) {
-        [errors addObject:@"Info.plist extraction failed"];
-        [fm removeItemAtPath:tmp error:nil];
-        return [self result:IPAValidationStatusMissingInfoPlist errors:errors warnings:warnings missing:missing ready:NO];
-    }
-
-    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
-    NSString *executableEntry = nil;
-    if (executable.length > 0) {
-        NSString *expectedEntry = [appRootEntry stringByAppendingPathComponent:executable];
-        for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
-            NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if ([entry.lowercaseString isEqualToString:expectedEntry.lowercaseString]) {
-                executableEntry = entry;
-                break;
-            }
-        }
-    }
-
-    if (executableEntry.length == 0) {
-        [errors addObject:[NSString stringWithFormat:@"Executable %@ is not present in IPA directory", executable ?: @"(unknown)"]];
-        [fm removeItemAtPath:tmp error:nil];
-        return [self result:IPAValidationStatusMissingExecutable errors:errors warnings:warnings missing:missing ready:NO];
-    }
-
-    NSString *executablePath = [appPath stringByAppendingPathComponent:executable];
-    BOOL executableExtracted = [self runCmd:self.unzipPath
-                                      args:@[@"-p", ipaPath, executableEntry]
-                                    stdin:nil
-                                   stdout:executablePath
-                        stderrToDevNull:YES];
-    NSDictionary *executableAttrs = [fm attributesOfItemAtPath:executablePath error:nil];
-    unsigned long long executableSize = [executableAttrs[@"NSFileSize"] unsignedLongLongValue];
-    if (!executableExtracted || executableSize == 0) {
-        [errors addObject:[NSString stringWithFormat:@"Executable %@ extraction failed", executable]];
-        [fm removeItemAtPath:tmp error:nil];
-        return [self result:IPAValidationStatusMissingExecutable errors:errors warnings:warnings missing:missing ready:NO];
-    }
-
+    NSString *appPath = [payload stringByAppendingPathComponent:appFolder];
     IPAValidationResult *res = [self validateExtractedAppAtPath:appPath];
     [fm removeItemAtPath:tmp error:nil];
     return res;

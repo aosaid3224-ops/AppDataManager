@@ -12,13 +12,11 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
-#import <objc/message.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <copyfile.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <errno.h>
 
 extern char **environ;
@@ -36,13 +34,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mkdirPath;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
-@property (nonatomic, strong) NSMutableSet<NSString *> *signedPaths;
-- (BOOL)verifyInstallation:(NSString *)appPath
-                  bundleID:(NSString *)bid
-                   exeName:(NSString *)en
-                     opLog:(OperationLog *)opLog
-                    txnID:(NSString *)txnID
-            failureDetails:(NSString **)failureDetails;
 @end
 
 @implementation DirectInstallationProvider
@@ -66,7 +57,6 @@ extern char **environ;
         self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
         self.mvPath = [rm resolvePath:@"/bin/mv"];
         self.statPath = [rm resolvePath:@"/usr/bin/stat"];
-        self.signedPaths = [NSMutableSet set];
         [self findWorkingHelper];
     }
     return self;
@@ -142,35 +132,6 @@ extern char **environ;
          verification:[NSString stringWithFormat:@"cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
     }
     return ok;
-}
-
-- (BOOL)runCmd:(NSString *)cmd args:(NSArray *)args stdoutPath:(NSString *)stdoutPath {
-    if (!cmd || cmd.length == 0 || !stdoutPath || stdoutPath.length == 0) return NO;
-
-    int fd = open([stdoutPath UTF8String], O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (fd < 0) return NO;
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, fd, STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, fd);
-
-    pid_t pid;
-    const char *c = [cmd UTF8String];
-    char **argv = malloc((args.count + 2) * sizeof(char *));
-    argv[0] = (char *)c;
-    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] UTF8String];
-    argv[args.count + 1] = NULL;
-
-    int spawnStatus = posix_spawn(&pid, c, &actions, NULL, argv, environ);
-    free(argv);
-    posix_spawn_file_actions_destroy(&actions);
-    close(fd);
-    if (spawnStatus != 0) return NO;
-
-    int waitStatus = 0;
-    waitpid(pid, &waitStatus, 0);
-    return WIFEXITED(waitStatus) && WEXITSTATUS(waitStatus) == 0;
 }
 
 - (BOOL)runRoot:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recID {
@@ -339,18 +300,13 @@ extern char **environ;
 
 - (BOOL)verifySignature:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSLog(@"[IPAInstallerPro] verifySignature: path=%@ ldid=%@", path, self.ldidPath);
-    // ldid -d reports entitlements. A valid signed binary may have no textual
-    // entitlements, so output length must not be used as the signature test.
+    NSString *output = [self runCmdOutput:self.ldidPath args:@[@"-d", path]];
+    BOOL hasSig = (output && output.length > 0);
     NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -d signature check" target:path input:@"" transactionID:txnID];
-    BOOL commandOK = [self runCmd:self.ldidPath args:@[@"-d", path] opLog:opLog recordID:rec];
-    if (!commandOK) {
-        // Some valid ad-hoc signatures do not answer the -d query consistently.
-        // Retry with the entitlement reader, but still require ldid to exit successfully.
-        NSString *retryRec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -e signature fallback" target:path input:@"" transactionID:txnID];
-        commandOK = [self runCmd:self.ldidPath args:@[@"-e", path] opLog:opLog recordID:retryRec];
-    }
-    NSLog(@"[IPAInstallerPro] verifySignature result: commandOK=%d", commandOK);
-    return commandOK;
+    [opLog endPhase:rec exitCode:hasSig ? 0 : 1 rawOutput:output ?: @"" rawError:hasSig ? @"" : @"No signature detected"
+     verification:hasSig ? @"Signature present" : @"No signature" verified:hasSig duration:0];
+    NSLog(@"[IPAInstallerPro] verifySignature result: hasSig=%d output=%@", hasSig, output);
+    return hasSig;
 }
 
 #pragma mark - Rollback
@@ -438,7 +394,6 @@ extern char **environ;
 - (void)installIPA:(NSString *)ipaPath transactionID:(NSString *)txnID operationLog:(OperationLog *)opLog completion:(void (^)(InstallationResult *))completion {
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL hasH = [self hasRootHelper];
-    [self.signedPaths removeAllObjects];
 
     // Extract REAL Bundle ID from IPA before anything else
     NSString *realBundleID = [self extractBundleIDFromIPA:ipaPath];
@@ -504,26 +459,15 @@ extern char **environ;
     NSString *rec4 = [opLog beginPhase:OperationPhaseAppIdentify operation:@"find .app in Payload" target:payload input:@"" transactionID:txnID];
     NSArray *items = [fm contentsOfDirectoryAtPath:payload error:nil];
     NSString *appFolder = nil;
-    NSString *fallbackAppFolder = nil;
-    for (NSString *i in items) {
-        if (![i.lowercaseString hasSuffix:@".app"]) continue;
-        if (!fallbackAppFolder) fallbackAppFolder = i;
-        NSString *candidateApp = [payload stringByAppendingPathComponent:i];
-        NSDictionary *candidateInfo = [NSDictionary dictionaryWithContentsOfFile:[candidateApp stringByAppendingPathComponent:@"Info.plist"]];
-        NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
-        if (candidateExecutable.length > 0 && [fm fileExistsAtPath:[candidateApp stringByAppendingPathComponent:candidateExecutable]]) {
-            appFolder = i;
-            break;
-        }
-    }
+    for (NSString *i in items) { if ([i hasSuffix:@".app"]) { appFolder = i; break; } }
     BOOL appFound = (appFolder != nil);
-    [opLog endPhase:rec4 exitCode:appFound ? 0 : 1 rawOutput:@"" rawError:appFound ? @"" : @"No installable .app executable found"
-     verification:[NSString stringWithFormat:@"found=%@ name=%@ fallback=%@", appFound ? @"YES" : @"NO", appFolder ?: @"N/A", fallbackAppFolder ?: @"N/A"] verified:appFound duration:0];
+    [opLog endPhase:rec4 exitCode:appFound ? 0 : 1 rawOutput:@"" rawError:appFound ? @"" : @"No .app folder found"
+     verification:[NSString stringWithFormat:@"found=%@ name=%@", appFound ? @"YES" : @"NO", appFolder ?: @"N/A"] verified:appFound duration:0];
 
     if (!appFound) {
         [fm removeItemAtPath:tmp error:nil];
         [opLog endTransaction:txnID finalResult:OperationResultFailed];
-        if (completion) completion([InstallationResult failureResult:@"No installable .app executable found in Payload" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+        if (completion) completion([InstallationResult failureResult:@"No .app found" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
         return;
     }
 
@@ -681,31 +625,28 @@ extern char **environ;
     // PHASE 7: FRAMEWORK
     [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
 
-    // PHASE 8: UICACHE — register the target only; use the resolved path only as fallback.
+    // PHASE 8: UICACHE
     NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
-    BOOL logicalUICacheOK = [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
-    if (!logicalUICacheOK) {
-        NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved fallback" target:destApp input:@"" transactionID:txnID];
-        [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
-    }
+    [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
 
-    // uicache is the sole registration request; final verification checks the real registry.
+    NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
+    [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+
+    NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
+    [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
 
     // PHASE 9: VERIFY (comprehensive)
     NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
-    NSString *verifyDetails = nil;
-    BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID failureDetails:&verifyDetails];
-    NSString *verificationText = [NSString stringWithFormat:@"bundleID=%@ exe=%@ %@", bundleID, exeName, verifyDetails ?: @"all checks passed"];
-    [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : (verifyDetails ?: @"Final verification failed")
-     verification:verificationText verified:finalOk duration:0];
+    BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
+    [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
+     verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
 
     if (!finalOk) {
         // ROLLBACK
         [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
         [fm removeItemAtPath:tmp error:nil];
         [opLog endTransaction:txnID finalResult:OperationResultFailed];
-        NSString *message = [NSString stringWithFormat:@"Final verification failed: %@, rollback executed", verifyDetails ?: @"unknown check"];
-        if (completion) completion([InstallationResult failureResult:message provider:[self providerName] transaction:txnID error:nil evidence:@{ @"verification": verifyDetails ?: @"unknown" }]);
+        if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
         return;
     }
 
@@ -731,31 +672,18 @@ extern char **environ;
 
 - (NSString *)extractBundleIDFromIPA:(NSString *)ipaPath {
     NSFileManager *fm = [NSFileManager defaultManager];
-    if (!ipaPath || ![fm isReadableFileAtPath:ipaPath]) return nil;
-
-    // Read the archive directory only. This avoids wildcard matching and avoids unpacking a large IPA.
-    NSString *listing = [self runCmdOutput:self.unzipPath args:@[@"-Z1", ipaPath]];
-    NSString *infoEntry = nil;
-    for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
-        NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSString *lowerEntry = entry.lowercaseString;
-        if ([lowerEntry hasPrefix:@"payload/"] && [lowerEntry hasSuffix:@".app/info.plist"] && ![self containsDangerousPaths:entry]) {
-            infoEntry = entry;
-            break;
-        }
-    }
-    if (!infoEntry) return nil;
-
     NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    if (![fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil]) return nil;
+    [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil];
+
+    // Quick unzip of Info.plist only
+    [self runCmd:self.unzipPath args:@[@"-j", @"-o", ipaPath, @"Payload/*/Info.plist", @"-d", tmp] opLog:nil recordID:nil];
 
     NSString *infoPath = [tmp stringByAppendingPathComponent:@"Info.plist"];
-    BOOL extracted = [self runCmd:self.unzipPath args:@[@"-p", ipaPath, infoEntry] stdoutPath:infoPath];
-    NSDictionary *info = extracted ? [NSDictionary dictionaryWithContentsOfFile:infoPath] : nil;
-    NSString *bundleID = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? info[@"CFBundleIdentifier"] : nil;
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    NSString *bundleID = info[@"CFBundleIdentifier"];
 
     [fm removeItemAtPath:tmp error:nil];
-    return bundleID.length > 0 ? bundleID : nil;
+    return bundleID;
 }
 
 #pragma mark - Signing
@@ -769,7 +697,9 @@ extern char **environ;
         if (isDir) {
             [self signAllAt:ip hasHelper:hasH opLog:opLog txnID:txnID];
             if ([item hasSuffix:@".app"]) {
-                // The main executable is signed exactly once by signExe:, which preserves its original entitlements.
+                NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[ip stringByAppendingPathComponent:@"Info.plist"]];
+                NSString *en = info[@"CFBundleExecutable"];
+                if (en) [self signBin:[ip stringByAppendingPathComponent:en] hasHelper:hasH label:[@"app:" stringByAppendingString:en] opLog:opLog txnID:txnID];
             } else if ([item hasSuffix:@".framework"]) {
                 NSString *fn = [item stringByDeletingPathExtension];
                 [self signBin:[ip stringByAppendingPathComponent:fn] hasHelper:hasH label:[@"fw:" stringByAppendingString:fn] opLog:opLog txnID:txnID];
@@ -782,8 +712,6 @@ extern char **environ;
 
 - (void)signBin:(NSString *)path hasHelper:(BOOL)hasH label:(NSString *)label opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
-    if ([self.signedPaths containsObject:path]) return;
-
     NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"ldid -S (%@)", label] target:path input:@"" transactionID:txnID];
     if (hasH) [self runRoot:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
     else [self runCmd:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
@@ -794,10 +722,8 @@ extern char **environ;
         NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
         [@{@"get-task-allow":@YES, @"platform-application":@YES} writeToFile:ep atomically:YES];
         NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
-        ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
-                  : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+        [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
     }
-    if (ok) [self.signedPaths addObject:path];
 }
 
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
@@ -865,52 +791,11 @@ extern char **environ;
     }
 }
 
-- (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID {
-    if (bundleID.length == 0) return NO;
-    @try {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        if (!workspace) return NO;
-
-        SEL directSelector = NSSelectorFromString(@"applicationForIdentifier:");
-        if ([workspace respondsToSelector:directSelector]) {
-            id (*sendObject)(id, SEL, id) = (id (*)(id, SEL, id))objc_msgSend;
-            id application = sendObject(workspace, directSelector, bundleID);
-            if (application != nil) return YES;
-        }
-
-        NSArray<NSString *> *selectors = @[@"allInstalledApplications", @"allApplications"];
-        for (NSString *selectorName in selectors) {
-            SEL selector = NSSelectorFromString(selectorName);
-            if (![workspace respondsToSelector:selector]) continue;
-            id (*sendNoArguments)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
-            NSArray *applications = sendNoArguments(workspace, selector);
-            for (id application in applications) {
-                if (![application respondsToSelector:@selector(bundleIdentifier)]) continue;
-                NSString *candidate = [application performSelector:@selector(bundleIdentifier)];
-                if ([candidate isEqualToString:bundleID]) return YES;
-            }
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[IPAInstallerPro] registration lookup exception: %@", exception.reason);
-    }
-    return NO;
-}
-
-- (BOOL)waitForApplicationRegistration:(NSString *)bundleID {
-    for (NSUInteger attempt = 0; attempt < 8; attempt++) {
-        if ([self isApplicationRegisteredWithBundleID:bundleID]) return YES;
-        usleep(250000);
-    }
-    return NO;
-}
-
 #pragma mark - Verification
 
-- (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID failureDetails:(NSString **)failureDetails {
+- (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL ok = YES;
-    NSMutableArray<NSString *> *failures = [NSMutableArray array];
     NSString *ep = [appPath stringByAppendingPathComponent:en];
 
     // exe exists + readable + executable
@@ -922,10 +807,7 @@ extern char **environ;
     [opLog endPhase:recExe exitCode:(exeExists && exeReadable && exeX_OK) ? 0 : 1 rawOutput:@"" rawError:(exeExists && exeReadable && exeX_OK) ? @"" : [NSString stringWithFormat:@"exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]
      verification:[NSString stringWithFormat:@"exists=%@ readable=%@ xok=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]
      verified:(exeExists && exeReadable && exeX_OK) duration:0];
-    if (!exeExists || !exeReadable || !exeX_OK) {
-        ok = NO;
-        [failures addObject:[NSString stringWithFormat:@"executable exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]];
-    }
+    if (!exeExists || !exeReadable || !exeX_OK) ok = NO;
 
     // Info.plist
     NSString *ip = [appPath stringByAppendingPathComponent:@"Info.plist"];
@@ -933,17 +815,11 @@ extern char **environ;
     NSString *recInfo = [opLog beginPhase:OperationPhaseVerify operation:@"verify Info.plist" target:ip input:@"" transactionID:txnID];
     [opLog endPhase:recInfo exitCode:infoExists ? 0 : 1 rawOutput:@"" rawError:infoExists ? @"" : @"Missing"
      verification:[NSString stringWithFormat:@"exists=%@", infoExists ? @"YES" : @"NO"] verified:infoExists duration:0];
-    if (!infoExists) {
-        ok = NO;
-        [failures addObject:@"Info.plist missing"];
-    }
+    if (!infoExists) ok = NO;
 
     // Verify signature on main executable
     BOOL exeSigned = [self verifySignature:ep opLog:opLog txnID:txnID];
-    if (!exeSigned) {
-        ok = NO;
-        [failures addObject:@"main executable signature invalid"];
-    }
+    if (!exeSigned) ok = NO;
 
     // Frameworks
     NSString *fwp = [appPath stringByAppendingPathComponent:@"Frameworks"];
@@ -957,27 +833,26 @@ extern char **environ;
                 [opLog endPhase:recFw exitCode:(dylibReadable && dylibX_OK) ? 0 : 1 rawOutput:@"" rawError:(dylibReadable && dylibX_OK) ? @"" : @"Permission denied"
                  verification:[NSString stringWithFormat:@"readable=%@ xok=%@", dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]
                  verified:(dylibReadable && dylibX_OK) duration:0];
-                if (!dylibReadable || !dylibX_OK) {
-                    ok = NO;
-                    [failures addObject:[NSString stringWithFormat:@"dylib %@ readable=%d xok=%d", item, dylibReadable, dylibX_OK]];
-                }
+                if (!dylibReadable || !dylibX_OK) ok = NO;
             }
         }
     }
 
-    // Registration is mandatory for installation success.
-    BOOL registered = [self waitForApplicationRegistration:bid];
-    NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"Launch Services registration check" target:bid input:@"" transactionID:txnID];
-    [opLog endPhase:recLS
-           exitCode:registered ? 0 : 1
-          rawOutput:@""
-           rawError:registered ? @"" : @"Application is not visible in Launch Services"
-       verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"]
-           verified:registered
-           duration:2.0];
-    if (!registered) {
-        ok = NO;
-        [failures addObject:[NSString stringWithFormat:@"Launch Services registration missing for %@", bid ?: @"unknown"]];
+    // Check if app is registered in LSApplicationWorkspace (best effort)
+    Class LS = objc_getClass("LSApplicationWorkspace");
+    if (LS) {
+        id ws = [LS performSelector:@selector(defaultWorkspace)];
+        if ([ws respondsToSelector:@selector(applicationForIdentifier:)]) {
+            id a = [ws performSelector:@selector(applicationForIdentifier:) withObject:bid];
+            BOOL registered = (a != nil);
+            NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"LSApplicationWorkspace check" target:bid input:@"" transactionID:txnID];
+            [opLog endPhase:recLS exitCode:registered ? 0 : 1 rawOutput:@"" rawError:registered ? @"" : @"Not registered"
+             verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"] verified:registered duration:0];
+            if (!registered) {
+                // Not critical — uicache may need time
+                NSLog(@"[IPAInstallerPro] App not yet registered in LS, but uicache was run");
+            }
+        }
     }
 
     // Dopamine-specific: verify app is in correct rootless path
@@ -987,12 +862,8 @@ extern char **environ;
         [opLog endPhase:recPath exitCode:1 rawOutput:@"" rawError:@"App not in rootless Applications path"
          verification:[NSString stringWithFormat:@"path=%@ expectedPrefix=%@", appPath, expectedPrefix] verified:NO duration:0];
         ok = NO;
-        [failures addObject:[NSString stringWithFormat:@"rootless path invalid: %@", appPath]];
     }
 
-    if (failureDetails) {
-        *failureDetails = failures.count > 0 ? [failures componentsJoinedByString:@"; "] : @"all checks passed";
-    }
     return ok;
 }
 

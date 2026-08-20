@@ -13,6 +13,9 @@
 @property (nonatomic, strong) UILabel *toastLabel;
 @property (nonatomic, strong) UIActivityIndicatorView *loadingIndicator;
 @property (nonatomic, assign) BOOL isLoading;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *ipaMetadataCache;
+@property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
+@property (nonatomic, assign) NSUInteger ipaLoadGeneration;
 @end
 
 @implementation MainViewController
@@ -23,6 +26,8 @@
     self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
+    self.ipaMetadataCache = [NSMutableDictionary dictionary];
+    self.ipaCacheQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.ipa-metadata-cache", DISPATCH_QUEUE_SERIAL);
 
     [self setupNavigationBar];
     [self setupTableView];
@@ -124,9 +129,36 @@
     });
 }
 
+- (NSString *)ipaCacheKeyForPath:(NSString *)path attributes:(NSDictionary *)attrs {
+    if (path.length == 0 || !attrs) return nil;
+    unsigned long long size = [attrs[NSFileSize] unsignedLongLongValue];
+    NSTimeInterval modified = [attrs[NSFileModificationDate] timeIntervalSince1970];
+    unsigned long long fileNumber = [attrs[NSFileSystemFileNumber] unsignedLongLongValue];
+    return [NSString stringWithFormat:@"%@|%llu|%.6f|%llu", path, size, modified, fileNumber];
+}
+
+- (IPAExtractedInfo *)placeholderInfoForIPAPath:(NSString *)path size:(NSNumber *)size {
+    IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
+    info.filePath = path;
+    info.fileSize = size ?: @0;
+    info.formattedSize = [[IPAExtractor sharedExtractor] formatFileSize:info.fileSize.longLongValue];
+    info.name = [[path.lastPathComponent stringByDeletingPathExtension] copy];
+    info.displayName = info.name;
+    info.version = @"جارٍ قراءة البيانات...";
+    info.bundleID = @"جارٍ قراءة البيانات...";
+    info.buildVersion = @"";
+    info.minOSVersion = @"غير محدد";
+    info.teamIdentifier = @"غير معروف";
+    info.supportedDevices = @[];
+    info.architectures = @[];
+    return info;
+}
+
 - (void)loadIPAFiles {
     if (self.isLoading) return;
     self.isLoading = YES;
+    self.ipaLoadGeneration += 1;
+    NSUInteger loadGeneration = self.ipaLoadGeneration;
 
     dispatch_async(dispatch_get_main_queue(), ^{
         self.loadingIndicator.hidden = NO;
@@ -134,10 +166,11 @@
         self.emptyLabel.hidden = YES;
     });
 
-    // Run heavy file operations on background thread
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSMutableArray *foundFiles = [NSMutableArray array];
-
+    // Phase 1: enumerate files and show the list immediately. IPA parsing is
+    // deliberately deferred so a large archive cannot block first paint.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSMutableArray<IPAExtractedInfo *> *foundFiles = [NSMutableArray array];
+        NSMutableArray<NSDictionary *> *pending = [NSMutableArray array];
         NSArray *directories = @[
             @"/var/mobile/Documents/IPAInstaller",
             @"/var/mobile/Documents",
@@ -154,20 +187,35 @@
                 }
                 continue;
             }
+
             NSArray *contents = [fm contentsOfDirectoryAtPath:dir error:nil];
             for (NSString *file in contents) {
-                if ([file.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
-                    NSString *path = [dir stringByAppendingPathComponent:file];
-                    if ([seenIPAPaths containsObject:path]) continue;
-                    [seenIPAPaths addObject:path];
-                    IPAExtractedInfo *info = [[IPAExtractor sharedExtractor] extractInfoFromIPA:path];
-                    if (info) [foundFiles addObject:info];
+                if (![file.pathExtension.lowercaseString isEqualToString:@"ipa"]) continue;
+                NSString *path = [dir stringByAppendingPathComponent:file];
+                if ([seenIPAPaths containsObject:path]) continue;
+                [seenIPAPaths addObject:path];
+
+                NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
+                NSString *cacheKey = [self ipaCacheKeyForPath:path attributes:attrs];
+                NSDictionary *cachedRecord = nil;
+                dispatch_sync(self.ipaCacheQueue, ^{
+                    cachedRecord = self.ipaMetadataCache[path];
+                });
+
+                IPAExtractedInfo *cachedInfo = cachedRecord[@"info"];
+                if ([cachedRecord[@"key"] isEqualToString:cacheKey] && cachedInfo) {
+                    [foundFiles addObject:cachedInfo];
+                } else {
+                    IPAExtractedInfo *placeholder = [self placeholderInfoForIPAPath:path size:attrs[NSFileSize]];
+                    [foundFiles addObject:placeholder];
+                    [pending addObject:@{ @"path": path, @"key": cacheKey ?: @"", @"placeholder": placeholder }];
                 }
             }
         }
 
-        // Update UI on main thread
+        // Phase 1 UI commit: discovery is complete; do not wait for unzip/icon work.
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (loadGeneration != self.ipaLoadGeneration) return;
             [self.ipaFiles removeAllObjects];
             [self.ipaFiles addObjectsFromArray:foundFiles];
             [self.tableView reloadData];
@@ -177,6 +225,37 @@
             [self.loadingIndicator stopAnimating];
             self.loadingIndicator.hidden = YES;
             self.isLoading = NO;
+        });
+
+        // Phase 2: enrich only uncached/changed files. Each result is committed
+        // only if the file still has the same size, mtime and inode.
+        if (pending.count == 0) return;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            for (NSDictionary *job in pending) {
+                NSString *path = job[@"path"];
+                NSString *originalKey = job[@"key"];
+                IPAExtractedInfo *parsed = [[IPAExtractor sharedExtractor] extractInfoFromIPA:path];
+                if (!parsed) continue;
+
+                NSDictionary *currentAttrs = [fm attributesOfItemAtPath:path error:nil];
+                NSString *currentKey = [self ipaCacheKeyForPath:path attributes:currentAttrs];
+                if (![currentKey isEqualToString:originalKey]) continue;
+
+                dispatch_sync(self.ipaCacheQueue, ^{
+                    self.ipaMetadataCache[path] = @{ @"key": originalKey, @"info": parsed };
+                });
+
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (loadGeneration != self.ipaLoadGeneration) return;
+                    NSUInteger index = [self.ipaFiles indexOfObjectPassingTest:^BOOL(IPAExtractedInfo *obj, NSUInteger idx, BOOL *stop) {
+                        return [obj.filePath isEqualToString:path];
+                    }];
+                    if (index != NSNotFound) {
+                        self.ipaFiles[index] = parsed;
+                        [self.tableView reloadData];
+                    }
+                });
+            }
         });
     });
 }
@@ -236,6 +315,9 @@
             NSString *destPath = [destDir stringByAppendingPathComponent:fileName];
             if ([fm fileExistsAtPath:destPath]) {
                 [fm removeItemAtPath:destPath error:nil];
+                dispatch_sync(self.ipaCacheQueue, ^{
+                    [self.ipaMetadataCache removeObjectForKey:destPath];
+                });
             }
 
             NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
@@ -330,6 +412,9 @@
                                                                              handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
         IPAExtractedInfo *info = self.ipaFiles[indexPath.row];
         [[NSFileManager defaultManager] removeItemAtPath:info.filePath error:nil];
+        dispatch_sync(self.ipaCacheQueue, ^{
+            [self.ipaMetadataCache removeObjectForKey:info.filePath];
+        });
         [self.ipaFiles removeObjectAtIndex:indexPath.row];
         [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
         completionHandler(YES);

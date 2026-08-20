@@ -110,64 +110,6 @@
     return nil;
 }
 
-- (UIImage *)iconFromApplicationBundleURL:(NSURL *)bundleURL {
-    if (![bundleURL isKindOfClass:[NSURL class]]) return nil;
-
-    NSBundle *appBundle = [NSBundle bundleWithURL:bundleURL];
-    if (!appBundle) return nil;
-
-    NSDictionary *info = appBundle.infoDictionary;
-    NSMutableArray<NSString *> *iconNames = [NSMutableArray array];
-
-    NSString *iconName = info[@"CFBundleIconName"];
-    if ([iconName isKindOfClass:[NSString class]] && iconName.length > 0) {
-        [iconNames addObject:iconName];
-    }
-
-    for (NSString *iconsKey in @[@"CFBundleIcons~ipad", @"CFBundleIcons"]) {
-        NSDictionary *icons = info[iconsKey];
-        NSDictionary *primaryIcon = [icons isKindOfClass:[NSDictionary class]] ? icons[@"CFBundlePrimaryIcon"] : nil;
-        NSArray *files = [primaryIcon isKindOfClass:[NSDictionary class]] ? primaryIcon[@"CFBundleIconFiles"] : nil;
-        if ([files isKindOfClass:[NSArray class]]) {
-            for (id file in files) {
-                if ([file isKindOfClass:[NSString class]] && [file length] > 0 && ![iconNames containsObject:file]) {
-                    [iconNames addObject:file];
-                }
-            }
-        }
-    }
-
-    id legacyFiles = info[@"CFBundleIconFiles"];
-    if ([legacyFiles isKindOfClass:[NSString class]]) {
-        legacyFiles = @[legacyFiles];
-    }
-    if ([legacyFiles isKindOfClass:[NSArray class]]) {
-        for (id file in legacyFiles) {
-            if ([file isKindOfClass:[NSString class]] && [file length] > 0 && ![iconNames containsObject:file]) {
-                [iconNames addObject:file];
-            }
-        }
-    }
-
-    if (![iconNames containsObject:@"AppIcon"]) [iconNames addObject:@"AppIcon"];
-
-    for (NSString *name in iconNames) {
-        UIImage *candidate = [UIImage imageNamed:name inBundle:appBundle compatibleWithTraitCollection:nil];
-        if (candidate) return candidate;
-
-        NSString *resourcePath = [appBundle pathForResource:name ofType:nil];
-        if (!resourcePath && name.pathExtension.length == 0) {
-            resourcePath = [appBundle pathForResource:name ofType:@"png"];
-        }
-        if (resourcePath.length > 0) {
-            candidate = [UIImage imageWithContentsOfFile:resourcePath];
-            if (candidate) return candidate;
-        }
-    }
-
-    return nil;
-}
-
 - (UIImage *)iconForBundleID:(NSString *)bundleID {
     if (!bundleID) return nil;
     UIImage *cached = [self.iconCache objectForKey:bundleID];
@@ -179,32 +121,15 @@
         if (LSApplicationProxy_class && [LSApplicationProxy_class respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
             id proxy = [LSApplicationProxy_class performSelector:@selector(applicationProxyForIdentifier:) withObject:bundleID];
             if (proxy) {
-                NSArray<NSNumber *> *variants = @[@(0), @(1), @(2), @(10)];
-                SEL iconSelector = @selector(iconDataForVariant:);
-                if ([proxy respondsToSelector:iconSelector]) {
-                    NSMethodSignature *signature = [proxy methodSignatureForSelector:iconSelector];
-                    for (NSNumber *variant in variants) {
-                        if (!signature || signature.numberOfArguments < 3) continue;
-
-                        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                        [invocation setTarget:proxy];
-                        [invocation setSelector:iconSelector];
-                        int variantValue = variant.intValue;
-                        [invocation setArgument:&variantValue atIndex:2];
-                        [invocation invoke];
-
-                        __unsafe_unretained NSData *iconData = nil;
-                        [invocation getReturnValue:&iconData];
-                        if (iconData.length > 0) {
+                NSArray *variants = @[@(0), @(1), @(2), @(10)];
+                for (NSNumber *variant in variants) {
+                    if ([proxy respondsToSelector:@selector(iconDataForVariant:)]) {
+                        NSData *iconData = [proxy performSelector:@selector(iconDataForVariant:) withObject:variant];
+                        if (iconData) {
                             icon = [UIImage imageWithData:iconData];
                             if (icon) break;
                         }
                     }
-                }
-
-                if (!icon && [proxy respondsToSelector:@selector(bundleURL)]) {
-                    NSURL *bundleURL = [proxy performSelector:@selector(bundleURL)];
-                    icon = [self iconFromApplicationBundleURL:bundleURL];
                 }
             }
         }
