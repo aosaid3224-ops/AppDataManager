@@ -37,6 +37,12 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
 @property (nonatomic, strong) NSMutableSet<NSString *> *signedPaths;
+- (BOOL)verifyInstallation:(NSString *)appPath
+                  bundleID:(NSString *)bid
+                   exeName:(NSString *)en
+                     opLog:(OperationLog *)opLog
+                    txnID:(NSString *)txnID
+            failureDetails:(NSString **)failureDetails;
 @end
 
 @implementation DirectInstallationProvider
@@ -687,16 +693,19 @@ extern char **environ;
 
     // PHASE 9: VERIFY (comprehensive)
     NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
-    BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
-    [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
-     verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
+    NSString *verifyDetails = nil;
+    BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID failureDetails:&verifyDetails];
+    NSString *verificationText = [NSString stringWithFormat:@"bundleID=%@ exe=%@ %@", bundleID, exeName, verifyDetails ?: @"all checks passed"];
+    [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : (verifyDetails ?: @"Final verification failed")
+     verification:verificationText verified:finalOk duration:0];
 
     if (!finalOk) {
         // ROLLBACK
         [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
         [fm removeItemAtPath:tmp error:nil];
         [opLog endTransaction:txnID finalResult:OperationResultFailed];
-        if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+        NSString *message = [NSString stringWithFormat:@"Final verification failed: %@, rollback executed", verifyDetails ?: @"unknown check"];
+        if (completion) completion([InstallationResult failureResult:message provider:[self providerName] transaction:txnID error:nil evidence:@{ @"verification": verifyDetails ?: @"unknown" }]);
         return;
     }
 
@@ -898,9 +907,10 @@ extern char **environ;
 
 #pragma mark - Verification
 
-- (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+- (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID failureDetails:(NSString **)failureDetails {
     NSFileManager *fm = [NSFileManager defaultManager];
     BOOL ok = YES;
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
     NSString *ep = [appPath stringByAppendingPathComponent:en];
 
     // exe exists + readable + executable
@@ -912,7 +922,10 @@ extern char **environ;
     [opLog endPhase:recExe exitCode:(exeExists && exeReadable && exeX_OK) ? 0 : 1 rawOutput:@"" rawError:(exeExists && exeReadable && exeX_OK) ? @"" : [NSString stringWithFormat:@"exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]
      verification:[NSString stringWithFormat:@"exists=%@ readable=%@ xok=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]
      verified:(exeExists && exeReadable && exeX_OK) duration:0];
-    if (!exeExists || !exeReadable || !exeX_OK) ok = NO;
+    if (!exeExists || !exeReadable || !exeX_OK) {
+        ok = NO;
+        [failures addObject:[NSString stringWithFormat:@"executable exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]];
+    }
 
     // Info.plist
     NSString *ip = [appPath stringByAppendingPathComponent:@"Info.plist"];
@@ -920,11 +933,17 @@ extern char **environ;
     NSString *recInfo = [opLog beginPhase:OperationPhaseVerify operation:@"verify Info.plist" target:ip input:@"" transactionID:txnID];
     [opLog endPhase:recInfo exitCode:infoExists ? 0 : 1 rawOutput:@"" rawError:infoExists ? @"" : @"Missing"
      verification:[NSString stringWithFormat:@"exists=%@", infoExists ? @"YES" : @"NO"] verified:infoExists duration:0];
-    if (!infoExists) ok = NO;
+    if (!infoExists) {
+        ok = NO;
+        [failures addObject:@"Info.plist missing"];
+    }
 
     // Verify signature on main executable
     BOOL exeSigned = [self verifySignature:ep opLog:opLog txnID:txnID];
-    if (!exeSigned) ok = NO;
+    if (!exeSigned) {
+        ok = NO;
+        [failures addObject:@"main executable signature invalid"];
+    }
 
     // Frameworks
     NSString *fwp = [appPath stringByAppendingPathComponent:@"Frameworks"];
@@ -938,7 +957,10 @@ extern char **environ;
                 [opLog endPhase:recFw exitCode:(dylibReadable && dylibX_OK) ? 0 : 1 rawOutput:@"" rawError:(dylibReadable && dylibX_OK) ? @"" : @"Permission denied"
                  verification:[NSString stringWithFormat:@"readable=%@ xok=%@", dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]
                  verified:(dylibReadable && dylibX_OK) duration:0];
-                if (!dylibReadable || !dylibX_OK) ok = NO;
+                if (!dylibReadable || !dylibX_OK) {
+                    ok = NO;
+                    [failures addObject:[NSString stringWithFormat:@"dylib %@ readable=%d xok=%d", item, dylibReadable, dylibX_OK]];
+                }
             }
         }
     }
@@ -953,7 +975,10 @@ extern char **environ;
        verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"]
            verified:registered
            duration:2.0];
-    if (!registered) ok = NO;
+    if (!registered) {
+        ok = NO;
+        [failures addObject:[NSString stringWithFormat:@"Launch Services registration missing for %@", bid ?: @"unknown"]];
+    }
 
     // Dopamine-specific: verify app is in correct rootless path
     NSString *expectedPrefix = @"/var/jb/Applications/";
@@ -962,8 +987,12 @@ extern char **environ;
         [opLog endPhase:recPath exitCode:1 rawOutput:@"" rawError:@"App not in rootless Applications path"
          verification:[NSString stringWithFormat:@"path=%@ expectedPrefix=%@", appPath, expectedPrefix] verified:NO duration:0];
         ok = NO;
+        [failures addObject:[NSString stringWithFormat:@"rootless path invalid: %@", appPath]];
     }
 
+    if (failureDetails) {
+        *failureDetails = failures.count > 0 ? [failures componentsJoinedByString:@"; "] : @"all checks passed";
+    }
     return ok;
 }
 

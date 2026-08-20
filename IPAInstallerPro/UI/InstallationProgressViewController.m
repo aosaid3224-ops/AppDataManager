@@ -255,13 +255,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Mark all previous phases as success
-        for (NSInteger i = 0; i < uiPhase; i++) {
-            if (self.phaseViews[i].phaseState == PhaseVisualStatePending) {
-                [self.phaseViews[i] setState:PhaseVisualStateSuccess animated:YES];
-            }
-        }
-        // Activate current phase
+        // A phase is successful only after its own record is updated successfully.
+        // Do not mark earlier phases green merely because a later record was added;
+        // that made a failed copy/sign phase appear successful in the final screen.
         [self.phaseViews[uiPhase] setState:PhaseVisualStateActive animated:YES];
         self.currentPhaseIndex = uiPhase;
 
@@ -457,10 +453,47 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)handleCompletionFailure:(InstallationResult *)result {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSInteger failIdx = self.currentPhaseIndex >= 0 ? self.currentPhaseIndex : 0;
-        if (failIdx < (NSInteger)self.phaseViews.count) {
-            [self.phaseViews[failIdx] setState:PhaseVisualStateFailed animated:YES];
+        // Rebuild the five visual states from the transaction audit trail. The
+        // completion callback can race with queued OperationLog notifications,
+        // so currentPhaseIndex alone is not authoritative.
+        NSMutableArray<NSNumber *> *phaseStates = [NSMutableArray arrayWithCapacity:self.phaseViews.count];
+        for (NSUInteger i = 0; i < self.phaseViews.count; i++) {
+            [phaseStates addObject:@(PhaseVisualStatePending)];
         }
+
+        NSArray<OperationRecord *> *records = [[OperationLog sharedLog] recordsForTransaction:self.currentTxnID] ?: @[];
+        NSInteger highestFailedPhase = -1;
+        for (OperationRecord *record in records) {
+            NSInteger phase = [self uiPhaseIndexForOperationPhase:record.phase];
+            if (phase < 0 || phase >= (NSInteger)self.phaseViews.count) continue;
+            if (record.result == OperationResultFailed) {
+                phaseStates[phase] = @(PhaseVisualStateFailed);
+                highestFailedPhase = MAX(highestFailedPhase, phase);
+            } else if (record.result == OperationResultSuccess &&
+                       phaseStates[phase].integerValue != PhaseVisualStateFailed) {
+                phaseStates[phase] = @(PhaseVisualStateSuccess);
+            } else if (record.result == OperationResultPending &&
+                       phaseStates[phase].integerValue == PhaseVisualStatePending) {
+                phaseStates[phase] = @(PhaseVisualStateActive);
+            }
+        }
+
+        // Preserve the provider's explicit failure category even if its final
+        // record notification was queued behind the completion callback.
+        NSString *message = result.message.lowercaseString ?: @"";
+        if ([message containsString:@"final verification"]) {
+            highestFailedPhase = 4;
+            phaseStates[4] = @(PhaseVisualStateFailed);
+        }
+        if (highestFailedPhase < 0) {
+            highestFailedPhase = self.currentPhaseIndex >= 0 ? self.currentPhaseIndex : 0;
+            phaseStates[highestFailedPhase] = @(PhaseVisualStateFailed);
+        }
+
+        for (NSUInteger i = 0; i < self.phaseViews.count; i++) {
+            [self.phaseViews[i] setState:phaseStates[i].integerValue animated:YES];
+        }
+        self.currentPhaseIndex = highestFailedPhase;
         self.headerLabel.text = @"فشل التثبيت ✗";
         self.headerLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0];
         [self showReportCard:result success:NO];
