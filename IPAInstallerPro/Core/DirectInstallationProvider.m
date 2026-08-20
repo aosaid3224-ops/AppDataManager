@@ -34,6 +34,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mkdirPath;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
+- (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -703,11 +704,46 @@ extern char **environ;
             } else if ([item hasSuffix:@".framework"]) {
                 NSString *fn = [item stringByDeletingPathExtension];
                 [self signBin:[ip stringByAppendingPathComponent:fn] hasHelper:hasH label:[@"fw:" stringByAppendingString:fn] opLog:opLog txnID:txnID];
+            } else if ([item hasSuffix:@".appex"] || [item hasSuffix:@".xpc"]) {
+                // Complex apps commonly contain extension executables. They must
+                // be signed with their own original entitlements, not generic app
+                // entitlements, otherwise launch can crash after registration.
+                [self signBundleExecutableAtPath:ip
+                                           label:[NSString stringWithFormat:@"%@:%@", [item.pathExtension lowercaseString], item]
+                                      hasHelper:hasH opLog:opLog txnID:txnID];
             }
         } else if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
             [self signBin:ip hasHelper:hasH label:[@"dylib:" stringByAppendingString:item] opLog:opLog txnID:txnID];
         }
     }
+}
+
+- (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (bundlePath.length == 0 || ![fm fileExistsAtPath:bundlePath]) return NO;
+    NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
+    if (executable.length == 0) return NO;
+    NSString *executablePath = [bundlePath stringByAppendingPathComponent:executable];
+    if (![fm fileExistsAtPath:executablePath]) return NO;
+
+    NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"sign extension (%@)", label ?: @"bundle"] target:executablePath input:@"preserve-entitlements" transactionID:txnID];
+    NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", executablePath]];
+    NSString *entPath = nil;
+    NSArray *signArgs = nil;
+    if (entOutput.length > 0) {
+        entPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ipa-ent-%@.plist", [NSUUID UUID].UUIDString]];
+        [entOutput writeToFile:entPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        signArgs = @[[NSString stringWithFormat:@"-S%@", entPath], executablePath];
+    } else {
+        signArgs = @[@"-S", executablePath];
+    }
+
+    BOOL signedOK = hasH ? [self runRoot:self.ldidPath args:signArgs opLog:opLog recordID:rec]
+                         : [self runCmd:self.ldidPath args:signArgs opLog:opLog recordID:rec];
+    if (entPath) [fm removeItemAtPath:entPath error:nil];
+    return signedOK;
 }
 
 - (void)signBin:(NSString *)path hasHelper:(BOOL)hasH label:(NSString *)label opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
@@ -767,6 +803,39 @@ extern char **environ;
     } else {
         [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
     }
+}
+
+- (NSArray<NSString *> *)embeddedExecutablePathsAtPath:(NSString *)appPath {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:appPath];
+    NSString *relativePath = nil;
+    while ((relativePath = [enumerator nextObject])) {
+        NSString *lower = relativePath.lowercaseString;
+        if (![lower hasSuffix:@".appex"] && ![lower hasSuffix:@".xpc"]) continue;
+        NSString *bundlePath = [appPath stringByAppendingPathComponent:relativePath];
+        BOOL isDirectory = NO;
+        if (![fm fileExistsAtPath:bundlePath isDirectory:&isDirectory] || !isDirectory) continue;
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+        NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
+        NSString *executablePath = executable.length > 0 ? [bundlePath stringByAppendingPathComponent:executable] : nil;
+        if (executablePath.length > 0 && [fm fileExistsAtPath:executablePath]) [paths addObject:executablePath];
+        [enumerator skipDescendants];
+    }
+    return [paths copy];
+}
+
+- (BOOL)verifyEmbeddedBundleSignaturesAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSArray<NSString *> *paths = [self embeddedExecutablePathsAtPath:appPath];
+    BOOL allValid = YES;
+    for (NSString *path in paths) {
+        BOOL valid = [self runCmd:self.ldidPath args:@[@"-d", path] opLog:nil recordID:nil];
+        NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"verify embedded executable signature" target:path input:@"ldid -d" transactionID:txnID];
+        [opLog endPhase:rec exitCode:valid ? 0 : 1 rawOutput:@"" rawError:valid ? @"" : @"Embedded executable signature check failed"
+         verification:[NSString stringWithFormat:@"path=%@ signed=%@", path, valid ? @"YES" : @"NO"] verified:valid duration:0];
+        if (!valid) allValid = NO;
+    }
+    return allValid;
 }
 
 - (void)fixFrameworks:(NSString *)appPath hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
@@ -837,6 +906,11 @@ extern char **environ;
             }
         }
     }
+
+    // Embedded extensions are separate code bundles. A main executable can pass
+    // verification while an unsigned appex/xpc crashes the host at launch.
+    BOOL embeddedSignaturesOK = [self verifyEmbeddedBundleSignaturesAtPath:appPath opLog:opLog txnID:txnID];
+    if (!embeddedSignaturesOK) ok = NO;
 
     // Check if app is registered in LSApplicationWorkspace (best effort)
     Class LS = objc_getClass("LSApplicationWorkspace");
