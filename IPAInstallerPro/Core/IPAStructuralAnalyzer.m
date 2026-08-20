@@ -112,7 +112,6 @@
 
     while ((relativePath = [enumerator nextObject])) {
         NSString *fullPath = [payloadPath stringByAppendingPathComponent:relativePath];
-        NSString *lower = relativePath.lowercaseString;
 
         // Skip symlinks for safety
         NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
