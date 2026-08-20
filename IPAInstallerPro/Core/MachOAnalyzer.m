@@ -37,11 +37,21 @@
 #define MH_DYLINKER     7
 #define MH_BUNDLE       8
 
+#ifndef CPU_TYPE_ARM
 #define CPU_TYPE_ARM        0x0000000c
+#endif
+#ifndef CPU_TYPE_X86
 #define CPU_TYPE_X86        0x00000007
+#endif
+#ifndef CPU_TYPE_ARM64
 #define CPU_TYPE_ARM64      0x0100000c
+#endif
+#ifndef CPU_TYPE_ARM64_32
 #define CPU_TYPE_ARM64_32   0x0200000c
+#endif
+#ifndef CPU_TYPE_X86_64
 #define CPU_TYPE_X86_64     0x01000007
+#endif
 
 #define PLATFORM_MACOS      1
 #define PLATFORM_IOS        2
@@ -444,7 +454,6 @@ static inline uint64_t swap64(uint64_t v) {
     uint32_t cpusubtype = isSwap ? swap32(mh->cpusubtype) : mh->cpusubtype;
     uint32_t filetype = isSwap ? swap32(mh->filetype) : mh->filetype;
     uint32_t ncmds = isSwap ? swap32(mh->ncmds) : mh->ncmds;
-    uint32_t sizeofcmds = isSwap ? swap32(mh->sizeofcmds) : mh->sizeofcmds;
 
     result.machOType = filetype;
     result.machOTypeName = [self machOTypeName:filetype];
