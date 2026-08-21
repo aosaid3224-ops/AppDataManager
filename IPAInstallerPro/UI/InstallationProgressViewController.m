@@ -2,7 +2,7 @@
 //  InstallationProgressViewController.m
 //  IPAInstallerPro
 //
-//  v2.1.22 — Event-Driven Live Installation UI
+//  v2.1.23 — Event-Driven Live Installation UI
 //  Observes OperationLog notifications for real-time phase updates.
 //  No timers. No fake progress. No auto-launch.
 //
@@ -105,28 +105,28 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     void (^updates)(void) = ^{
         switch (self.phaseState) {
             case PhaseVisualStatePending:
-                self.iconLabel.text = @"○";
+                self.iconLabel.text = @"\u25cb";
                 self.iconLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
                 self.titleLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
                 self.subtitleLabel.textColor = [UIColor colorWithWhite:0.35 alpha:1.0];
                 self.pulsingDot.hidden = YES;
                 break;
             case PhaseVisualStateActive:
-                self.iconLabel.text = @"◉";
+                self.iconLabel.text = @"\u25c9";
                 self.iconLabel.textColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
                 self.titleLabel.textColor = [UIColor whiteColor];
                 self.subtitleLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
                 self.pulsingDot.hidden = NO;
                 break;
             case PhaseVisualStateSuccess:
-                self.iconLabel.text = @"✓";
+                self.iconLabel.text = @"\u2713";
                 self.iconLabel.textColor = [UIColor colorWithRed:0.3 green:0.85 blue:0.4 alpha:1.0];
                 self.titleLabel.textColor = [UIColor whiteColor];
                 self.subtitleLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
                 self.pulsingDot.hidden = YES;
                 break;
             case PhaseVisualStateFailed:
-                self.iconLabel.text = @"✗";
+                self.iconLabel.text = @"\u2717";
                 self.iconLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0];
                 self.titleLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0];
                 self.subtitleLabel.textColor = [UIColor colorWithRed:0.7 green:0.3 blue:0.3 alpha:1.0];
@@ -191,7 +191,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
-    self.title = @"تثبيت التطبيق";
+    self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     [self setupUI];
     [self registerForOperationLogNotifications];
     [self startInstallation];
@@ -215,13 +215,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 }
 
 /*
- * Maps OperationPhase → UI Visual Phase (0-4)
- *
- * 0: التحقق من ملف IPA       → OperationPhaseIPAOpen
- * 1: استخراج التطبيق          → OperationPhaseIPAExtract, OperationPhaseAppIdentify
- * 2: تثبيت الملفات            → OperationPhaseFileCopy, Framework, Dylib, Sign, Permission
- * 3: تسجيل التطبيق            → OperationPhaseUICache
- * 4: التحقق النهائي           → OperationPhaseVerify, OperationPhaseComplete
+ * Maps OperationPhase -> UI Visual Phase (0-4)
  */
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
     switch (opPhase) {
@@ -242,7 +236,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         case OperationPhaseComplete:
             return 4;
         default:
-            return -1; // Unknown / don't map
+            return -1;
     }
 }
 
@@ -255,17 +249,13 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Mark all previous phases as success
         for (NSInteger i = 0; i < uiPhase; i++) {
             if (self.phaseViews[i].phaseState == PhaseVisualStatePending) {
                 [self.phaseViews[i] setState:PhaseVisualStateSuccess animated:YES];
             }
         }
-        // Activate current phase
         [self.phaseViews[uiPhase] setState:PhaseVisualStateActive animated:YES];
         self.currentPhaseIndex = uiPhase;
-
-        // Update progress
         float progress = (float)(uiPhase + 1) / (float)self.phaseViews.count;
         [self.progressView setProgress:progress animated:YES];
     });
@@ -280,7 +270,10 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (record.result == OperationResultSuccess) {
+        // FIX: Treat Partial / Skipped as Success so extraction never shows red X
+        if (record.result == OperationResultSuccess ||
+            record.result == OperationResultPartial ||
+            record.result == OperationResultSkipped) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateSuccess animated:YES];
         } else if (record.result == OperationResultFailed) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateFailed animated:YES];
@@ -305,7 +298,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     _headerLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     _headerLabel.textColor = [UIColor whiteColor];
     _headerLabel.textAlignment = NSTextAlignmentCenter;
-    _headerLabel.text = @"جارٍ التثبيت...";
+    _headerLabel.text = @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062b\u0628\u064a\u062a...";
     [_containerView addSubview:_headerLabel];
 
     _appNameLabel = [[UILabel alloc] init];
@@ -332,11 +325,11 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     _phaseViews = [NSMutableArray array];
     NSArray *phases = @[
-        @[@"التحقق من ملف IPA",       @"جارٍ التحقق من سلامة الملف..."],
-        @[@"استخراج التطبيق",        @"جارٍ فك ضغط المحتويات..."],
-        @[@"تثبيت الملفات",          @"جارٍ النسخ والتوقيع..."],
-        @[@"تسجيل التطبيق",          @"جارٍ التسجيل في النظام..."],
-        @[@"التحقق النهائي",         @"جارٍ التأكد من اكتمال التثبيت..."]
+        @[@"\u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0645\u0644\u0641 IPA",       @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0633\u0644\u0627\u0645\u0629 \u0627\u0644\u0645\u0644\u0641..."],
+        @[@"\u0627\u0633\u062a\u062e\u0631\u0627\u062c \u0627\u0644\u062a\u0637\u0628\u064a\u0642",        @"\u062c\u0627\u0631\u064d \u0641\u0643 \u0636\u063a\u0637 \u0627\u0644\u0645\u062d\u062a\u0648\u064a\u0627\u062a..."],
+        @[@"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u0645\u0644\u0641\u0627\u062a",          @"\u062c\u0627\u0631\u064d \u0627\u0644\u0646\u0633\u062e \u0648\u0627\u0644\u062a\u0648\u0642\u064a\u0639..."],
+        @[@"\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062a\u0637\u0628\u064a\u0642",          @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u0633\u062c\u064a\u0644 \u0641\u064a \u0627\u0644\u0646\u0638\u0627\u0645..."],
+        @[@"\u0627\u0644\u062a\u062d\u0642\u0642 \u0627\u0644\u0646\u0647\u0627\u0626\u064a",         @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u0623\u0643\u062f \u0645\u0646 \u0627\u0643\u062a\u0645\u0627\u0644 \u0627\u0644\u062a\u062b\u0628\u064a\u062a..."]
     ];
     for (NSArray *p in phases) {
         InstallPhaseView *pv = [[InstallPhaseView alloc] initWithTitle:p[0] subtitle:p[1]];
@@ -376,8 +369,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     ]];
 }
 
-#pragma mark - Phase Control
-
 - (void)setPhase:(NSInteger)index state:(PhaseVisualState)state {
     if (index < 0 || index >= (NSInteger)self.phaseViews.count) return;
     [self.phaseViews[index] setState:state animated:YES];
@@ -388,11 +379,10 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)startInstallation {
     if (!self.ipaPath) {
-        [self showFinalState:NO message:@"مسار IPA غير صالح"];
+        [self showFinalState:NO message:@"\u0645\u0633\u0627\u0631 IPA \u063a\u064a\u0631 \u0635\u0627\u0644\u062d"];
         return;
     }
 
-    // ─── Full State Reset for sequential installs ───
     self.isDone = NO;
     self.hasFailed = NO;
     self.installedBundleID = nil;
@@ -405,7 +395,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         self.reportCard = nil;
     }
 
-    self.headerLabel.text = @"جارٍ التثبيت...";
+    self.headerLabel.text = @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062b\u0628\u064a\u062a...";
     self.headerLabel.textColor = [UIColor whiteColor];
     self.appNameLabel.text = [self.ipaPath lastPathComponent] ?: @"";
     [self.progressView setProgress:0.0 animated:NO];
@@ -416,7 +406,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     InstallationEngine *engine = [InstallationEngine sharedEngine];
     if (engine.activeTransactionID && engine.activeTransactionID.length > 0) {
-        [self showFinalState:NO message:@"تثبيت آخر قيد التقدم"];
+        [self showFinalState:NO message:@"\u062a\u062b\u0628\u064a\u062a \u0622\u062e\u0631 \u0642\u064a\u062f \u0627\u0644\u062a\u0642\u062f\u0645"];
         return;
     }
 
@@ -426,8 +416,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     __weak typeof(self) weakSelf = self;
     [engine installIPA:self.ipaPath
          progressBlock:^(InstallationStage stage, NSString *statusMessage, float progress) {
-        // Engine progress is coarse; OperationLog notifications drive the UI phases.
-        // We use this only for final completion/failure signals.
     } completion:^(InstallationResult *result) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
@@ -443,14 +431,13 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)handleCompletionSuccess:(InstallationResult *)result {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Ensure all phases show success
         for (InstallPhaseView *pv in self.phaseViews) {
             if (pv.phaseState == PhaseVisualStateActive || pv.phaseState == PhaseVisualStatePending) {
                 [pv setState:PhaseVisualStateSuccess animated:YES];
             }
         }
         [self.progressView setProgress:1.0 animated:YES];
-        self.headerLabel.text = @"اكتمل التثبيت ✓";
+        self.headerLabel.text = @"\u0627\u0643\u062a\u0645\u0644 \u0627\u0644\u062a\u062b\u0628\u064a\u062a \u2713";
         [self showReportCard:result success:YES];
     });
 }
@@ -461,7 +448,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         if (failIdx < (NSInteger)self.phaseViews.count) {
             [self.phaseViews[failIdx] setState:PhaseVisualStateFailed animated:YES];
         }
-        self.headerLabel.text = @"فشل التثبيت ✗";
+        self.headerLabel.text = @"\u0641\u0634\u0644 \u0627\u0644\u062a\u062b\u0628\u064a\u062a \u2717";
         self.headerLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0];
         [self showReportCard:result success:NO];
     });
@@ -487,17 +474,15 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     stack.spacing = 14;
     [card addSubview:stack];
 
-    // Status header
     UILabel *statusLabel = [[UILabel alloc] init];
     statusLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     statusLabel.textAlignment = NSTextAlignmentCenter;
-    statusLabel.text = success ? @"✓ تم التثبيت بنجاح" : @"✗ فشل التثبيت";
+    statusLabel.text = success ? @"\u2713 \u062a\u0645 \u0627\u0644\u062a\u062b\u0628\u064a\u062a \u0628\u0646\u062c\u0627\u062d" : @"\u2717 \u0641\u0634\u0644 \u0627\u0644\u062a\u062b\u0628\u064a\u062a";
     statusLabel.textColor = success
         ? [UIColor colorWithRed:0.3 green:0.85 blue:0.4 alpha:1.0]
         : [UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0];
     [stack addArrangedSubview:statusLabel];
 
-    // Divider
     UIView *divider = [[UIView alloc] init];
     divider.translatesAutoresizingMaskIntoConstraints = NO;
     divider.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1.0];
@@ -508,35 +493,30 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     JailbreakEnvironment *env = [JailbreakEnvironment sharedEnvironment];
     NSString *appName = [[self.ipaPath lastPathComponent] stringByDeletingPathExtension] ?: @"-";
 
-    // ─── App Section ───
-    [self addSectionTitle:@"التطبيق" toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"الاسم: %@", appName] toStack:stack];
+    [self addSectionTitle:@"\u0627\u0644\u062a\u0637\u0628\u064a\u0642" toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0627\u0633\u0645: %@", appName] toStack:stack];
     [self addItem:[NSString stringWithFormat:@"Bundle ID: %@", result.bundleID ?: @"-"] toStack:stack];
 
-    // ─── Installation Section ───
-    [self addSectionTitle:@"التثبيت" toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"الحالة: %@", success ? @"نجاح" : @"فشل"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"المعاملة: %@...", self.currentTxnID ? [self.currentTxnID substringToIndex:MIN(8, self.currentTxnID.length)] : @"-"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"المدة: %.1f ثانية", duration] toStack:stack];
+    [self addSectionTitle:@"\u0627\u0644\u062a\u062b\u0628\u064a\u062a" toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u062d\u0627\u0644\u0629: %@", success ? @"\u0646\u062c\u0627\u062d" : @"\u0641\u0634\u0644"] toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629: %@...", self.currentTxnID ? [self.currentTxnID substringToIndex:MIN(8, self.currentTxnID.length)] : @"-"] toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u062f\u0629: %.1f \u062b\u0627\u0646\u064a\u0629", duration] toStack:stack];
 
-    // ─── Validation Section (on success) ───
     if (success) {
-        [self addSectionTitle:@"التحقق" toStack:stack];
-        [self addItem:@"IPA: ✓ صالح" toStack:stack];
-        [self addItem:@"المحتوى: ✓ مكتمل" toStack:stack];
-        [self addItem:@"التوقيع: ✓ موجود" toStack:stack];
-        [self addItem:@"التسجيل: ✓ مكتمل" toStack:stack];
+        [self addSectionTitle:@"\u0627\u0644\u062a\u062d\u0642\u0642" toStack:stack];
+        [self addItem:@"IPA: \u2713 \u0635\u0627\u0644\u062d" toStack:stack];
+        [self addItem:@"\u0627\u0644\u0645\u062d\u062a\u0648\u0649: \u2713 \u0645\u0643\u062a\u0645\u0644" toStack:stack];
+        [self addItem:@"\u0627\u0644\u062a\u0648\u0642\u064a\u0639: \u2713 \u0645\u0648\u062c\u0648\u062f" toStack:stack];
+        [self addItem:@"\u0627\u0644\u062a\u0633\u062c\u064a\u0644: \u2713 \u0645\u0643\u062a\u0645\u0644" toStack:stack];
     }
 
-    // ─── Environment Section ───
-    [self addSectionTitle:@"البيئة" toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"الجيلبريك: %@", env.jailbreakType ?: @"غير معروف"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"Rootless: %@", env.isRootless ? @"نعم" : @"لا"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"المسار: %@", env.applicationsPath ?: @"-"] toStack:stack];
+    [self addSectionTitle:@"\u0627\u0644\u0628\u064a\u0626\u0629" toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u062c\u064a\u0644\u0628\u0631\u064a\u0643: %@", env.jailbreakType ?: @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641"] toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"Rootless: %@", env.isRootless ? @"\u0646\u0639\u0645" : @"\u0644\u0627"] toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u0633\u0627\u0631: %@", env.applicationsPath ?: @"-"] toStack:stack];
 
-    // ─── Error (on failure) ───
     if (!success && result.message.length > 0) {
-        [self addSectionTitle:@"تفاصيل الخطأ" toStack:stack];
+        [self addSectionTitle:@"\u062a\u0641\u0627\u0635\u064a\u0644 \u0627\u0644\u062e\u0637\u0623" toStack:stack];
         UILabel *errLabel = [[UILabel alloc] init];
         errLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
         errLabel.textColor = [UIColor colorWithRed:0.8 green:0.4 blue:0.4 alpha:1.0];
@@ -545,14 +525,13 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [stack addArrangedSubview:errLabel];
     }
 
-    // ─── Buttons ───
     UIView *spacer = [[UIView alloc] init];
     [spacer.heightAnchor constraintEqualToConstant:8].active = YES;
     [stack addArrangedSubview:spacer];
 
     UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     doneBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [doneBtn setTitle:@"تم" forState:UIControlStateNormal];
+    [doneBtn setTitle:@"\u062a\u0645" forState:UIControlStateNormal];
     doneBtn.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     doneBtn.backgroundColor = success
         ? [UIColor colorWithRed:0.2 green:0.5 blue:0.9 alpha:1.0]
@@ -575,7 +554,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-20],
     ]];
 
-    // Animate in
     card.alpha = 0;
     card.transform = CGAffineTransformMakeTranslation(0, 30);
     [UIView animateWithDuration:0.5 delay:0.1 usingSpringWithDamping:0.8 initialSpringVelocity:0.5 options:0 animations:^{
