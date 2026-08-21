@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import
-#import
-#import
-#include
-#include
-#include
-#include
-#include
-#include
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <copyfile.h>
+#include <unistd.h>
+#include <errno.h>
 
 extern char **environ;
 
@@ -554,7 +554,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -1188,7 +1188,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
  return ok;
 }
 
