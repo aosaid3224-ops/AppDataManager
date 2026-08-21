@@ -4,8 +4,6 @@
 
 #import "SigningPlanner.h"
 #import "IPAStructuralResult.h"
-#import "IPAStructuralBundle.h"
-#import "IPAStructuralExecutable.h"
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
