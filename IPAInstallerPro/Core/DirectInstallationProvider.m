@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <copyfile.h>
-#include <unistd.h>
-#include <errno.h>
+#import
+#import
+#import
+#include
+#include
+#include
+#include
+#include
+#include
 
 extern char **environ;
 
@@ -523,7 +523,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -643,7 +643,7 @@ extern char **environ;
      [self signExeWithExplicitEntitlements:destExe hasHelper:hasH opLog:opLog txnID:txnID];
      sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
      if (!sigOk) {
-         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Legacy signing failed" verification:@"legacy signing" verified:NO duration:0];
+         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Legacy signing failed" transactionID:txnID];
          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
          [fm removeItemAtPath:tmp error:nil];
          [opLog endTransaction:txnID finalResult:OperationResultFailed];
@@ -660,7 +660,7 @@ extern char **environ;
  signOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  }
  }
- [opLog endPhase:rec11 exitCode:signOk ? 0 : 1 rawOutput:@"" rawError:signOk ? @"" : @"Signing failed" verification:@"legacy signing" verified:signOk duration:0];
+ [opLog endPhase:rec11 exitCode:signOk ? 0 : 1 rawOutput:@"" rawError:signOk ? @"" : @"Signing failed" transactionID:txnID];
  // PHASE 7: FRAMEWORK (legacy only if no smart signing)
  if (!usedSmartSigning) {
  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
@@ -1122,35 +1122,54 @@ extern char **environ;
  BOOL allOk = YES;
  for (SigningTarget *target in ordered) {
  if (!target.needsSigning) continue;
-  NSLog(@"[SmartSign] Signing [%@] %@ with strategy: %@",
-        target.targetTypeName, target.targetName, target.strategyNameString);
+
+  // Resolve full target path
+  NSString *targetPath = target.filePath;
+  if (!targetPath || targetPath.length == 0) {
+      NSLog(@"[SmartSign] SKIP: empty path for %@", target.targetName);
+      continue;
+  }
+  if (![targetPath hasPrefix:@"/"]) {
+      targetPath = [appPath stringByAppendingPathComponent:targetPath];
+  }
+  if (![[NSFileManager defaultManager] fileExistsAtPath:targetPath]) {
+      NSLog(@"[SmartSign] SKIP: not found %@", targetPath);
+      continue;
+  }
+
+  NSLog(@"[SmartSign] Signing [%@] %@ at %@ strategy: %@",
+        target.targetTypeName, target.targetName, targetPath, target.strategyNameString);
 
   BOOL ok = NO;
   switch (target.strategy) {
       case SigningStrategyPreserveOriginal: {
           NSDictionary *ents = target.plannedEntitlements.rawEntitlements;
           if (!ents || ents.count == 0) {
-              NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", target.filePath]];
+              NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", targetPath]];
               if (entOutput && entOutput.length > 10) {
                   NSString *tmpEnt = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"pres_%@.plist", [[NSUUID UUID] UUIDString]]];
                   [entOutput writeToFile:tmpEnt atomically:YES encoding:NSUTF8StringEncoding error:nil];
                   ents = [NSDictionary dictionaryWithContentsOfFile:tmpEnt];
               }
+              if (!ents || ents.count == 0) {
+                  NSLog(@"[SmartSign] PreserveOriginal fallback to Generic for: %@", target.targetName);
+                  ents = [EntitlementSet genericJailbreakEntitlements];
+              }
           }
-          ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:targetPath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       }
       case SigningStrategyGeneric:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       case SigningStrategyMinimal:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet minimalEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet minimalEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       case SigningStrategySkip:
           ok = YES;
           break;
       default:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
   }
 
@@ -1165,7 +1184,11 @@ extern char **environ;
 
 - (BOOL)signTarget:(NSString *)path withEntitlements:(NSDictionary *)entitlements hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
- if (![fm fileExistsAtPath:path]) return NO;
+ NSLog(@"[SmartSign] signTarget: path=%@ ents=%lu", path, (unsigned long)(entitlements ? entitlements.count : 0));
+ if (![fm fileExistsAtPath:path]) {
+     NSLog(@"[SmartSign] signTarget: FILE NOT FOUND: %@", path);
+     return NO;
+ }
  NSString *recordID = [opLog beginPhase:OperationPhaseSign operation:@"smart-ldid" target:path input:@"" transactionID:txnID];
  NSString *entPath = nil;
  if (entitlements && entitlements.count > 0) {
@@ -1184,7 +1207,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
  return ok;
 }
 
