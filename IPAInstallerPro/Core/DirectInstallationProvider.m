@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <copyfile.h>
-#include <unistd.h>
-#include <errno.h>
+#import
+#import
+#import
+#include
+#include
+#include
+#include
+#include
+#include
 
 extern char **environ;
 
@@ -404,6 +404,7 @@ extern char **environ;
  // Extract REAL Bundle ID from IPA before anything else
  NSString *realBundleID = [self extractBundleIDFromIPA:ipaPath];
  if (!realBundleID || realBundleID.length == 0) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not extract Bundle ID from IPA: %@", ipaPath);
  if (completion) completion([InstallationResult failureResult:@"Could not extract Bundle ID from IPA"
  provider:[self providerName] transaction:@"" error:nil evidence:nil]);
  return;
@@ -416,6 +417,7 @@ extern char **environ;
 
  // PHASE 0: SAFETY CHECKS
  if (![self validateIPAPathSafety:ipaPath opLog:opLog txnID:txnID]) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: IPA safety check failed for: %@", ipaPath);
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"IPA safety check failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -431,6 +433,7 @@ extern char **environ;
  verified:(ipaExists && ipaReadable) duration:0];
 
  if (!ipaExists || !ipaReadable) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: IPA not found or unreadable: %@ exists=%d readable=%d", ipaPath, ipaExists, ipaReadable);
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"IPA not found or unreadable" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -444,6 +447,7 @@ extern char **environ;
  verification:[NSString stringWithFormat:@"created=%@", tmpCreated ? @"YES" : @"NO"] verified:tmpCreated duration:0];
 
  if (!tmpCreated) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Temp directory creation failed");
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Temp directory creation failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -455,6 +459,7 @@ extern char **environ;
  BOOL payloadExists = [fm fileExistsAtPath:payload];
 
  if (!unzipOk || !payloadExists) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Unzip failed (unzipOk=%d payloadExists=%d)", unzipOk, payloadExists);
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Unzip failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -471,6 +476,7 @@ extern char **environ;
  verification:[NSString stringWithFormat:@"found=%@ name=%@", appFound ? @"YES" : @"NO", appFolder ?: @"N/A"] verified:appFound duration:0];
 
  if (!appFound) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: No .app found in Payload");
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"No .app found" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -481,6 +487,7 @@ extern char **environ;
 
  // Security: Check for dangerous symlinks
  if (![self checkForSymlinksInExtractedPath:srcApp opLog:opLog txnID:txnID]) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Dangerous symlinks detected");
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Dangerous symlinks detected in IPA" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -499,6 +506,7 @@ extern char **environ;
  verified:infoHasKeys duration:0];
 
  if (!infoHasKeys) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Invalid Info.plist — bundleID=%@ exe=%@", bundleID, exeName);
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Invalid Info.plist" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -523,7 +531,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -534,6 +542,7 @@ extern char **environ;
  verification:[NSString stringWithFormat:@"resolved=%@ path=%@", destResolved ? @"YES" : @"NO", destApp ?: @"N/A"] verified:destResolved duration:0];
 
  if (!destResolved) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve destination for: %@", logicalDest);
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Could not resolve destination" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -554,6 +563,7 @@ extern char **environ;
  // BACKUP existing app (rollback support)
  NSString *backupPath = [destApp stringByAppendingString:@".backup"];
  if (![self backupExistingApp:destApp to:backupPath opLog:opLog txnID:txnID]) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Backup failed for: %@", destApp);
  [fm removeItemAtPath:tmp error:nil];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Failed to backup existing app" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -626,24 +636,26 @@ extern char **environ;
  return;
  }
 
- // PHASE 6: SMART SIGN
- NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"smart-sign-execute" target:destApp input:@"" transactionID:txnID];
- BOOL signOk = NO;
- BOOL usedSmartSigning = NO;
+ // PHASE 6: SMART SIGN + LEGACY SAFETY NET
+ NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"" transactionID:txnID];
+ NSUInteger smartSignedCount = 0;
  if (planGenerated && signingPlan) {
- signOk = [self executeSigningPlan:signingPlan atAppPath:destApp hasHelper:hasH opLog:opLog txnID:txnID];
- usedSmartSigning = signOk;
+ smartSignedCount = [self executeSigningPlan:signingPlan atAppPath:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+ NSLog(@"[IPAInstallerPro] Smart signing completed: %lu targets", (unsigned long)smartSignedCount);
  }
- if (!usedSmartSigning) {
- // Legacy fallback
+
+ // ALWAYS run legacy as safety net — catches anything Smart Signing missed
+ NSLog(@"[IPAInstallerPro] Running legacy signing as safety net...");
  [self signAllAt:destApp hasHelper:hasH opLog:opLog txnID:txnID];
  [self signExe:destExe hasHelper:hasH opLog:opLog txnID:txnID];
+
  BOOL sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  if (!sigOk) {
+     NSLog(@"[IPAInstallerPro] Signature weak, retrying with explicit entitlements...");
      [self signExeWithExplicitEntitlements:destExe hasHelper:hasH opLog:opLog txnID:txnID];
      sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
      if (!sigOk) {
-         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Legacy signing failed" verification:@"legacy signing" verified:NO duration:0];
+         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Signing failed" verification:@"signing" verified:NO duration:0];
          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
          [fm removeItemAtPath:tmp error:nil];
          [opLog endTransaction:txnID finalResult:OperationResultFailed];
@@ -651,22 +663,11 @@ extern char **environ;
          return;
      }
  }
- signOk = YES;
+ [opLog endPhase:rec11 exitCode:0 rawOutput:@"" rawError:@"" verification:@"signing complete" verified:YES duration:0];
 
- } else {
- signOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
- if (!signOk) {
- [self signExeWithExplicitEntitlements:destExe hasHelper:hasH opLog:opLog txnID:txnID];
- signOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
- }
- }
- [opLog endPhase:rec11 exitCode:signOk ? 0 : 1 rawOutput:@"" rawError:signOk ? @"" : @"Signing failed" verification:@"legacy signing" verified:signOk duration:0];
- // PHASE 7: FRAMEWORK (legacy only if no smart signing)
- if (!usedSmartSigning) {
+ // PHASE 7: FRAMEWORK (always run as safety net)
  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
- }
-
- // PHASE 8: UICACHE
+// PHASE 8: UICACHE
  NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
  [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
 
@@ -1113,7 +1114,7 @@ extern char **environ;
 }
 #pragma mark - Smart Signing Plan Execution
 
-- (BOOL)executeSigningPlan:(SigningPlan *)plan atAppPath:(NSString *)appPath hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+- (NSUInteger)executeSigningPlan:(SigningPlan *)plan atAppPath:(NSString *)appPath hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  if (!plan || !plan.isViable || plan.targets.count == 0) {
  NSLog(@"[SmartSign] Invalid plan");
  return NO;
@@ -1122,54 +1123,35 @@ extern char **environ;
  BOOL allOk = YES;
  for (SigningTarget *target in ordered) {
  if (!target.needsSigning) continue;
-
-  // Resolve full target path
-  NSString *targetPath = target.filePath;
-  if (!targetPath || targetPath.length == 0) {
-      NSLog(@"[SmartSign] SKIP: empty path for %@", target.targetName);
-      continue;
-  }
-  if (![targetPath hasPrefix:@"/"]) {
-      targetPath = [appPath stringByAppendingPathComponent:targetPath];
-  }
-  if (![[NSFileManager defaultManager] fileExistsAtPath:targetPath]) {
-      NSLog(@"[SmartSign] SKIP: not found %@", targetPath);
-      continue;
-  }
-
-  NSLog(@"[SmartSign] Signing [%@] %@ at %@ strategy: %@",
-        target.targetTypeName, target.targetName, targetPath, target.strategyNameString);
+  NSLog(@"[SmartSign] Signing [%@] %@ with strategy: %@",
+        target.targetTypeName, target.targetName, target.strategyNameString);
 
   BOOL ok = NO;
   switch (target.strategy) {
       case SigningStrategyPreserveOriginal: {
           NSDictionary *ents = target.plannedEntitlements.rawEntitlements;
           if (!ents || ents.count == 0) {
-              NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", targetPath]];
+              NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", target.filePath]];
               if (entOutput && entOutput.length > 10) {
                   NSString *tmpEnt = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"pres_%@.plist", [[NSUUID UUID] UUIDString]]];
                   [entOutput writeToFile:tmpEnt atomically:YES encoding:NSUTF8StringEncoding error:nil];
                   ents = [NSDictionary dictionaryWithContentsOfFile:tmpEnt];
               }
-              if (!ents || ents.count == 0) {
-                  NSLog(@"[SmartSign] PreserveOriginal fallback to Generic for: %@", target.targetName);
-                  ents = [EntitlementSet genericJailbreakEntitlements];
-              }
           }
-          ok = [self signTarget:targetPath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       }
       case SigningStrategyGeneric:
-          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       case SigningStrategyMinimal:
-          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet minimalEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet minimalEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       case SigningStrategySkip:
           ok = YES;
           break;
       default:
-          ok = [self signTarget:targetPath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
           break;
   }
 
@@ -1184,11 +1166,7 @@ extern char **environ;
 
 - (BOOL)signTarget:(NSString *)path withEntitlements:(NSDictionary *)entitlements hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
- NSLog(@"[SmartSign] signTarget: path=%@ ents=%lu", path, (unsigned long)(entitlements ? entitlements.count : 0));
- if (![fm fileExistsAtPath:path]) {
-     NSLog(@"[SmartSign] signTarget: FILE NOT FOUND: %@", path);
-     return NO;
- }
+ if (![fm fileExistsAtPath:path]) return NO;
  NSString *recordID = [opLog beginPhase:OperationPhaseSign operation:@"smart-ldid" target:path input:@"" transactionID:txnID];
  NSString *entPath = nil;
  if (entitlements && entitlements.count > 0) {
@@ -1207,7 +1185,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
  return ok;
 }
 
