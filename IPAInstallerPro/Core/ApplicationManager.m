@@ -116,6 +116,8 @@
     if (cached) return cached;
 
     UIImage *icon = nil;
+
+    // Method 1: LSApplicationProxy (legacy, may fail on iOS 15+)
     @try {
         Class LSApplicationProxy_class = objc_getClass("LSApplicationProxy");
         if (LSApplicationProxy_class && [LSApplicationProxy_class respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
@@ -135,20 +137,53 @@
         }
     } @catch (NSException *e) {}
 
+    // Method 2: Load from bundle path directly (fallback)
+    if (!icon) {
+        AppInfo *app = [self appInfoForBundleID:bundleID];
+        NSString *bundlePath = app.bundlePath;
+        if (bundlePath.length > 0) {
+            NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+            NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+            if (plist) {
+                NSArray *iconFiles = nil;
+                NSDictionary *iconsDict = plist[@"CFBundleIcons"];
+                NSDictionary *primaryIcon = iconsDict[@"CFBundlePrimaryIcon"];
+                iconFiles = primaryIcon[@"CFBundleIconFiles"];
+                if (!iconFiles) iconFiles = plist[@"CFBundleIconFiles"];
+                if (!iconFiles || iconFiles.count == 0) iconFiles = @[@"AppIcon60x60"];
+
+                for (NSString *iconName in [iconFiles reverseObjectEnumerator]) {
+                    for (NSString *scale in @[@"@3x", @"@2x", @""]) {
+                        for (NSString *ext in @[@".png", @".jpg", @".jpeg"]) {
+                            NSString *path = [bundlePath stringByAppendingPathComponent:
+                                [NSString stringWithFormat:@"%@%@%@", iconName, scale, ext]];
+                            if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                                icon = [UIImage imageWithContentsOfFile:path];
+                                if (icon) break;
+                            }
+                        }
+                        if (icon) break;
+                    }
+                    if (icon) break;
+                }
+            }
+        }
+    }
+
     if (icon) [self.iconCache setObject:icon forKey:bundleID];
     return icon;
 }
 
 - (NSString *)versionForBundleID:(NSString *)bundleID {
-    if (!bundleID) return @"غير معروف";
+    if (!bundleID) return @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641";
     Class LSApplicationProxy_class = objc_getClass("LSApplicationProxy");
     if (LSApplicationProxy_class && [LSApplicationProxy_class respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
         id proxy = [LSApplicationProxy_class performSelector:@selector(applicationProxyForIdentifier:) withObject:bundleID];
         if (proxy && [proxy respondsToSelector:@selector(shortVersionString)]) {
-            return [proxy performSelector:@selector(shortVersionString)] ?: @"غير معروف";
+            return [proxy performSelector:@selector(shortVersionString)] ?: @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641";
         }
     }
-    return @"غير معروف";
+    return @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641";
 }
 
 - (BOOL)isSystemApp:(NSString *)bundleID {
