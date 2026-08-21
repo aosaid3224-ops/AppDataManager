@@ -112,7 +112,8 @@
 + (NSDictionary *)minimalEntitlements {
     return @{
         @"platform-application": @YES,
-        @"get-task-allow": @YES
+        @"get-task-allow": @YES,
+        @"aps-environment": @"development"
     };
 }
 
