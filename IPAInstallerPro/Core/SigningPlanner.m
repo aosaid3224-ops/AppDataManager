@@ -357,8 +357,15 @@
         [plan.recommendations addObject:@"📦 Many frameworks detected — ensure all are properly signed in order"];
     }
 
-    if (result.fatBinary) { // need to add this property
-        [plan.recommendations addObject:@"🍕 FAT binary detected — verify device architecture compatibility"];
+    BOOL hasFatBinary = NO;
+    for (IPAStructuralExecutable *executable in result.executables) {
+        if (executable.slices.count > 1) {
+            hasFatBinary = YES;
+            break;
+        }
+    }
+    if (hasFatBinary) {
+        [plan.recommendations addObject:@"FAT binary detected — verify device architecture compatibility"];
     }
 
     if (plan.preserveCount > 0) {
