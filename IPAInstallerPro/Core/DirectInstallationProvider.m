@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import
-#import
-#import
-#include
-#include
-#include
-#include
-#include
-#include
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <copyfile.h>
+#include <unistd.h>
+#include <errno.h>
 
 extern char **environ;
 
@@ -523,7 +523,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -643,7 +643,7 @@ extern char **environ;
      [self signExeWithExplicitEntitlements:destExe hasHelper:hasH opLog:opLog txnID:txnID];
      sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
      if (!sigOk) {
-         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Legacy signing failed" transactionID:txnID];
+         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Legacy signing failed" verification:@"legacy signing" verified:NO duration:0];
          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
          [fm removeItemAtPath:tmp error:nil];
          [opLog endTransaction:txnID finalResult:OperationResultFailed];
@@ -660,7 +660,7 @@ extern char **environ;
  signOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  }
  }
- [opLog endPhase:rec11 exitCode:signOk ? 0 : 1 rawOutput:@"" rawError:signOk ? @"" : @"Signing failed" transactionID:txnID];
+ [opLog endPhase:rec11 exitCode:signOk ? 0 : 1 rawOutput:@"" rawError:signOk ? @"" : @"Signing failed" verification:@"legacy signing" verified:signOk duration:0];
  // PHASE 7: FRAMEWORK (legacy only if no smart signing)
  if (!usedSmartSigning) {
  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
@@ -1184,7 +1184,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
  return ok;
 }
 
