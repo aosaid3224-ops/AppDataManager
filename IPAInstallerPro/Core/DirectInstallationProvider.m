@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <copyfile.h>
-#include <unistd.h>
-#include <errno.h>
+#import
+#import
+#import
+#include
+#include
+#include
+#include
+#include
+#include
 
 extern char **environ;
 
@@ -401,15 +401,6 @@ extern char **environ;
  NSFileManager *fm = [NSFileManager defaultManager];
  BOOL hasH = [self hasRootHelper];
 
- // Extract REAL Bundle ID from IPA before anything else
- NSString *realBundleID = [self extractBundleIDFromIPA:ipaPath];
- if (!realBundleID || realBundleID.length == 0) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not extract Bundle ID from IPA: %@", ipaPath);
- if (completion) completion([InstallationResult failureResult:@"Could not extract Bundle ID from IPA"
- provider:[self providerName] transaction:@"" error:nil evidence:nil]);
- return;
- }
-
  if (!txnID || txnID.length == 0) {
  txnID = [opLog beginTransactionForIPA:ipaPath];
  }
@@ -531,7 +522,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -708,24 +699,6 @@ extern char **environ;
  provider:[self providerName] transaction:txnID evidence:@{@"bundleID": bundleID, @"path": destApp, @"exe": exeName}];
  result.bundleID = bundleID;
  if (completion) completion(result);
-}
-
-#pragma mark - Bundle ID Extraction
-
-- (NSString *)extractBundleIDFromIPA:(NSString *)ipaPath {
- NSFileManager *fm = [NSFileManager defaultManager];
- NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
- [fm createDirectoryAtPath:tmp withIntermediateDirectories:YES attributes:nil error:nil];
-
- // Quick unzip of Info.plist only
- [self runCmd:self.unzipPath args:@[@"-j", @"-o", ipaPath, @"Payload/*/Info.plist", @"-d", tmp] opLog:nil recordID:nil];
-
- NSString *infoPath = [tmp stringByAppendingPathComponent:@"Info.plist"];
- NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
- NSString *bundleID = info[@"CFBundleIdentifier"];
-
- [fm removeItemAtPath:tmp error:nil];
- return bundleID;
 }
 
 #pragma mark - Signing
@@ -1185,7 +1158,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
  return ok;
 }
 
