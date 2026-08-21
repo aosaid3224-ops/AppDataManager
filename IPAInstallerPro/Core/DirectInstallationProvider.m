@@ -14,15 +14,15 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
-#import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <copyfile.h>
-#include <unistd.h>
-#include <errno.h>
+#import
+#import
+#import
+#include
+#include
+#include
+#include
+#include
+#include
 
 extern char **environ;
 
@@ -554,7 +554,7 @@ extern char **environ;
  } @catch (NSException *e) {
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
- [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:planGenerated duration:0];
+ [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" transactionID:txnID];
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
@@ -762,6 +762,29 @@ extern char **environ;
  }
 }
 
+- (NSDictionary *)extractEntitlementsFromExecutable:(NSString *)path {
+ NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", path]];
+ if (!entOutput || entOutput.length < 5) return nil;
+
+ // ldid -e outputs XML plist. Try parsing it properly.
+ NSData *data = [entOutput dataUsingEncoding:NSUTF8StringEncoding];
+ if (!data) return nil;
+
+ NSError *err = nil;
+ NSPropertyListFormat fmt = 0;
+ id plist = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:&fmt error:&err];
+ if ([plist isKindOfClass:[NSDictionary class]] && [(NSDictionary *)plist count] > 0) {
+ return (NSDictionary *)plist;
+ }
+
+ // Fallback: try writing to file and reading back
+ NSString *tmpEnt = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ext_ent_%@.plist", [[NSUUID UUID] UUIDString]]];
+ [entOutput writeToFile:tmpEnt atomically:YES encoding:NSUTF8StringEncoding error:nil];
+ NSDictionary *ents = [NSDictionary dictionaryWithContentsOfFile:tmpEnt];
+ [[NSFileManager defaultManager] removeItemAtPath:tmpEnt error:nil];
+ return ents;
+}
+
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
  if (bundlePath.length == 0 || ![fm fileExistsAtPath:bundlePath]) return NO;
@@ -773,20 +796,24 @@ extern char **environ;
  if (![fm fileExistsAtPath:executablePath]) return NO;
 
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"sign extension (%@)", label ?: @"bundle"] target:executablePath input:@"preserve-entitlements" transactionID:txnID];
- NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", executablePath]];
- NSString *entPath = nil;
- NSArray *signArgs = nil;
- if (entOutput.length > 0) {
- entPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ipa-ent-%@.plist", [NSUUID UUID].UUIDString]];
- [entOutput writeToFile:entPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
- signArgs = @[[NSString stringWithFormat:@"-S%@", entPath], executablePath];
+
+ // Try to extract original entitlements
+ NSDictionary *ents = [self extractEntitlementsFromExecutable:executablePath];
+ BOOL signedOK = NO;
+
+ if (ents && ents.count > 0) {
+ NSString *entPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ipa-ent-%@.plist", [NSUUID UUID].UUIDString]];
+ [ents writeToFile:entPath atomically:YES];
+ NSString *sf = [NSString stringWithFormat:@"-S%@", entPath];
+ signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec]
+                     : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
+ [fm removeItemAtPath:entPath error:nil];
  } else {
- signArgs = @[@"-S", executablePath];
+ // No original entitlements — sign with blank (preserves whatever ldid defaults)
+ signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec]
+                     : [self runCmd:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec];
  }
 
- BOOL signedOK = hasH ? [self runRoot:self.ldidPath args:signArgs opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:signArgs opLog:opLog recordID:rec];
- if (entPath) [fm removeItemAtPath:entPath error:nil];
  return signedOK;
 }
 
@@ -795,8 +822,28 @@ extern char **environ;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"ldid -S (%@)", label] target:path input:@"" transactionID:txnID];
  if (hasH) [self runRoot:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
  else [self runCmd:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
- BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
+
+ // For frameworks and dylibs, try to preserve original entitlements first
+ NSDictionary *ents = nil;
+ if ([label hasPrefix:@"fw:"] || [label hasPrefix:@"dylib:"]) {
+ ents = [self extractEntitlementsFromExecutable:path];
+ }
+
+ BOOL ok = NO;
+ if (ents && ents.count > 0) {
+ NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"bin_%@.ent", [[NSUUID UUID] UUIDString]]];
+ [ents writeToFile:ep atomically:YES];
+ NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
+ ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
+             : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
+ }
+
+ if (!ok) {
+ ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
+             : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
+ }
+
  if (!ok) {
  // Retry with minimal entitlements
  NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
@@ -809,23 +856,37 @@ extern char **environ;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"signExe (main)" target:path input:@"" transactionID:txnID];
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:@"orig.ent"];
- NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", path]];
- if (entOutput && entOutput.length > 10) {
- [entOutput writeToFile:ep atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+ // Try extract original entitlements using improved parser
+ NSDictionary *ents = [self extractEntitlementsFromExecutable:path];
+ BOOL ok = NO;
+
+ if (ents && ents.count > 0) {
+ NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"orig_%@.ent", [[NSUUID UUID] UUIDString]]];
+ [ents writeToFile:ep atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- if (ok) return;
+ ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
+             : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
+ if (ok) {
+ NSLog(@"[IPAInstallerPro] Main exe signed with original entitlements (%lu keys)", (unsigned long)ents.count);
+ return;
  }
- BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
- if (!ok) {
+ }
+
+ // Fallback 1: blank sign
+ ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
+             : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
+ if (ok) {
+ NSLog(@"[IPAInstallerPro] Main exe signed blank");
+ return;
+ }
+
+ // Fallback 2: minimal entitlements
  NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
  [@{@"get-task-allow":@YES, @"platform-application":@YES} writeToFile:ep2 atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep2];
  [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- }
 }
 
 - (void)signExeWithExplicitEntitlements:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
@@ -1122,7 +1183,7 @@ extern char **environ;
  return 0;
  }
  NSArray *ordered = [plan targetsOrderedForSigning];
- NSUInteger signedCount = 0;
+ BOOL allOk = YES;
  for (SigningTarget *target in ordered) {
  if (!target.needsSigning) continue;
   NSLog(@"[SmartSign] Signing [%@] %@ with strategy: %@",
@@ -1159,8 +1220,7 @@ extern char **environ;
 
   if (!ok) {
       NSLog(@"[SmartSign] FAILED to sign: %@", target.targetName);
-  } else {
-      signedCount++;
+      allOk = NO;
   }
 
  }
@@ -1189,7 +1249,7 @@ extern char **environ;
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
              : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
  }
- [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
+ [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" transactionID:txnID];
  return ok;
 }
 
