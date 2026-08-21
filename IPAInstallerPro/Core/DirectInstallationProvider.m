@@ -1187,7 +1187,7 @@ extern char **environ;
  return 0;
  }
  NSArray *ordered = [plan targetsOrderedForSigning];
- BOOL allOk = YES;
+ NSUInteger signedCount = 0;
  for (SigningTarget *target in ordered) {
  if (!target.needsSigning) continue;
   NSLog(@"[SmartSign] Signing [%@] %@ with strategy: %@",
@@ -1224,7 +1224,8 @@ extern char **environ;
 
   if (!ok) {
       NSLog(@"[SmartSign] FAILED to sign: %@", target.targetName);
-      allOk = NO;
+  } else {
+      signedCount++;
   }
 
  }
