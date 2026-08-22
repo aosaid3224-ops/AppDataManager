@@ -2,9 +2,7 @@
 //  InstallationProgressViewController.m
 //  IPAInstallerPro
 //
-//  v2.1.23 — Event-Driven Live Installation UI
-//  Observes OperationLog notifications for real-time phase updates.
-//  No timers. No fake progress. No auto-launch.
+//  v2.2.0 — Event-Driven Live Installation UI + Raw Log Diagnostics
 //
 
 #import "InstallationProgressViewController.h"
@@ -184,6 +182,12 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) NSDate *installStartTime;
 @property (nonatomic, assign) NSInteger currentPhaseIndex;
 @property (nonatomic, assign) BOOL hasFailed;
+
+// Raw log diagnostics
+@property (nonatomic, strong) NSMutableString *rawLog;
+@property (nonatomic, strong) UIButton *showLogButton;
+@property (nonatomic, strong) UITextView *logTextView;
+@property (nonatomic, strong) UIView *logContainer;
 @end
 
 @implementation InstallationProgressViewController
@@ -192,6 +196,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
+    _rawLog = [NSMutableString string];
     [self setupUI];
     [self registerForOperationLogNotifications];
     [self startInstallation];
@@ -201,7 +206,82 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-#pragma mark - OperationLog Notifications (Event-Driven)
+#pragma mark - Raw Log
+
+- (void)appendLog:(NSString *)text {
+    if (!text) return;
+    [self.rawLog appendString:text];
+    [self.rawLog appendString:@"\n"];
+}
+
+- (void)showRawLog {
+    if (!self.logContainer) {
+        self.logContainer = [[UIView alloc] init];
+        self.logContainer.translatesAutoresizingMaskIntoConstraints = NO;
+        self.logContainer.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.98];
+        self.logContainer.layer.cornerRadius = 12;
+        [self.view addSubview:self.logContainer];
+
+        UILabel *logTitle = [[UILabel alloc] init];
+        logTitle.translatesAutoresizingMaskIntoConstraints = NO;
+        logTitle.text = @"\u0627\u0644\u0644\u0648\u063a \u0627\u0644\u062e\u0627\u0645 (Raw Log)";
+        logTitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        logTitle.textColor = [UIColor whiteColor];
+        [self.logContainer addSubview:logTitle];
+
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [closeBtn setTitle:@"\u0625\u063a\u0644\u0627\u0642" forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor colorWithRed:0.9 green:0.3 blue:0.3 alpha:1.0] forState:UIControlStateNormal];
+        [closeBtn addTarget:self action:@selector(hideRawLog) forControlEvents:UIControlEventTouchUpInside];
+        [self.logContainer addSubview:closeBtn];
+
+        self.logTextView = [[UITextView alloc] init];
+        self.logTextView.translatesAutoresizingMaskIntoConstraints = NO;
+        self.logTextView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+        self.logTextView.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.4 alpha:1.0];
+        self.logTextView.font = [UIFont fontWithName:@"Courier" size:10] ?: [UIFont systemFontOfSize:10];
+        self.logTextView.editable = NO;
+        self.logTextView.selectable = YES;
+        self.logTextView.layer.cornerRadius = 8;
+        [self.logContainer addSubview:self.logTextView];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [self.logContainer.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:20],
+            [self.logContainer.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+            [self.logContainer.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+            [self.logContainer.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-20],
+
+            [logTitle.topAnchor constraintEqualToAnchor:self.logContainer.topAnchor constant:12],
+            [logTitle.leadingAnchor constraintEqualToAnchor:self.logContainer.leadingAnchor constant:16],
+
+            [closeBtn.centerYAnchor constraintEqualToAnchor:logTitle.centerYAnchor],
+            [closeBtn.trailingAnchor constraintEqualToAnchor:self.logContainer.trailingAnchor constant:-16],
+
+            [self.logTextView.topAnchor constraintEqualToAnchor:logTitle.bottomAnchor constant:8],
+            [self.logTextView.leadingAnchor constraintEqualToAnchor:self.logContainer.leadingAnchor constant:8],
+            [self.logTextView.trailingAnchor constraintEqualToAnchor:self.logContainer.trailingAnchor constant:-8],
+            [self.logTextView.bottomAnchor constraintEqualToAnchor:self.logContainer.bottomAnchor constant:-8]
+        ]];
+    }
+
+    self.logTextView.text = self.rawLog;
+    self.logContainer.hidden = NO;
+    self.logContainer.alpha = 0;
+    [UIView animateWithDuration:0.3 animations:^{
+        self.logContainer.alpha = 1;
+    }];
+}
+
+- (void)hideRawLog {
+    [UIView animateWithDuration:0.3 animations:^{
+        self.logContainer.alpha = 0;
+    } completion:^(BOOL finished) {
+        self.logContainer.hidden = YES;
+    }];
+}
+
+#pragma mark - OperationLog Notifications
 
 - (void)registerForOperationLogNotifications {
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -214,29 +294,20 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
                                                object:nil];
 }
 
-/*
- * Maps OperationPhase -> UI Visual Phase (0-4)
- */
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
     switch (opPhase) {
-        case OperationPhaseIPAOpen:
-            return 0;
+        case OperationPhaseIPAOpen:      return 0;
         case OperationPhaseIPAExtract:
-        case OperationPhaseAppIdentify:
-            return 1;
+        case OperationPhaseAppIdentify:  return 1;
         case OperationPhaseFileCopy:
         case OperationPhaseFramework:
         case OperationPhaseDylib:
         case OperationPhaseSign:
-        case OperationPhasePermission:
-            return 2;
-        case OperationPhaseUICache:
-            return 3;
+        case OperationPhasePermission:   return 2;
+        case OperationPhaseUICache:      return 3;
         case OperationPhaseVerify:
-        case OperationPhaseComplete:
-            return 4;
-        default:
-            return -1;
+        case OperationPhaseComplete:     return 4;
+        default: return -1;
     }
 }
 
@@ -244,6 +315,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (self.isDone) return;
     OperationRecord *record = note.object;
     if (!record || ![record.transactionID isEqualToString:self.currentTxnID]) return;
+
+    [self appendLog:[NSString stringWithFormat:@"[BEGIN] %@ | %@ | target:%@",
+                     record.recordID, record.operation, record.target]];
 
     NSInteger uiPhase = [self uiPhaseIndexForOperationPhase:record.phase];
     if (uiPhase < 0) return;
@@ -266,11 +340,19 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     OperationRecord *record = note.object;
     if (!record || ![record.transactionID isEqualToString:self.currentTxnID]) return;
 
+    NSString *logLine = [NSString stringWithFormat:@"[END] %@ | result:%d | exit:%d | verified:%@ | out:%@ | err:%@",
+                         record.recordID,
+                         (int)record.result,
+                         record.exitCode,
+                         record.verified ? @"YES" : @"NO",
+                         record.rawOutput ?: @"-",
+                         record.rawError ?: @"-"];
+    [self appendLog:logLine];
+
     NSInteger uiPhase = [self uiPhaseIndexForOperationPhase:record.phase];
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // FIX: Treat Partial / Skipped as Success so extraction never shows red X
         if (record.result == OperationResultSuccess ||
             record.result == OperationResultPartial ||
             record.result == OperationResultSkipped) {
@@ -389,10 +471,15 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     self.currentTxnID = nil;
     self.currentPhaseIndex = -1;
     self.installStartTime = [NSDate date];
+    [self.rawLog setString:@""];
 
     if (self.reportCard) {
         [self.reportCard removeFromSuperview];
         self.reportCard = nil;
+    }
+    if (self.showLogButton) {
+        [self.showLogButton removeFromSuperview];
+        self.showLogButton = nil;
     }
 
     self.headerLabel.text = @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062b\u0628\u064a\u062a...";
@@ -499,7 +586,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     [self addSectionTitle:@"\u0627\u0644\u062a\u062b\u0628\u064a\u062a" toStack:stack];
     [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u062d\u0627\u0644\u0629: %@", success ? @"\u0646\u062c\u0627\u062d" : @"\u0641\u0634\u0644"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629: %@...", self.currentTxnID ? [self.currentTxnID substringToIndex:MIN(8, self.currentTxnID.length)] : @"-"] toStack:stack];
     [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u062f\u0629: %.1f \u062b\u0627\u0646\u064a\u0629", duration] toStack:stack];
 
     if (success) {
@@ -513,7 +599,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [self addSectionTitle:@"\u0627\u0644\u0628\u064a\u0626\u0629" toStack:stack];
     [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u062c\u064a\u0644\u0628\u0631\u064a\u0643: %@", env.jailbreakType ?: @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641"] toStack:stack];
     [self addItem:[NSString stringWithFormat:@"Rootless: %@", env.isRootless ? @"\u0646\u0639\u0645" : @"\u0644\u0627"] toStack:stack];
-    [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0645\u0633\u0627\u0631: %@", env.applicationsPath ?: @"-"] toStack:stack];
 
     if (!success && result.message.length > 0) {
         [self addSectionTitle:@"\u062a\u0641\u0627\u0635\u064a\u0644 \u0627\u0644\u062e\u0637\u0623" toStack:stack];
@@ -525,9 +610,26 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [stack addArrangedSubview:errLabel];
     }
 
+    // Raw Log Button
     UIView *spacer = [[UIView alloc] init];
     [spacer.heightAnchor constraintEqualToConstant:8].active = YES;
     [stack addArrangedSubview:spacer];
+
+    UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    logBtn.translatesAutoresizingMaskIntoConstraints = NO;
+    [logBtn setTitle:@"\u0639\u0631\u0636 \u0627\u0644\u0644\u0648\u063a \u0627\u0644\u062e\u0627\u0645 (Raw Log)" forState:UIControlStateNormal];
+    logBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    [logBtn setTitleColor:[UIColor colorWithRed:0.5 green:0.7 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+    logBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    logBtn.layer.cornerRadius = 8;
+    [logBtn addTarget:self action:@selector(showRawLog) forControlEvents:UIControlEventTouchUpInside];
+    [logBtn.heightAnchor constraintEqualToConstant:36].active = YES;
+    [stack addArrangedSubview:logBtn];
+    self.showLogButton = logBtn;
+
+    UIView *spacer2 = [[UIView alloc] init];
+    [spacer2.heightAnchor constraintEqualToConstant:8].active = YES;
+    [stack addArrangedSubview:spacer2];
 
     UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     doneBtn.translatesAutoresizingMaskIntoConstraints = NO;
