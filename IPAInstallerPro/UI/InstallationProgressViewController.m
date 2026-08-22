@@ -30,48 +30,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, assign) PhaseVisualState phaseState;
 - (void)setState:(PhaseVisualState)state animated:(BOOL)animated;
 
-- (NSAttributedString *)coloredLogFromString:(NSString *)text {
-    NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] initWithString:text];
-    NSRange full = NSMakeRange(0, text.length);
-    UIFont *font = [UIFont fontWithName:@"Courier" size:10] ?: [UIFont systemFontOfSize:10];
-    [attr addAttribute:NSFontAttributeName value:font range:full];
-    [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.9 blue:0.4 alpha:1.0] range:full];
-
-    NSArray *redKeywords = @[@"❌", @"MISSING", @"FAILED", @"FALLBACK", @"ERROR", @"CRASH", @"incomplete", @"application-identifier MISSING", @"team-identifier MISSING", @"Deep copy MISSING", @"hasAppID=NO", @"hasTeamID=NO"];
-    for (NSString *word in redKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.15 blue:0.15 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *yellowKeywords = @[@"⚠️", @"WARNING", @"BLANK"];
-    for (NSString *word in yellowKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.8 blue:0.1 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *blueKeywords = @[@"📊 DIAGNOSTICS REPORT", @"[ENTITLEMENTS]", @"[SIGNING COVERAGE]", @"[DEEP COPY]", @"[CRITICAL CHECKS]"];
-    for (NSString *word in blueKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    return attr;
-}
 
 @end
 
@@ -207,48 +165,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 }
 
 
-- (NSAttributedString *)coloredLogFromString:(NSString *)text {
-    NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] initWithString:text];
-    NSRange full = NSMakeRange(0, text.length);
-    UIFont *font = [UIFont fontWithName:@"Courier" size:10] ?: [UIFont systemFontOfSize:10];
-    [attr addAttribute:NSFontAttributeName value:font range:full];
-    [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.9 blue:0.4 alpha:1.0] range:full];
-
-    NSArray *redKeywords = @[@"❌", @"MISSING", @"FAILED", @"FALLBACK", @"ERROR", @"CRASH", @"incomplete", @"application-identifier MISSING", @"team-identifier MISSING", @"Deep copy MISSING", @"hasAppID=NO", @"hasTeamID=NO"];
-    for (NSString *word in redKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.15 blue:0.15 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *yellowKeywords = @[@"⚠️", @"WARNING", @"BLANK"];
-    for (NSString *word in yellowKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.8 blue:0.1 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *blueKeywords = @[@"📊 DIAGNOSTICS REPORT", @"[ENTITLEMENTS]", @"[SIGNING COVERAGE]", @"[DEEP COPY]", @"[CRITICAL CHECKS]"];
-    for (NSString *word in blueKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    return attr;
-}
 
 @end
 
@@ -277,48 +193,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIView *logContainer;
 
-- (NSAttributedString *)coloredLogFromString:(NSString *)text {
-    NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] initWithString:text];
-    NSRange full = NSMakeRange(0, text.length);
-    UIFont *font = [UIFont fontWithName:@"Courier" size:10] ?: [UIFont systemFontOfSize:10];
-    [attr addAttribute:NSFontAttributeName value:font range:full];
-    [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.9 blue:0.4 alpha:1.0] range:full];
-
-    NSArray *redKeywords = @[@"❌", @"MISSING", @"FAILED", @"FALLBACK", @"ERROR", @"CRASH", @"incomplete", @"application-identifier MISSING", @"team-identifier MISSING", @"Deep copy MISSING", @"hasAppID=NO", @"hasTeamID=NO"];
-    for (NSString *word in redKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.15 blue:0.15 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *yellowKeywords = @[@"⚠️", @"WARNING", @"BLANK"];
-    for (NSString *word in yellowKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.8 blue:0.1 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    NSArray *blueKeywords = @[@"📊 DIAGNOSTICS REPORT", @"[ENTITLEMENTS]", @"[SIGNING COVERAGE]", @"[DEEP COPY]", @"[CRITICAL CHECKS]"];
-    for (NSString *word in blueKeywords) {
-        NSRange searchRange = NSMakeRange(0, text.length);
-        NSRange found = [text rangeOfString:word options:0 range:searchRange];
-        while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:1.0] range:found];
-            searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
-            found = [text rangeOfString:word options:0 range:searchRange];
-        }
-    }
-
-    return attr;
-}
 
 @end
 
