@@ -1,207 +1,229 @@
-#import "InstalledAppsViewController.h"
-#import "AppDetailsViewController.h"
-#import "Core/ApplicationManager.h"
-#import "Core/InstallationEngine.h"
-#import "Core/Logger.h"
+//
+//  InstalledAppsViewController.m
+//  IPAInstallerPro
+//
 
-@interface InstalledAppsViewController ()
+#import "InstalledAppsViewController.h"
+#import "ApplicationManager.h"
+#import "AppDetailViewController.h"
+#import "AppInfo.h"
+
+@interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) NSArray *apps;
 @property (nonatomic, strong) UISegmentedControl *segmentControl;
-@property (nonatomic, strong) NSArray *filteredApps;
-@property (nonatomic, strong) UIActivityIndicatorView *loadingIndicator;
-@property (nonatomic, assign) BOOL isLoading;
+@property (nonatomic, strong) NSArray<AppInfo *> *apps;
+@property (nonatomic, strong) NSArray<AppInfo *> *filteredApps;
+@property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
+@property (nonatomic, strong) UILabel *errorLabel;
+@property (nonatomic, strong) UIButton *retryButton;
 @end
 
 @implementation InstalledAppsViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"التطبيقات";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
-    self.isLoading = NO;
-    [self setupNavigationBar];
+    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
+    self.title = @"\u0627\u0644\u062a\u0637\u0628\u064a\u0642\u0627\u062a";
+
     [self setupSegmentControl];
     [self setupTableView];
-    [self setupLoadingIndicator];
+    [self setupActivityIndicator];
+    [self setupErrorUI];
     [self loadApps];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Don't reload here to avoid lag
-}
-
-- (void)setupNavigationBar {
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
+    [self loadApps];
 }
 
 - (void)setupSegmentControl {
-    self.segmentControl = [[UISegmentedControl alloc] initWithItems:@[@"الكل", @"مستخدم", @"نظام"]];
-    self.segmentControl.selectedSegmentIndex = 0;
-    self.segmentControl.tintColor = [UIColor colorWithWhite:0.9 alpha:1.0];
-    [self.segmentControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
-    self.navigationItem.titleView = self.segmentControl;
+    _segmentControl = [[UISegmentedControl alloc] initWithItems:@[@"\u0627\u0644\u0643\u0644", @"\u0645\u0633\u062a\u062e\u062f\u0645", @"\u0646\u0638\u0627\u0645"]];
+    _segmentControl.translatesAutoresizingMaskIntoConstraints = NO;
+    _segmentControl.selectedSegmentIndex = 0;
+    _segmentControl.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
+    _segmentControl.selectedSegmentTintColor = [UIColor colorWithWhite:0.25 alpha:1.0];
+    [_segmentControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
+    [_segmentControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:_segmentControl];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_segmentControl.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],
+        [_segmentControl.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
+        [_segmentControl.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [_segmentControl.heightAnchor constraintEqualToConstant:36]
+    ]];
 }
 
 - (void)setupTableView {
-    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
-    self.tableView.delegate = self;
-    self.tableView.dataSource = self;
-    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(10, 0, 40, 0);
-    self.tableView.rowHeight = 72;
-    [self.view addSubview:self.tableView];
+    _tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    _tableView.translatesAutoresizingMaskIntoConstraints = NO;
+    _tableView.backgroundColor = [UIColor clearColor];
+    _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+    _tableView.dataSource = self;
+    _tableView.delegate = self;
+    _tableView.rowHeight = 72;
+    [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"AppCell"];
+    [self.view addSubview:_tableView];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_tableView.topAnchor constraintEqualToAnchor:_segmentControl.bottomAnchor constant:12],
+        [_tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+    ]];
 }
 
-- (void)setupLoadingIndicator {
-    self.loadingIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    self.loadingIndicator.color = [UIColor colorWithWhite:0.5 alpha:1.0];
-    self.loadingIndicator.center = CGPointMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2 - 40);
-    self.loadingIndicator.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-    self.loadingIndicator.hidden = YES;
-    [self.view addSubview:self.loadingIndicator];
+- (void)setupActivityIndicator {
+    _activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    _activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+    _activityIndicator.color = [UIColor colorWithWhite:0.5 alpha:1.0];
+    _activityIndicator.hidesWhenStopped = YES;
+    [self.view addSubview:_activityIndicator];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_activityIndicator.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [_activityIndicator.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor]
+    ]];
+}
+
+- (void)setupErrorUI {
+    _errorLabel = [[UILabel alloc] init];
+    _errorLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _errorLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    _errorLabel.textColor = [UIColor colorWithRed:0.8 green:0.3 blue:0.3 alpha:1.0];
+    _errorLabel.textAlignment = NSTextAlignmentCenter;
+    _errorLabel.numberOfLines = 0;
+    _errorLabel.hidden = YES;
+    [self.view addSubview:_errorLabel];
+
+    _retryButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _retryButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [_retryButton setTitle:@"\u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629" forState:UIControlStateNormal];
+    _retryButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [_retryButton setTitleColor:[UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+    [_retryButton addTarget:self action:@selector(loadApps) forControlEvents:UIControlEventTouchUpInside];
+    _retryButton.hidden = YES;
+    [self.view addSubview:_retryButton];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_errorLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [_errorLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-30],
+        [_errorLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:40],
+        [_errorLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-40],
+
+        [_retryButton.topAnchor constraintEqualToAnchor:_errorLabel.bottomAnchor constant:16],
+        [_retryButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor]
+    ]];
 }
 
 - (void)loadApps {
-    if (self.isLoading) return;
-    self.isLoading = YES;
+    [self.activityIndicator startAnimating];
+    self.tableView.hidden = YES;
+    self.errorLabel.hidden = YES;
+    self.retryButton.hidden = YES;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.loadingIndicator.hidden = NO;
-        [self.loadingIndicator startAnimating];
-    });
-
-    // Run heavy LSApplicationWorkspace operations on background thread
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSArray<AppInfo *> *apps = nil;
+        NSString *errorMsg = nil;
+
         @try {
-            NSArray *allApps = [[ApplicationManager sharedManager] allInstalledApplications];
+            apps = [[ApplicationManager sharedManager] allInstalledApplications];
+        } @catch (NSException *e) {
+            errorMsg = [NSString stringWithFormat:@"\u062e\u0637\u0623: %@", e.reason ?: @"\u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641"];
+        }
 
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.apps = allApps;
-                [self applyFilter];
-                [self.loadingIndicator stopAnimating];
-                self.loadingIndicator.hidden = YES;
-                self.isLoading = NO;
-            });
-        }
-        @catch (NSException *exception) {
-            [[Logger sharedLogger] error:[NSString stringWithFormat:@"Failed to load apps: %@", exception.reason]];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showToast:@"فشل تحميل التطبيقات"];
-                [self.loadingIndicator stopAnimating];
-                self.loadingIndicator.hidden = YES;
-                self.isLoading = NO;
-            });
-        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.activityIndicator stopAnimating];
+
+            if (errorMsg) {
+                self.errorLabel.text = errorMsg;
+                self.errorLabel.hidden = NO;
+                self.retryButton.hidden = NO;
+                self.tableView.hidden = YES;
+                return;
+            }
+
+            if (!apps || apps.count == 0) {
+                self.errorLabel.text = @"\u0644\u0627 \u062a\u0648\u062c\u062f \u062a\u0637\u0628\u064a\u0642\u0627\u062a \u0645\u062b\u0628\u062a\u0629";
+                self.errorLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
+                self.errorLabel.hidden = NO;
+                self.retryButton.hidden = NO;
+                self.tableView.hidden = YES;
+                return;
+            }
+
+            self.apps = apps;
+            [self filterApps];
+            self.tableView.hidden = NO;
+            [self.tableView reloadData];
+        });
     });
-}
-
-- (void)applyFilter {
-    switch (self.segmentControl.selectedSegmentIndex) {
-        case 1:
-            self.filteredApps = [[ApplicationManager sharedManager] userApplications];
-            break;
-        case 2:
-            self.filteredApps = [[ApplicationManager sharedManager] systemApplications];
-            break;
-        default:
-            self.filteredApps = self.apps;
-            break;
-    }
-    [self.tableView reloadData];
 }
 
 - (void)segmentChanged:(UISegmentedControl *)sender {
-    [self applyFilter];
+    [self filterApps];
+    [self.tableView reloadData];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 1; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.filteredApps.count; }
+- (void)filterApps {
+    if (self.segmentControl.selectedSegmentIndex == 0) {
+        self.filteredApps = self.apps;
+    } else if (self.segmentControl.selectedSegmentIndex == 1) {
+        self.filteredApps = [self.apps filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == NO"]];
+    } else {
+        self.filteredApps = [self.apps filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == YES"]];
+    }
+}
+
+#pragma mark - UITableViewDataSource
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return self.filteredApps.count;
+}
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *cellId = @"AppCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
-    if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-        cell.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.13 alpha:1.0];
-        cell.layer.cornerRadius = 14;
-        cell.layer.masksToBounds = YES;
-        cell.textLabel.textColor = [UIColor whiteColor];
-        cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
-        cell.detailTextLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-        cell.imageView.layer.cornerRadius = 10;
-        cell.imageView.layer.masksToBounds = YES;
-    }
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"AppCell" forIndexPath:indexPath];
     AppInfo *app = self.filteredApps[indexPath.row];
+
+    cell.backgroundColor = [UIColor clearColor];
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+
     cell.textLabel.text = app.name;
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@", app.bundleID, app.version];
+    cell.textLabel.textColor = [UIColor whiteColor];
+    cell.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ \u2022 %@", app.bundleID, app.version];
+    cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+
     if (app.icon) {
-        CGSize size = CGSizeMake(44, 44);
-        UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
-        [app.icon drawInRect:CGRectMake(0, 0, size.width, size.height)];
-        UIImage *scaled = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        cell.imageView.image = scaled;
+        cell.imageView.image = app.icon;
     } else {
-        cell.imageView.image = [[UIImage systemImageNamed:@"app"] imageWithTintColor:[UIColor colorWithWhite:0.4 alpha:1.0]];
+        cell.imageView.image = [self placeholderIcon];
     }
+    cell.imageView.layer.cornerRadius = 10;
+    cell.imageView.clipsToBounds = YES;
+
     return cell;
 }
 
+- (UIImage *)placeholderIcon {
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(44, 44), NO, 0);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(ctx, [UIColor colorWithWhite:0.15 alpha:1.0].CGColor);
+    CGContextFillEllipseInRect(ctx, CGRectMake(0, 0, 44, 44));
+    UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return img;
+}
+
+#pragma mark - UITableViewDelegate
+
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
     AppInfo *app = self.filteredApps[indexPath.row];
-    AppDetailsViewController *detailsVC = [[AppDetailsViewController alloc] initWithAppInfo:app];
-    [self.navigationController pushViewController:detailsVC animated:YES];
-}
-
-- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
-    AppInfo *app = self.filteredApps[indexPath.row];
-    if (app.isProtected) return nil;
-    UIContextualAction *deleteAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
-                                                                               title:@"حذف"
-                                                                             handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تأكيد الحذف"
-                                                                         message:[NSString stringWithFormat:@"هل أنت متأكد من حذف %@؟", app.name]
-                                                                  preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
-        [alert addAction:[UIAlertAction actionWithTitle:@"حذف" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *_) {
-            [[InstallationEngine sharedEngine] uninstallAppWithBundleID:app.bundleID completion:^(BOOL success, NSString *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (success) { [self loadApps]; } else { [self showToast:error ?: @"فشل الحذف"]; }
-                });
-            }];
-        }]];
-        [self presentViewController:alert animated:YES completion:nil];
-        completionHandler(YES);
-    }];
-    deleteAction.backgroundColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1.0];
-    return [UISwipeActionsConfiguration configurationWithActions:@[deleteAction]];
-}
-
-- (void)showToast:(NSString *)message {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UILabel *toast = [[UILabel alloc] init];
-        toast.text = message;
-        toast.textColor = [UIColor whiteColor];
-        toast.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
-        toast.textAlignment = NSTextAlignmentCenter;
-        toast.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        toast.layer.cornerRadius = 12;
-        toast.layer.masksToBounds = YES;
-        CGSize size = [message boundingRectWithSize:CGSizeMake(self.view.bounds.size.width - 60, CGFLOAT_MAX)
-                                            options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: toast.font} context:nil].size;
-        toast.frame = CGRectMake(0, 0, size.width + 32, size.height + 24);
-        toast.center = CGPointMake(self.view.center.x, self.view.bounds.size.height - 120);
-        [self.view addSubview:toast];
-        [UIView animateWithDuration:0.3 delay:2.5 options:UIViewAnimationOptionCurveEaseOut animations:^{ toast.alpha = 0; }
-                         completion:^(BOOL finished) { [toast removeFromSuperview]; }];
-    });
+    AppDetailViewController *detail = [[AppDetailViewController alloc] initWithAppInfo:app];
+    [self.navigationController pushViewController:detail animated:YES];
 }
 
 @end
