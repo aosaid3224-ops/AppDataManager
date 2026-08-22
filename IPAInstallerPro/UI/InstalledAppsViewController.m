@@ -6,7 +6,6 @@
 #import "InstalledAppsViewController.h"
 #import "ApplicationManager.h"
 #import "AppDetailsViewController.h"
-#import "AppInfo.h"
 
 @interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *tableView;
