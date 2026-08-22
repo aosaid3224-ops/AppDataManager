@@ -5,7 +5,7 @@
 
 #import "InstalledAppsViewController.h"
 #import "ApplicationManager.h"
-#import "AppDetailViewController.h"
+#import "AppDetailsViewController.h"
 #import "AppInfo.h"
 
 @interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate>
@@ -222,7 +222,7 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     AppInfo *app = self.filteredApps[indexPath.row];
-    AppDetailViewController *detail = [[AppDetailViewController alloc] initWithAppInfo:app];
+    AppDetailsViewController *detail = [[AppDetailsViewController alloc] initWithAppInfo:app];
     [self.navigationController pushViewController:detail animated:YES];
 }
 
