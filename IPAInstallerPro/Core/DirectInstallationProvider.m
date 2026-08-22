@@ -449,6 +449,7 @@ extern char **environ;
 - (void)installIPA:(NSString *)ipaPath transactionID:(NSString *)txnID operationLog:(OperationLog *)opLog completion:(void (^)(InstallationResult *))completion {
  NSFileManager *fm = [NSFileManager defaultManager];
  BOOL hasH = [self hasRootHelper];
+ NSString *bundleID = nil;
 
  if (!txnID || txnID.length == 0) {
  txnID = [opLog beginTransactionForIPA:ipaPath];
@@ -594,7 +595,7 @@ extern char **environ;
  NSString *rec5 = [opLog beginPhase:OperationPhaseAppIdentify operation:@"read Info.plist" target:infoPath input:@"" transactionID:txnID];
  NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
  BOOL infoRead = (info != nil);
- NSString *bundleID = info[@"CFBundleIdentifier"];
+ bundleID = info[@"CFBundleIdentifier"];
  NSString *exeName = info[@"CFBundleExecutable"];
  BOOL infoHasKeys = infoRead && (bundleID.length > 0) && (exeName.length > 0);
  [opLog endPhase:rec5 exitCode:infoRead ? 0 : 1 rawOutput:@"" rawError:infoRead ? @"" : @"Info.plist unreadable"
