@@ -39,6 +39,13 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mkdirPath;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
+@property (nonatomic, strong) NSMutableString *diagnosticsLog;
+@property (nonatomic, assign) NSUInteger diagFrameworksSigned;
+@property (nonatomic, assign) NSUInteger diagDylibsSigned;
+@property (nonatomic, assign) NSUInteger diagAppexSigned;
+@property (nonatomic, assign) NSUInteger diagDeepCopyTotal;
+@property (nonatomic, assign) NSUInteger diagDeepCopyMissing;
+@property (nonatomic, assign) NSUInteger diagDeepCopySizeMismatch;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
@@ -393,6 +400,45 @@ extern char **environ;
  verification:@"Backup cleaned up" verified:YES duration:0];
  }
  }
+}
+
+#pragma mark - Diagnostics
+
+- (void)diagLog:(NSString *)fmt, ... {
+    if (!self.diagnosticsLog) self.diagnosticsLog = [NSMutableString string];
+    va_list args;
+    va_start(args, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
+    va_end(args);
+    [self.diagnosticsLog appendString:msg];
+    [self.diagnosticsLog appendString:@"\n"];
+}
+
+- (void)emitDiagnosticsReport:(OperationLog *)opLog txnID:(NSString *)txnID bundleID:(NSString *)bundleID {
+    if (!self.diagnosticsLog || self.diagnosticsLog.length == 0) return;
+    NSMutableString *r = [NSMutableString string];
+    [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
+    [r appendFormat:@"📊 DIAGNOSTICS REPORT | Bundle: %@\n", bundleID ?: @"N/A"];
+    [r appendString:@"═══════════════════════════════════════════════════════════════\n\n"];
+    [r appendString:@"[ENTITLEMENTS]\n"];
+    [r appendString:self.diagnosticsLog];
+    [r appendString:@"\n[SIGNING COVERAGE]\n"];
+    [r appendFormat:@"  Frameworks signed: %lu\n", (unsigned long)self.diagFrameworksSigned];
+    [r appendFormat:@"  Dylibs signed:     %lu\n", (unsigned long)self.diagDylibsSigned];
+    [r appendFormat:@"  AppEx signed:      %lu\n", (unsigned long)self.diagAppexSigned];
+    [r appendString:@"\n[DEEP COPY]\n"];
+    [r appendFormat:@"  Total files:       %lu\n", (unsigned long)self.diagDeepCopyTotal];
+    [r appendFormat:@"  Missing:           %lu %@\n", (unsigned long)self.diagDeepCopyMissing, self.diagDeepCopyMissing > 0 ? @"❌" : @"✅"];
+    [r appendFormat:@"  Size mismatch:     %lu %@\n", (unsigned long)self.diagDeepCopySizeMismatch, self.diagDeepCopySizeMismatch > 0 ? @"⚠️" : @"✅"];
+    [r appendString:@"\n[CRITICAL CHECKS]\n"];
+    if ([self.diagnosticsLog containsString:@"hasAppID=NO"]) [r appendString:@"  ❌ application-identifier MISSING — app may crash on launch\n"];
+    if ([self.diagnosticsLog containsString:@"hasTeamID=NO"]) [r appendString:@"  ❌ team-identifier MISSING — app may crash on launch\n"];
+    if ([self.diagnosticsLog containsString:@"hasGTA=NO"]) [r appendString:@"  ❌ get-task-allow MISSING — debugger may fail\n"];
+    if ([self.diagnosticsLog containsString:@"source:fallback"]) [r appendString:@"  ⚠️ Entitlements used FALLBACK — original entitlements not found\n"];
+    if (self.diagDeepCopyMissing > 0) [r appendString:@"  ❌ Deep copy MISSING files — installation incomplete\n"];
+    [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
+    NSString *rec = [opLog beginPhase:OperationPhaseComplete operation:@"diagnostics-report" target:bundleID ?: @"" input:@"" transactionID:txnID];
+    [opLog endPhase:rec exitCode:0 rawOutput:r rawError:@"" verification:@"diagnostics complete" verified:YES duration:0];
 }
 
 #pragma mark - Main Installation
@@ -912,13 +958,18 @@ extern char **environ;
 
  // Try 1: Extract from the installed executable itself
  NSDictionary *ents = [self extractEntitlementsFromExecutable:path];
+ NSString *source = @"executable";
 
  // Try 2: Extract from the app bundle (archived-expanded-entitlements.xcent or embedded.mobileprovision)
  if (!ents || ents.count == 0) {
  NSString *appBundle = [path stringByDeletingLastPathComponent];
  ents = [self extractEntitlementsFromAppBundle:appBundle];
+ if (ents && ents.count > 0) source = @"app-bundle";
  }
 
+ BOOL hasAppID = ents[@"application-identifier"] != nil;
+ BOOL hasTeamID = ents[@"com.apple.developer.team-identifier"] != nil || ents[@"team-identifier"] != nil;
+ BOOL hasGTA = ents[@"get-task-allow"] != nil;
  BOOL ok = NO;
 
  if (ents && ents.count > 0) {
@@ -930,6 +981,8 @@ extern char **environ;
  [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
  if (ok) {
  NSLog(@"[IPAInstallerPro] Main exe signed with original entitlements (%lu keys)", (unsigned long)ents.count);
+ [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:%@ | hasAppID:%@ | hasTeamID:%@ | hasGTA:%@ | result:OK",
+  (unsigned long)ents.count, source, hasAppID ? @"YES" : @"NO", hasTeamID ? @"YES" : @"NO", hasGTA ? @"YES" : @"NO"];
  return;
  }
  }
@@ -938,6 +991,7 @@ extern char **environ;
  : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
  if (ok) {
  NSLog(@"[IPAInstallerPro] Main exe signed blank");
+ [self diagLog:@"[DIAG] signExe | entitlements:0 | source:blank | hasAppID:NO | hasTeamID:NO | hasGTA:NO | result:OK"];
  return;
  }
 
@@ -945,6 +999,7 @@ extern char **environ;
  [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep2];
  [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ [self diagLog:@"[DIAG] signExe | entitlements:3 | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:YES | result:FALLBACK"];
 }
 
 - (void)signExeWithExplicitEntitlements:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
