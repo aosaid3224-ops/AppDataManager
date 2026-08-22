@@ -308,6 +308,9 @@ extern char **environ;
  NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"" transactionID:txnID];
  [opLog endPhase:rec exitCode:0 rawOutput:@"" rawError:@""
  verification:detail verified:YES duration:0];
+  self.diagDeepCopyTotal = srcItems.count;
+  self.diagDeepCopyMissing = missing;
+  self.diagDeepCopySizeMismatch = sizeMismatch;
  return ok;
 }
 
@@ -450,11 +453,21 @@ extern char **environ;
  if (!txnID || txnID.length == 0) {
  txnID = [opLog beginTransactionForIPA:ipaPath];
  }
+  // Reset diagnostics counters for this installation
+  self.diagnosticsLog = [NSMutableString string];
+  self.diagFrameworksSigned = 0;
+  self.diagDylibsSigned = 0;
+  self.diagAppexSigned = 0;
+  self.diagDeepCopyTotal = 0;
+  self.diagDeepCopyMissing = 0;
+  self.diagDeepCopySizeMismatch = 0;
  // If txnID is provided by the engine, use it directly without creating a duplicate OperationLog entry
 
  // PHASE 0: SAFETY CHECKS
  if (![self validateIPAPathSafety:ipaPath opLog:opLog txnID:txnID]) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: IPA safety check failed for: %@", ipaPath);
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"IPA safety check failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -472,6 +485,8 @@ extern char **environ;
 
  if (!ipaExists || !ipaReadable) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: IPA not found or unreadable: %@ exists=%d readable=%d", ipaPath, ipaExists, ipaReadable);
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"IPA not found or unreadable" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -487,6 +502,8 @@ extern char **environ;
 
  if (!tmpCreated) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Temp directory creation failed");
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Temp directory creation failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -522,6 +539,8 @@ extern char **environ;
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Unzip failed (unzipOk=%d payloadExists=%d)", unzipOk, payloadExists);
  [fm removeItemAtPath:tmp error:nil];
  [opLog endPhase:rec3 exitCode:1 rawOutput:@"" rawError:@"Unzip failed — all methods exhausted" verification:@"unzip failed" verified:NO duration:0];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Unzip failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -531,6 +550,8 @@ extern char **environ;
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Payload directory not found after extraction");
  [fm removeItemAtPath:tmp error:nil];
  [opLog endPhase:rec3 exitCode:1 rawOutput:@"" rawError:@"Payload not found" verification:@"no payload" verified:NO duration:0];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"No Payload in IPA" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -549,6 +570,8 @@ extern char **environ;
  if (!appFound) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: No .app found in Payload");
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"No .app found" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -560,6 +583,8 @@ extern char **environ;
  if (![self checkForSymlinksInExtractedPath:srcApp opLog:opLog txnID:txnID]) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Dangerous symlinks detected");
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Dangerous symlinks detected in IPA" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -579,6 +604,8 @@ extern char **environ;
  if (!infoHasKeys) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Invalid Info.plist — bundleID=%@ exe=%@", bundleID, exeName);
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Invalid Info.plist" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -616,6 +643,8 @@ extern char **environ;
  if (!destResolved) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve destination for: %@", logicalDest);
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Could not resolve destination" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -637,6 +666,8 @@ extern char **environ;
  if (![self backupExistingApp:destApp to:backupPath opLog:opLog txnID:txnID]) {
  NSLog(@"[IPAInstallerPro] EARLY FAIL: Backup failed for: %@", destApp);
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Failed to backup existing app" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -666,6 +697,8 @@ extern char **environ;
  // ROLLBACK: restore backup
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Copy failed — all methods exhausted, rollback attempted" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -698,6 +731,8 @@ extern char **environ;
  // ROLLBACK
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Permission verification failed: mode=%o uid=%d gid=%d", mode, uid, gid]
  provider:[self providerName] transaction:txnID error:nil evidence:nil]);
@@ -727,6 +762,8 @@ extern char **environ;
          [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Signing failed" verification:@"signing" verified:NO duration:0];
          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
          [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
          [opLog endTransaction:txnID finalResult:OperationResultFailed];
          if (completion) completion([InstallationResult failureResult:@"Signature failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
          return;
@@ -758,6 +795,8 @@ extern char **environ;
  // ROLLBACK
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
  if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
@@ -776,6 +815,8 @@ extern char **environ;
 
  // SUCCESS
  NSLog(@"[IPAInstallerPro] === INSTALLATION SUCCESS: %@ ===", bundleID);
+  // Emit diagnostics report before completing
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultSuccess];
  InstallationResult *result = [InstallationResult successResult:[NSString stringWithFormat:@"Installed %@", appFolder]
  provider:[self providerName] transaction:txnID evidence:@{@"bundleID": bundleID, @"path": destApp, @"exe": exeName}];
@@ -918,6 +959,8 @@ extern char **environ;
 
 - (void)signBin:(NSString *)path hasHelper:(BOOL)hasH label:(NSString *)label opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+  if ([label hasPrefix:@"fw:"]) self.diagFrameworksSigned++;
+  else if ([label hasPrefix:@"dylib:"]) self.diagDylibsSigned++;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"ldid -S (%@)", label] target:path input:@"" transactionID:txnID];
  if (hasH) [self runRoot:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
  else [self runCmd:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
