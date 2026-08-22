@@ -792,6 +792,54 @@ extern char **environ;
  return ents;
 }
 
+
+- (NSDictionary *)extractEntitlementsFromAppBundle:(NSString *)appPath {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (!appPath || ![fm fileExistsAtPath:appPath]) return nil;
+
+    // 1. Try archived-expanded-entitlements.xcent (most common in IPAs)
+    NSString *xcentPath = [appPath stringByAppendingPathComponent:@"archived-expanded-entitlements.xcent"];
+    if ([fm fileExistsAtPath:xcentPath]) {
+        NSDictionary *ents = [NSDictionary dictionaryWithContentsOfFile:xcentPath];
+        if (ents && ents.count > 0) {
+            NSLog(@"[IPAInstallerPro] Found entitlements in archived-expanded-entitlements.xcent (%lu keys)", (unsigned long)ents.count);
+            return ents;
+        }
+    }
+
+    // 2. Try embedded.mobileprovision (extract entitlements from provisioning profile)
+    NSString *provPath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
+    if ([fm fileExistsAtPath:provPath]) {
+        NSData *provData = [NSData dataWithContentsOfFile:provPath];
+        if (provData) {
+            NSString *provStr = [[NSString alloc] initWithData:provData encoding:NSASCIIStringEncoding];
+            if (provStr) {
+                // Find Entitlements dict in the plist portion of .mobileprovision
+                NSRange entRange = [provStr rangeOfString:@"<key>Entitlements</key>"];
+                if (entRange.location != NSNotFound) {
+                    NSString *sub = [provStr substringFromIndex:entRange.location];
+                    NSRange dictEnd = [sub rangeOfString:@"</dict>"];
+                    if (dictEnd.location != NSNotFound) {
+                        NSString *entXml = [sub substringToIndex:dictEnd.location + 7];
+                        NSString *wrapped = [NSString stringWithFormat:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\">%@</plist>", entXml];
+                        NSData *xmlData = [wrapped dataUsingEncoding:NSUTF8StringEncoding];
+                        if (xmlData) {
+                            NSError *err = nil;
+                            id plist = [NSPropertyListSerialization propertyListWithData:xmlData options:NSPropertyListImmutable format:NULL error:&err];
+                            if ([plist isKindOfClass:[NSDictionary class]]) {
+                                NSLog(@"[IPAInstallerPro] Found entitlements in embedded.mobileprovision (%lu keys)", (unsigned long)[(NSDictionary *)plist count]);
+                                return (NSDictionary *)plist;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return nil;
+}
+
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
  if (bundlePath.length == 0 || ![fm fileExistsAtPath:bundlePath]) return NO;
@@ -862,7 +910,15 @@ extern char **environ;
  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"signExe (main)" target:path input:@"" transactionID:txnID];
 
+ // Try 1: Extract from the installed executable itself
  NSDictionary *ents = [self extractEntitlementsFromExecutable:path];
+
+ // Try 2: Extract from the app bundle (archived-expanded-entitlements.xcent or embedded.mobileprovision)
+ if (!ents || ents.count == 0) {
+ NSString *appBundle = [path stringByDeletingLastPathComponent];
+ ents = [self extractEntitlementsFromAppBundle:appBundle];
+ }
+
  BOOL ok = NO;
 
  if (ents && ents.count > 0) {
