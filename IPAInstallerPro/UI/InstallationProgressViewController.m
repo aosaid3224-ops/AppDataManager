@@ -377,8 +377,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     });
 }
 
-}
-
 #pragma mark - UI Setup
 
 - (void)setupUI {
