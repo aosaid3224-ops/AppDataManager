@@ -9,8 +9,8 @@ Architecture: iphoneos-arm64
 Version: 1.0.2
 Installed-Size: 872
 Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.0.2_iphoneos-arm64.deb
-Size: 293962
-MD5sum: 0d2c818723c1d18858fbdbaa3d896345
-SHA1: 832d509e293c818a3300970c01808ca559de41f7
-SHA256: 8342adb5cf1306bd57ff6b490660e1262f7a61a67cbc37adcaec7f139cc88230
+Size: 294120
+MD5sum: 410943f277c3b44bb26f30f3ced8032a
+SHA1: 1328863b2ea0eb3f88ecb79b73ff20a2b5d4c6e8
+SHA256: 86a17cd5f5e6f2f26fada47b3f625c84fad2282204c9dd9f9ec8f2434d8785d8
 
