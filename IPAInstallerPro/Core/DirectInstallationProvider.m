@@ -46,6 +46,7 @@ extern char **environ;
 @property (nonatomic, assign) NSUInteger diagDeepCopyTotal;
 @property (nonatomic, assign) NSUInteger diagDeepCopyMissing;
 @property (nonatomic, assign) NSUInteger diagDeepCopySizeMismatch;
+@property (nonatomic, strong) NSString *lastInstalledAppPath;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
@@ -418,13 +419,16 @@ extern char **environ;
 }
 
 - (void)emitDiagnosticsReport:(OperationLog *)opLog txnID:(NSString *)txnID bundleID:(NSString *)bundleID {
-    if (!self.diagnosticsLog || self.diagnosticsLog.length == 0) return;
     NSMutableString *r = [NSMutableString string];
-    [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
+    [r appendString:@"\n═══════════════════════════════════════════════════════════════\n"];
     [r appendFormat:@"📊 DIAGNOSTICS REPORT | Bundle: %@\n", bundleID ?: @"N/A"];
     [r appendString:@"═══════════════════════════════════════════════════════════════\n\n"];
     [r appendString:@"[ENTITLEMENTS]\n"];
-    [r appendString:self.diagnosticsLog];
+    if (self.diagnosticsLog && self.diagnosticsLog.length > 0) {
+        [r appendString:self.diagnosticsLog];
+    } else {
+        [r appendString:@"  ⚠️ No per-binary entitlement diagnostics captured\n"];
+    }
     [r appendString:@"\n[SIGNING COVERAGE]\n"];
     [r appendFormat:@"  Frameworks signed: %lu\n", (unsigned long)self.diagFrameworksSigned];
     [r appendFormat:@"  Dylibs signed:     %lu\n", (unsigned long)self.diagDylibsSigned];
@@ -436,13 +440,32 @@ extern char **environ;
     [r appendString:@"\n[CRITICAL CHECKS]\n"];
     if ([self.diagnosticsLog containsString:@"hasAppID=NO"]) [r appendString:@"  ❌ application-identifier MISSING — app may crash on launch\n"];
     if ([self.diagnosticsLog containsString:@"hasTeamID=NO"]) [r appendString:@"  ❌ team-identifier MISSING — app may crash on launch\n"];
-    if ([self.diagnosticsLog containsString:@"hasGTA=NO"]) [r appendString:@"  ❌ get-task-allow MISSING — debugger may fail\n"];
+    if ([self.diagnosticsLog containsString:@"hasGTA=NO"]) [r appendString:@"  ❌ get-task-allow MISSING — app may crash on launch\n"];
+    if ([self.diagnosticsLog containsString:@"hasPlatform=NO"]) [r appendString:@"  ❌ platform-application MISSING — app may crash on jailbreak\n"];
+    if ([self.diagnosticsLog containsString:@"hasNoSandbox=NO"]) [r appendString:@"  ⚠️ no-sandbox MISSING — some apps may be restricted\n"];
     if ([self.diagnosticsLog containsString:@"source:fallback"]) [r appendString:@"  ⚠️ Entitlements used FALLBACK — original entitlements not found\n"];
     if (self.diagDeepCopyMissing > 0) [r appendString:@"  ❌ Deep copy MISSING files — installation incomplete\n"];
+    if (self.diagFrameworksSigned == 0 && self.diagDylibsSigned == 0 && self.diagAppexSigned == 0) [r appendString:@"  ⚠️ NO binaries signed — signing may have failed silently\n"];
+    // Flutter-specific checks
+    if (self.lastInstalledAppPath) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *flutterFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
+        if ([fm fileExistsAtPath:flutterFw]) {
+            [r appendString:@"\n[FLUTTER CHECKS]\n"];
+            [r appendString:@"  Flutter.framework detected ✅\n"];
+            NSString *flutterOut = [self runCmdOutput:self.ldidPath args:@[@"-d", flutterFw]];
+            BOOL flutterSigned = (flutterOut && flutterOut.length > 0);
+            [r appendFormat:@"  Flutter signed:    %@\n", flutterSigned ? @"YES ✅" : @"NO ❌"];
+            NSString *runnerEnt = [self runCmdOutput:self.ldidPath args:@[@"-e", [self.lastInstalledAppPath stringByAppendingPathComponent:[[self.lastInstalledAppPath lastPathComponent] stringByDeletingPathExtension]]]];
+            BOOL runnerHasPlatform = runnerEnt && [runnerEnt containsString:@"platform-application"];
+            [r appendFormat:@"  Runner platform-app: %@\n", runnerHasPlatform ? @"YES ✅" : @"NO ❌"];
+        }
+    }
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
     NSString *rec = [opLog beginPhase:OperationPhaseComplete operation:@"diagnostics-report" target:bundleID ?: @"" input:@"" transactionID:txnID];
     [opLog endPhase:rec exitCode:0 rawOutput:r rawError:@"" verification:@"diagnostics complete" verified:YES duration:0];
 }
+
 
 #pragma mark - Main Installation
 
@@ -650,6 +673,7 @@ extern char **environ;
  if (completion) completion([InstallationResult failureResult:@"Could not resolve destination" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
  }
+ self.lastInstalledAppPath = destApp;
 
  // Ensure Applications directory exists
  NSString *appsDir = [destApp stringByDeletingLastPathComponent];
@@ -949,6 +973,11 @@ extern char **environ;
  signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
  [fm removeItemAtPath:ep error:nil];
  if (!signedOK) { signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec]; }
+ // DIAGNOSTICS: log extension signing result
+ BOOL hasGTA = merged[@"get-task-allow"] != nil;
+ BOOL hasPlatform = merged[@"platform-application"] != nil;
+ BOOL hasNoSandbox = merged[@"com.apple.private.security.no-sandbox"] != nil;
+ [self diagLog:@"[DIAG] signBundle | label:%@ | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:%@ | result:%@", label, hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", hasNoSandbox?@"YES":@"NO", signedOK?@"OK":@"FAIL"];
  if ([label containsString:@"appex"]) self.diagAppexSigned++;
  return signedOK;
 }
@@ -989,31 +1018,11 @@ extern char **environ;
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
  [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
  }
-}
 
-- (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
- if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
- NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"signExe (main)" target:path input:@"" transactionID:txnID];
- NSDictionary *origEnts = [self extractEntitlementsFromExecutable:path];
- NSString *source = @"executable";
- if (!origEnts || origEnts.count == 0) { NSString *appBundle = [path stringByDeletingLastPathComponent]; origEnts = [self extractEntitlementsFromAppBundle:appBundle]; if (origEnts && origEnts.count > 0) source = @"app-bundle"; }
- NSMutableDictionary *merged = [NSMutableDictionary dictionary];
- [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
- if (origEnts) [merged addEntriesFromDictionary:origEnts];
- BOOL hasAppID = merged[@"application-identifier"] != nil;
- BOOL hasTeamID = merged[@"com.apple.developer.team-identifier"] != nil || merged[@"team-identifier"] != nil;
- BOOL hasGTA = merged[@"get-task-allow"] != nil;
- BOOL hasPlatform = merged[@"platform-application"] != nil;
- BOOL hasNoSandbox = merged[@"com.apple.private.security.no-sandbox"] != nil;
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"merged_%@.ent", [[NSUUID UUID] UUIDString]]];
- [merged writeToFile:ep atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
- if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed with merged entitlements (%lu keys)", (unsigned long)merged.count); [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:%@ | hasAppID:%@ | hasTeamID:%@ | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:%@ | result:OK", (unsigned long)merged.count, source, hasAppID?@"YES":@"NO", hasTeamID?@"YES":@"NO", hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", hasNoSandbox?@"YES":@"NO"]; return; }
- ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
- if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed blank (fallback)"); [self diagLog:@"[DIAG] signExe | entitlements:0 | source:blank | hasAppID:NO | hasTeamID:NO | hasGTA:NO | hasPlatform:NO | hasNoSandbox:NO | result:OK"]; return; }
- NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"]; [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES]; NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2]; [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec]; [self diagLog:@"[DIAG] signExe | entitlements:3 | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:YES | hasPlatform:YES | hasNoSandbox:NO | result:FALLBACK"];
+ // DIAGNOSTICS: log framework/dylib signing result
+ BOOL hasGTA = ents[@"get-task-allow"] != nil;
+ BOOL hasPlatform = ents[@"platform-application"] != nil;
+ [self diagLog:@"[DIAG] signBin | label:%@ | hasGTA:%@ | hasPlatform:%@ | result:%@", label, hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", ok?@"OK":@"FAIL"];
 }
 
 - (void)signExeWithExplicitEntitlements:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
