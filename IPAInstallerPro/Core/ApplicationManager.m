@@ -78,13 +78,15 @@
 
             info.isSystemApp = [self isSystemApp:info.bundleID];
             info.isProtected = [self isProtectedApp:info.bundleID];
+
             if ([app respondsToSelector:@selector(bundleURL)]) {
                 info.bundlePath = [[app performSelector:@selector(bundleURL)] path];
             } else if ([app respondsToSelector:@selector(containerURL)]) {
                 info.bundlePath = [[app performSelector:@selector(containerURL)] path];
             }
 
-            info.icon = [self iconForBundleID:info.bundleID];
+            // Pass bundlePath directly to avoid recursion
+            info.icon = [self iconForBundleID:info.bundleID bundlePath:info.bundlePath];
 
             [apps addObject:info];
         } @catch (NSException *e) { continue; }
@@ -110,7 +112,8 @@
     return nil;
 }
 
-- (UIImage *)iconForBundleID:(NSString *)bundleID {
+// FIXED: No circular dependency — bundlePath passed directly from caller
+- (UIImage *)iconForBundleID:(NSString *)bundleID bundlePath:(NSString *)bundlePath {
     if (!bundleID) return nil;
     UIImage *cached = [self.iconCache objectForKey:bundleID];
     if (cached) return cached;
@@ -137,41 +140,55 @@
         }
     } @catch (NSException *e) {}
 
-    // Method 2: Load from bundle path directly (fallback)
-    if (!icon) {
-        AppInfo *app = [self appInfoForBundleID:bundleID];
-        NSString *bundlePath = app.bundlePath;
-        if (bundlePath.length > 0) {
-            NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
-            NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-            if (plist) {
-                NSArray *iconFiles = nil;
-                NSDictionary *iconsDict = plist[@"CFBundleIcons"];
-                NSDictionary *primaryIcon = iconsDict[@"CFBundlePrimaryIcon"];
-                iconFiles = primaryIcon[@"CFBundleIconFiles"];
-                if (!iconFiles) iconFiles = plist[@"CFBundleIconFiles"];
-                if (!iconFiles || iconFiles.count == 0) iconFiles = @[@"AppIcon60x60"];
+    // Method 2: Load from bundle path directly (fallback) — NO recursion!
+    if (!icon && bundlePath.length > 0) {
+        NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+        NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+        if (plist) {
+            NSArray *iconFiles = nil;
+            NSDictionary *iconsDict = plist[@"CFBundleIcons"];
+            NSDictionary *primaryIcon = iconsDict[@"CFBundlePrimaryIcon"];
+            iconFiles = primaryIcon[@"CFBundleIconFiles"];
+            if (!iconFiles) iconFiles = plist[@"CFBundleIconFiles"];
+            if (!iconFiles || iconFiles.count == 0) iconFiles = @[@"AppIcon60x60"];
 
-                for (NSString *iconName in [iconFiles reverseObjectEnumerator]) {
-                    for (NSString *scale in @[@"@3x", @"@2x", @""]) {
-                        for (NSString *ext in @[@".png", @".jpg", @".jpeg"]) {
-                            NSString *path = [bundlePath stringByAppendingPathComponent:
-                                [NSString stringWithFormat:@"%@%@%@", iconName, scale, ext]];
-                            if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-                                icon = [UIImage imageWithContentsOfFile:path];
-                                if (icon) break;
-                            }
+            for (NSString *iconName in [iconFiles reverseObjectEnumerator]) {
+                for (NSString *scale in @[@"@3x", @"@2x", @""]) {
+                    for (NSString *ext in @[@".png", @".jpg", @".jpeg"]) {
+                        NSString *path = [bundlePath stringByAppendingPathComponent:
+                            [NSString stringWithFormat:@"%@%@%@", iconName, scale, ext]];
+                        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                            icon = [UIImage imageWithContentsOfFile:path];
+                            if (icon) break;
                         }
-                        if (icon) break;
                     }
                     if (icon) break;
                 }
+                if (icon) break;
             }
         }
     }
 
     if (icon) [self.iconCache setObject:icon forKey:bundleID];
     return icon;
+}
+
+// Legacy overload (avoids breaking existing callers)
+- (UIImage *)iconForBundleID:(NSString *)bundleID {
+    if (!bundleID) return nil;
+
+    NSString *bundlePath = nil;
+    @try {
+        Class LSApplicationProxy_class = objc_getClass("LSApplicationProxy");
+        if (LSApplicationProxy_class && [LSApplicationProxy_class respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
+            id proxy = [LSApplicationProxy_class performSelector:@selector(applicationProxyForIdentifier:) withObject:bundleID];
+            if (proxy && [proxy respondsToSelector:@selector(bundleURL)]) {
+                bundlePath = [[proxy performSelector:@selector(bundleURL)] path];
+            }
+        }
+    } @catch (NSException *e) {}
+
+    return [self iconForBundleID:bundleID bundlePath:bundlePath];
 }
 
 - (NSString *)versionForBundleID:(NSString *)bundleID {
