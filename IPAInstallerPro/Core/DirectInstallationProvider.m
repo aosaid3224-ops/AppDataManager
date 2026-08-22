@@ -48,6 +48,7 @@ extern char **environ;
 @property (nonatomic, assign) NSUInteger diagDeepCopySizeMismatch;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
