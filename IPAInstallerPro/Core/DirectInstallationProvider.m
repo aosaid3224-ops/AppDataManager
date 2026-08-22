@@ -937,24 +937,19 @@ extern char **environ;
  if (executable.length == 0) return NO;
  NSString *executablePath = [bundlePath stringByAppendingPathComponent:executable];
  if (![fm fileExistsAtPath:executablePath]) return NO;
-
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"sign extension (%@)", label ?: @"bundle"] target:executablePath input:@"preserve-entitlements" transactionID:txnID];
-
- NSDictionary *ents = [self extractEntitlementsFromExecutable:executablePath];
+ NSDictionary *origEnts = [self extractEntitlementsFromExecutable:executablePath];
  BOOL signedOK = NO;
-
- if (ents && ents.count > 0) {
- NSString *entPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ipa-ent-%@.plist", [NSUUID UUID].UUIDString]];
- [ents writeToFile:entPath atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", entPath];
- signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
- [fm removeItemAtPath:entPath error:nil];
- } else {
- signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec];
- }
-
+ NSMutableDictionary *merged = [NSMutableDictionary dictionary];
+ [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
+ if (origEnts) [merged addEntriesFromDictionary:origEnts];
+ NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"appex_%@.ent", [NSUUID UUID].UUIDString]];
+ [merged writeToFile:ep atomically:YES];
+ NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
+ signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
+ [fm removeItemAtPath:ep error:nil];
+ if (!signedOK) { signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec]; }
+ if ([label containsString:@"appex"]) self.diagAppexSigned++;
  return signedOK;
 }
 
@@ -999,51 +994,26 @@ extern char **environ;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"signExe (main)" target:path input:@"" transactionID:txnID];
-
- // Try 1: Extract from the installed executable itself
- NSDictionary *ents = [self extractEntitlementsFromExecutable:path];
+ NSDictionary *origEnts = [self extractEntitlementsFromExecutable:path];
  NSString *source = @"executable";
-
- // Try 2: Extract from the app bundle (archived-expanded-entitlements.xcent or embedded.mobileprovision)
- if (!ents || ents.count == 0) {
- NSString *appBundle = [path stringByDeletingLastPathComponent];
- ents = [self extractEntitlementsFromAppBundle:appBundle];
- if (ents && ents.count > 0) source = @"app-bundle";
- }
-
- BOOL hasAppID = ents[@"application-identifier"] != nil;
- BOOL hasTeamID = ents[@"com.apple.developer.team-identifier"] != nil || ents[@"team-identifier"] != nil;
- BOOL hasGTA = ents[@"get-task-allow"] != nil;
- BOOL ok = NO;
-
- if (ents && ents.count > 0) {
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"orig_%@.ent", [[NSUUID UUID] UUIDString]]];
- [ents writeToFile:ep atomically:YES];
+ if (!origEnts || origEnts.count == 0) { NSString *appBundle = [path stringByDeletingLastPathComponent]; origEnts = [self extractEntitlementsFromAppBundle:appBundle]; if (origEnts && origEnts.count > 0) source = @"app-bundle"; }
+ NSMutableDictionary *merged = [NSMutableDictionary dictionary];
+ [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
+ if (origEnts) [merged addEntriesFromDictionary:origEnts];
+ BOOL hasAppID = merged[@"application-identifier"] != nil;
+ BOOL hasTeamID = merged[@"com.apple.developer.team-identifier"] != nil || merged[@"team-identifier"] != nil;
+ BOOL hasGTA = merged[@"get-task-allow"] != nil;
+ BOOL hasPlatform = merged[@"platform-application"] != nil;
+ BOOL hasNoSandbox = merged[@"com.apple.private.security.no-sandbox"] != nil;
+ NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"merged_%@.ent", [[NSUUID UUID] UUIDString]]];
+ [merged writeToFile:ep atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
  [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
- if (ok) {
- NSLog(@"[IPAInstallerPro] Main exe signed with original entitlements (%lu keys)", (unsigned long)ents.count);
- [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:%@ | hasAppID:%@ | hasTeamID:%@ | hasGTA:%@ | result:OK",
-  (unsigned long)ents.count, source, hasAppID ? @"YES" : @"NO", hasTeamID ? @"YES" : @"NO", hasGTA ? @"YES" : @"NO"];
- return;
- }
- }
-
- ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
- if (ok) {
- NSLog(@"[IPAInstallerPro] Main exe signed blank");
- [self diagLog:@"[DIAG] signExe | entitlements:0 | source:blank | hasAppID:NO | hasTeamID:NO | hasGTA:NO | result:OK"];
- return;
- }
-
- NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
- [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", ep2];
- [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- [self diagLog:@"[DIAG] signExe | entitlements:3 | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:YES | result:FALLBACK"];
+ if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed with merged entitlements (%lu keys)", (unsigned long)merged.count); [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:%@ | hasAppID:%@ | hasTeamID:%@ | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:%@ | result:OK", (unsigned long)merged.count, source, hasAppID?@"YES":@"NO", hasTeamID?@"YES":@"NO", hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", hasNoSandbox?@"YES":@"NO"]; return; }
+ ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
+ if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed blank (fallback)"); [self diagLog:@"[DIAG] signExe | entitlements:0 | source:blank | hasAppID:NO | hasTeamID:NO | hasGTA:NO | hasPlatform:NO | hasNoSandbox:NO | result:OK"]; return; }
+ NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"]; [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES]; NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2]; [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec]; [self diagLog:@"[DIAG] signExe | entitlements:3 | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:YES | hasPlatform:YES | hasNoSandbox:NO | result:FALLBACK"];
 }
 
 - (void)signExeWithExplicitEntitlements:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
