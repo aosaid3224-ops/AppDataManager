@@ -150,20 +150,12 @@
                     if (progressBlock) progressBlock(strongSelf.currentStage, @"Installation complete!", 1.0);
                     NSLog(@"[IPAInstallerPro] Installation succeeded via %@", [provider providerName]);
 
-                    // ─── RUNTIME DIAGNOSTICS ───
-                    NSString *bundleID = result.bundleID;
-                    if (bundleID && bundleID.length > 0) {
-                        NSLog(@"[IPAInstallerPro] Starting RuntimeDiagnostics for %@", bundleID);
-                        [[RuntimeDiagnostics sharedDiagnostics] diagnoseAppLaunch:bundleID
-                                                                    transactionID:strongSelf.activeTxnID
-                                                                     operationLog:strongSelf.operationLog
-                                                                       completion:^(RuntimeDiagnosticsResult *runtimeResult) {
-                            NSLog(@"[IPAInstallerPro] RuntimeDiagnostics complete: %@", runtimeResult.state);
-                            NSLog(@"[IPAInstallerPro] %@", [runtimeResult detailedReport]);
-                        }];
-                    } else {
-                        NSLog(@"[IPAInstallerPro] No bundleID in result, skipping RuntimeDiagnostics");
-                    }
+                    // ─── RUNTIME DIAGNOSTICS (DISABLED) ───
+                    // Auto-launch was causing apps to crash before diagnostics report could be emitted.
+                    // RuntimeDiagnostics opens the app via LSApplicationWorkspace which interferes
+                    // with emitDiagnosticsReport timing. Disabled until a non-intrusive alternative is found.
+                    NSLog(@"[IPAInstallerPro] RuntimeDiagnostics disabled — app will NOT auto-launch");
+
 
                 } else {
                     strongSelf.currentStage = InstallationStageFailed;
