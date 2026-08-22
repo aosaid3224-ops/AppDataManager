@@ -351,9 +351,16 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
                          (int)record.result,
                          record.exitCode,
                          record.verified ? @"YES" : @"NO",
-                         record.rawOutput ?: @"-",
+                         record.rawOutput.length > 0 ? @"(see below)" : @"-",
                          record.rawError ?: @"-"];
     [self appendLog:logLine];
+
+    // Show diagnostics report / rawOutput clearly in raw log
+    if (record.rawOutput.length > 0) {
+        [self appendLog:@"═══════════════════════════════════════════════════════════════"];
+        [self appendLog:record.rawOutput];
+        [self appendLog:@"═══════════════════════════════════════════════════════════════"];
+    }
 
     NSInteger uiPhase = [self uiPhaseIndexForOperationPhase:record.phase];
     if (uiPhase < 0) return;
@@ -368,6 +375,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
             self.hasFailed = YES;
         }
     });
+}
+
 }
 
 #pragma mark - UI Setup
