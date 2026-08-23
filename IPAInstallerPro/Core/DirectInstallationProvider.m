@@ -424,20 +424,103 @@ extern char **environ;
     [r appendString:@"\n═══════════════════════════════════════════════════════════════\n"];
     [r appendFormat:@"📊 DIAGNOSTICS REPORT | Bundle: %@\n", bundleID ?: @"N/A"];
     [r appendString:@"═══════════════════════════════════════════════════════════════\n\n"];
+
+    // ─── [ENTITLEMENTS] ───
     [r appendString:@"[ENTITLEMENTS]\n"];
     if (self.diagnosticsLog && self.diagnosticsLog.length > 0) {
         [r appendString:self.diagnosticsLog];
     } else {
         [r appendString:@"  ⚠️ No per-binary entitlement diagnostics captured\n"];
     }
+
+    // ─── [POST-SIGN VERIFICATION] ───
+    // Verify ACTUAL entitlements on disk after signing
+    if (self.lastInstalledAppPath) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *exeName = [[self.lastInstalledAppPath lastPathComponent] stringByDeletingPathExtension];
+        NSString *mainExe = [self.lastInstalledAppPath stringByAppendingPathComponent:exeName];
+
+        [r appendString:@"\n[POST-SIGN VERIFICATION]\n"];
+
+        // Main executable entitlements
+        if ([fm fileExistsAtPath:mainExe]) {
+            NSString *mainEnts = [self runCmdOutput:self.ldidPath args:@[@"-e", mainExe]];
+            if (mainEnts && mainEnts.length > 10) {
+                BOOL hasGTA = [mainEnts containsString:@"get-task-allow"];
+                BOOL hasPlatform = [mainEnts containsString:@"platform-application"];
+                BOOL hasNoSandbox = [mainEnts containsString:@"com.apple.private.security.no-sandbox"];
+                BOOL hasSkipLib = [mainEnts containsString:@"com.apple.private.skip-library-validation"];
+                BOOL hasAppID = [mainEnts containsString:@"application-identifier"];
+                BOOL hasTeamID = [mainEnts containsString:@"team-identifier"] || [mainEnts containsString:@"com.apple.developer.team-identifier"];
+                [r appendFormat:@"  Main exe (%@):\n", exeName];
+                [r appendFormat:@"    get-task-allow:        %@\n", hasGTA ? @"✅" : @"❌"];
+                [r appendFormat:@"    platform-application:  %@\n", hasPlatform ? @"✅" : @"❌"];
+                [r appendFormat:@"    no-sandbox:            %@\n", hasNoSandbox ? @"✅" : @"❌"];
+                [r appendFormat:@"    skip-library-validation: %@\n", hasSkipLib ? @"✅" : @"❌"];
+                [r appendFormat:@"    application-identifier: %@\n", hasAppID ? @"✅" : @"❌"];
+                [r appendFormat:@"    team-identifier:       %@\n", hasTeamID ? @"✅" : @"❌"];
+            } else {
+                [r appendFormat:@"  ❌ Main exe (%@): NO entitlements found after signing!\n", exeName];
+            }
+        }
+
+        // Flutter.framework check
+        NSString *flutterPath = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
+        if ([fm fileExistsAtPath:flutterPath]) {
+            NSString *flutterEnts = [self runCmdOutput:self.ldidPath args:@[@"-e", flutterPath]];
+            BOOL flutterSigned = (flutterEnts && flutterEnts.length > 0);
+            [r appendFormat:@"  Flutter.framework:       %@\n", flutterSigned ? @"✅ signed" : @"❌ NOT signed"];
+            if (flutterSigned) {
+                BOOL flutterHasGTA = [flutterEnts containsString:@"get-task-allow"];
+                [r appendFormat:@"    get-task-allow:        %@\n", flutterHasGTA ? @"✅" : @"⚠️"];
+            }
+        }
+
+        // Check all dylibs
+        NSString *fwDir = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks"];
+        if ([fm fileExistsAtPath:fwDir]) {
+            NSUInteger fwCount = 0, fwSigned = 0;
+            for (NSString *item in [fm contentsOfDirectoryAtPath:fwDir error:nil]) {
+                if ([item hasSuffix:@".framework"]) {
+                    fwCount++;
+                    NSString *fwExe = [fwDir stringByAppendingPathComponent:[item stringByAppendingPathComponent:[item stringByDeletingPathExtension]]];
+                    if ([fm fileExistsAtPath:fwExe]) {
+                        NSString *fwSig = [self runCmdOutput:self.ldidPath args:@[@"-d", fwExe]];
+                        if (fwSig && fwSig.length > 0) fwSigned++;
+                    }
+                }
+            }
+            [r appendFormat:@"  Frameworks:              %lu/%lu signed\n", (unsigned long)fwSigned, (unsigned long)fwCount];
+        }
+
+        // Check dylibs
+        NSUInteger dylibCount = 0, dylibSigned = 0;
+        if ([fm fileExistsAtPath:fwDir]) {
+            for (NSString *item in [fm contentsOfDirectoryAtPath:fwDir error:nil]) {
+                if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
+                    dylibCount++;
+                    NSString *dylibPath = [fwDir stringByAppendingPathComponent:item];
+                    NSString *dylibSig = [self runCmdOutput:self.ldidPath args:@[@"-d", dylibPath]];
+                    if (dylibSig && dylibSig.length > 0) dylibSigned++;
+                }
+            }
+        }
+        [r appendFormat:@"  Dylibs:                  %lu/%lu signed\n", (unsigned long)dylibSigned, (unsigned long)dylibCount];
+    }
+
+    // ─── [SIGNING COVERAGE] ───
     [r appendString:@"\n[SIGNING COVERAGE]\n"];
     [r appendFormat:@"  Frameworks signed: %lu\n", (unsigned long)self.diagFrameworksSigned];
     [r appendFormat:@"  Dylibs signed:     %lu\n", (unsigned long)self.diagDylibsSigned];
     [r appendFormat:@"  AppEx signed:      %lu\n", (unsigned long)self.diagAppexSigned];
+
+    // ─── [DEEP COPY] ───
     [r appendString:@"\n[DEEP COPY]\n"];
     [r appendFormat:@"  Total files:       %lu\n", (unsigned long)self.diagDeepCopyTotal];
     [r appendFormat:@"  Missing:           %lu %@\n", (unsigned long)self.diagDeepCopyMissing, self.diagDeepCopyMissing > 0 ? @"❌" : @"✅"];
     [r appendFormat:@"  Size mismatch:     %lu %@\n", (unsigned long)self.diagDeepCopySizeMismatch, self.diagDeepCopySizeMismatch > 0 ? @"⚠️" : @"✅"];
+
+    // ─── [CRITICAL CHECKS] ───
     [r appendString:@"\n[CRITICAL CHECKS]\n"];
     if ([self.diagnosticsLog containsString:@"hasAppID=NO"]) [r appendString:@"  ❌ application-identifier MISSING — app may crash on launch\n"];
     if ([self.diagnosticsLog containsString:@"hasTeamID=NO"]) [r appendString:@"  ❌ team-identifier MISSING — app may crash on launch\n"];
@@ -447,9 +530,32 @@ extern char **environ;
     if ([self.diagnosticsLog containsString:@"source:fallback"]) [r appendString:@"  ⚠️ Entitlements used FALLBACK — original entitlements not found\n"];
     if (self.diagDeepCopyMissing > 0) [r appendString:@"  ❌ Deep copy MISSING files — installation incomplete\n"];
     if (self.diagFrameworksSigned == 0 && self.diagDylibsSigned == 0 && self.diagAppexSigned == 0) [r appendString:@"  ⚠️ NO binaries signed — signing may have failed silently\n"];
-    // Flutter-specific checks
+
+    // ─── [CRASH REPORTS] ───
+    [r appendString:@"\n[CRASH REPORTS]\n"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *crashDir = @"/var/mobile/Library/Logs/CrashReporter";
+    BOOL foundCrash = NO;
+    if ([fm fileExistsAtPath:crashDir]) {
+        NSArray *items = [fm contentsOfDirectoryAtPath:crashDir error:nil];
+        NSDate *now = [NSDate date];
+        for (NSString *item in items) {
+            if (([item hasSuffix:@".ips"] || [item hasSuffix:@".crash"]) && 
+                ([item containsString:bundleID] || [item containsString:@"Runner"])) {
+                NSString *fullPath = [crashDir stringByAppendingPathComponent:item];
+                NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+                NSDate *modDate = attrs[NSFileModificationDate];
+                if (modDate && [now timeIntervalSinceDate:modDate] < 300) {
+                    [r appendFormat:@"  🚨 Recent crash found: %@\n", item];
+                    foundCrash = YES;
+                }
+            }
+        }
+    }
+    if (!foundCrash) [r appendString:@"  No recent crash reports found ✅\n"];
+
+    // ─── [FLUTTER CHECKS] ───
     if (self.lastInstalledAppPath) {
-        NSFileManager *fm = [NSFileManager defaultManager];
         NSString *flutterFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
         if ([fm fileExistsAtPath:flutterFw]) {
             [r appendString:@"\n[FLUTTER CHECKS]\n"];
@@ -462,13 +568,11 @@ extern char **environ;
             [r appendFormat:@"  Runner platform-app: %@\n", runnerHasPlatform ? @"YES ✅" : @"NO ❌"];
         }
     }
+
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
     NSString *rec = [opLog beginPhase:OperationPhaseComplete operation:@"diagnostics-report" target:bundleID ?: @"" input:@"" transactionID:txnID];
     [opLog endPhase:rec exitCode:0 rawOutput:r rawError:@"" verification:@"diagnostics complete" verified:YES duration:0];
 }
-
-
-#pragma mark - Main Installation
 
 - (void)installIPA:(NSString *)ipaPath transactionID:(NSString *)txnID operationLog:(OperationLog *)opLog completion:(void (^)(InstallationResult *))completion {
  NSFileManager *fm = [NSFileManager defaultManager];
