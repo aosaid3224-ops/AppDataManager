@@ -4,7 +4,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Vault";
+    self.title = @"المستودع";
 
     if (@available(iOS 13.0, *)) {
         self.view.backgroundColor = [UIColor systemBackgroundColor];
