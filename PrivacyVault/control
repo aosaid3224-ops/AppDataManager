@@ -1,6 +1,6 @@
 Package: com.aosaid.pvhook
 Name: PV Hook
-Version: 0.1
+Version: 0.1.2
 Architecture: iphoneos-arm
 Description: System hook prototype
 Maintainer: aosaid
