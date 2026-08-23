@@ -952,9 +952,23 @@ extern char **environ;
  }
  [opLog endPhase:rec11 exitCode:0 rawOutput:@"" rawError:@"" verification:@"signing complete" verified:YES duration:0];
 
- // PHASE 7: FRAMEWORK (always run as safety net)
- [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+  // PHASE 7: FRAMEWORK (always run as safety net)
+  NSString *dbgBefore = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] BEFORE fixFrameworks" target:@"" input:@"" transactionID:txnID];
+  [opLog endPhase:dbgBefore exitCode:0 rawOutput:@"[DEBUG] BEFORE fixFrameworks" rawError:@"" verification:@"debug" verified:YES duration:0];
+
+  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+
+  NSString *dbgAfter = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] AFTER fixFrameworks" target:@"" input:@"" transactionID:txnID];
+  [opLog endPhase:dbgAfter exitCode:0 rawOutput:@"[DEBUG] AFTER fixFrameworks" rawError:@"" verification:@"debug" verified:YES duration:0];
+
+  NSString *dbgEnter = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] ENTERING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
+  [opLog endPhase:dbgEnter exitCode:0 rawOutput:@"[DEBUG] ENTERING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
+
   [self postSignVerification:destApp opLog:opLog txnID:txnID];
+
+  NSString *dbgExit = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] EXITING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
+  [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
+
 
  // PHASE 8: UICACHE
  NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
