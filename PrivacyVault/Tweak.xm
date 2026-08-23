@@ -30,12 +30,12 @@
         if ([spec isKindOfClass:%c(PSSpecifier)]) {
             NSString *name = nil;
             @try { name = [spec valueForKey:@"name"]; } @catch (NSException *e) {}
-            if ([name isEqualToString:@"Diagnostics"]) { alreadyAdded = YES; break; }
+            if ([name isEqualToString:@"التشخيص"]) { alreadyAdded = YES; break; }
         }
     }
 
     if (!alreadyAdded) {
-        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"Diagnostics"
+        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"التشخيص"
                                                            target:self
                                                               set:NULL
                                                               get:NULL
@@ -65,11 +65,11 @@
     for (id spec in mutable) {
         NSString *name = nil;
         @try { name = [spec valueForKey:@"name"]; } @catch (NSException *e) {}
-        if ([name isEqualToString:@"Diagnostics"]) { alreadyAdded = YES; break; }
+        if ([name isEqualToString:@"التشخيص"]) { alreadyAdded = YES; break; }
     }
 
     if (!alreadyAdded) {
-        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"Diagnostics"
+        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"التشخيص"
                                                            target:self
                                                               set:NULL
                                                               get:NULL
