@@ -954,6 +954,8 @@ extern char **environ;
 
  // PHASE 7: FRAMEWORK (always run as safety net)
  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+  [self postSignVerification:destApp opLog:opLog txnID:txnID];
+
  // PHASE 8: UICACHE
  NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
  NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
@@ -1004,6 +1006,106 @@ extern char **environ;
  result.bundleID = bundleID;
  if (completion) completion(result);
 }
+
+- (void)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"POST-SIGN VERIFICATION" target:destApp input:@"" transactionID:txnID];
+    NSMutableString *r = [NSMutableString string];
+
+    [r appendString:@"\n═══════════════════════════════════════════════════════════════\n"];
+    [r appendString:@"POST-SIGN VERIFICATION\n"];
+    [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
+
+    // ─── [INFO.PLST] ───
+    [r appendString:@"\n[INFO.PLST]\n"];
+    NSString *infoPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    if (info) {
+        [r appendFormat:@"  UIMainStoryboardFile:      %@\n", info[@"UIMainStoryboardFile"] ?: @"(not set)"];
+        [r appendFormat:@"  UILaunchStoryboardName:    %@\n", info[@"UILaunchStoryboardName"] ?: @"(not set)"];
+        [r appendFormat:@"  NSMainNibFile:             %@\n", info[@"NSMainNibFile"] ?: @"(not set)"];
+        [r appendFormat:@"  NSMainNibFile~ipad:        %@\n", info[@"NSMainNibFile~ipad"] ?: @"(not set)"];
+        [r appendFormat:@"  UIApplicationSceneManifest: %@\n", info[@"UIApplicationSceneManifest"] ? @"FOUND" : @"MISSING"];
+        [r appendFormat:@"  UISceneConfigurations:     %@\n", info[@"UISceneConfigurations"] ? @"FOUND" : @"MISSING"];
+        [r appendFormat:@"  CFBundleExecutable:        %@\n", info[@"CFBundleExecutable"] ?: @"MISSING"];
+    } else {
+        [r appendString:@"  ❌ Info.plist NOT READABLE\n"];
+    }
+
+    // ─── [FILES] ───
+    [r appendString:@"\n[FILES]\n"];
+    NSString *exeName = info[@"CFBundleExecutable"] ?: [[destApp lastPathComponent] stringByDeletingPathExtension];
+    NSString *mainExe = [destApp stringByAppendingPathComponent:exeName];
+    [r appendFormat:@"  Runner:                    %@\n", [fm fileExistsAtPath:mainExe] ? @"FOUND" : @"MISSING"];
+
+    NSString *flutterFw = [destApp stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
+    [r appendFormat:@"  Flutter.framework/Flutter: %@\n", [fm fileExistsAtPath:flutterFw] ? @"FOUND" : @"MISSING"];
+
+    NSString *appFw = [destApp stringByAppendingPathComponent:@"Frameworks/App.framework/App"];
+    [r appendFormat:@"  App.framework/App:         %@\n", [fm fileExistsAtPath:appFw] ? @"FOUND" : @"MISSING"];
+
+    NSString *flutterAssets = [destApp stringByAppendingPathComponent:@"flutter_assets"];
+    [r appendFormat:@"  flutter_assets:            %@\n", [fm fileExistsAtPath:flutterAssets] ? @"FOUND" : @"MISSING"];
+
+    NSString *mainSb = [destApp stringByAppendingPathComponent:@"Main.storyboardc"];
+    [r appendFormat:@"  Main.storyboardc:          %@\n", [fm fileExistsAtPath:mainSb] ? @"FOUND" : @"MISSING"];
+
+    NSString *launchSb = [destApp stringByAppendingPathComponent:@"LaunchScreen.storyboardc"];
+    [r appendFormat:@"  LaunchScreen.storyboardc:  %@\n", [fm fileExistsAtPath:launchSb] ? @"FOUND" : @"MISSING"];
+
+    // ─── [SIGNATURE] ───
+    [r appendString:@"\n[SIGNATURE]\n"];
+
+    // Runner signature
+    NSString *runnerSig = [self runCmdOutput:self.ldidPath args:@[@"-d", mainExe]];
+    BOOL runnerSigned = (runnerSig && runnerSig.length > 0);
+    [r appendFormat:@"  Runner signature:          %@\n", runnerSigned ? @"VALID" : @"INVALID"];
+    if (runnerSigned) {
+        NSString *runnerEnt = [self runCmdOutput:self.ldidPath args:@[@"-e", mainExe]];
+        [r appendFormat:@"  Runner entitlements:       %@\n", (runnerEnt && runnerEnt.length > 10) ? @"FOUND" : @"MISSING"];
+    }
+
+    // Flutter.framework signature
+    NSString *flutterSig = [self runCmdOutput:self.ldidPath args:@[@"-d", flutterFw]];
+    BOOL flutterSigned = (flutterSig && flutterSig.length > 0);
+    [r appendFormat:@"  Flutter.framework sig:     %@\n", flutterSigned ? @"VALID" : @"INVALID"];
+
+    // App.framework signature
+    NSString *appSig = [self runCmdOutput:self.ldidPath args:@[@"-d", appFw]];
+    BOOL appSigned = (appSig && appSig.length > 0);
+    [r appendFormat:@"  App.framework sig:         %@\n", appSigned ? @"VALID" : @"INVALID"];
+
+    // Frameworks count
+    NSString *fwDir = [destApp stringByAppendingPathComponent:@"Frameworks"];
+    NSUInteger fwTotal = 0, fwSigned = 0, fwFailed = 0;
+    if ([fm fileExistsAtPath:fwDir]) {
+        for (NSString *item in [fm contentsOfDirectoryAtPath:fwDir error:nil]) {
+            if ([item hasSuffix:@".framework"]) {
+                fwTotal++;
+                NSString *fwExe = [fwDir stringByAppendingPathComponent:[item stringByAppendingPathComponent:[item stringByDeletingPathExtension]]];
+                if ([fm fileExistsAtPath:fwExe]) {
+                    NSString *sig = [self runCmdOutput:self.ldidPath args:@[@"-d", fwExe]];
+                    if (sig && sig.length > 0) {
+                        fwSigned++;
+                    } else {
+                        fwFailed++;
+                    }
+                } else {
+                    fwFailed++;
+                }
+            }
+        }
+    }
+    [r appendFormat:@"  Frameworks total:          %lu\n", (unsigned long)fwTotal];
+    [r appendFormat:@"  Frameworks signed:         %lu\n", (unsigned long)fwSigned];
+    [r appendFormat:@"  Frameworks failed:         %lu\n", (unsigned long)fwFailed];
+
+    [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
+
+    BOOL allOk = runnerSigned;
+    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:@"" verification:@"post-sign verification complete" verified:allOk duration:0];
+}
+
 
 #pragma mark - Signing
 
