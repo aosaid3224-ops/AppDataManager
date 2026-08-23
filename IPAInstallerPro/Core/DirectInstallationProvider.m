@@ -1381,26 +1381,61 @@ extern char **environ;
 }
 
 - (void)fixFrameworks:(NSString *)appPath hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
- NSFileManager *fm = [NSFileManager defaultManager];
- NSString *fw = [appPath stringByAppendingPathComponent:@"Frameworks"];
- if (![fm fileExistsAtPath:fw]) return;
- for (NSString *item in [fm contentsOfDirectoryAtPath:fw error:nil]) {
- NSString *ip = [fw stringByAppendingPathComponent:item];
- BOOL isDir = NO;
- [fm fileExistsAtPath:ip isDirectory:&isDir];
- if (isDir && [item hasSuffix:@".framework"]) {
- NSString *fn = [item stringByDeletingPathExtension];
- [self signBin:[ip stringByAppendingPathComponent:fn] hasHelper:hasH label:[@"fw:" stringByAppendingString:fn] opLog:opLog txnID:txnID];
- [self signAllAt:ip hasHelper:hasH opLog:opLog txnID:txnID];
- } else if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
- [self signBin:ip hasHelper:hasH label:[@"dylib:" stringByAppendingString:item] opLog:opLog txnID:txnID];
- if (hasH) {
- [self runRoot:self.chmodPath args:@[@"755", ip] opLog:opLog recordID:nil];
- [self runRoot:self.chownPath args:@[@"root:wheel", ip] opLog:opLog recordID:nil];
- }
- }
- }
+  NSString *traceRec = [opLog beginPhase:OperationPhaseSign operation:@"[TRACE] ENTER fixFrameworks" target:appPath input:@"" transactionID:txnID];
+  [opLog endPhase:traceRec exitCode:0 rawOutput:@"[TRACE] ENTER fixFrameworks" rawError:@"" verification:@"trace" verified:YES duration:0];
+
+  NSFileManager *fm = [NSFileManager defaultManager];
+  NSString *fw = [appPath stringByAppendingPathComponent:@"Frameworks"];
+  if (![fm fileExistsAtPath:fw]) {
+    NSString *missRec = [opLog beginPhase:OperationPhaseSign operation:@"[TRACE] RETURN FROM fixFrameworks" target:appPath input:@"reason=Frameworks_dir_missing" transactionID:txnID];
+    [opLog endPhase:missRec exitCode:0 rawOutput:@"[TRACE] RETURN FROM fixFrameworks | reason=Frameworks_dir_missing" rawError:@"" verification:@"trace" verified:YES duration:0];
+    return;
+  }
+
+  NSArray *items = [fm contentsOfDirectoryAtPath:fw error:nil];
+  NSString *itemsRec = [opLog beginPhase:OperationPhaseSign operation:@"[TRACE] fixFrameworks items" target:appPath input:@"" transactionID:txnID];
+  [opLog endPhase:itemsRec exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] fixFrameworks found %lu items", (unsigned long)items.count] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+  for (NSString *item in items) {
+    NSString *ip = [fw stringByAppendingPathComponent:item];
+    BOOL isDir = NO;
+    [fm fileExistsAtPath:ip isDirectory:&isDir];
+
+    if (isDir && [item hasSuffix:@".framework"]) {
+      NSString *fn = [item stringByDeletingPathExtension];
+      NSString *beforeFw = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"[TRACE] BEFORE SIGN framework: %@", fn] target:ip input:@"" transactionID:txnID];
+      [opLog endPhase:beforeFw exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] BEFORE SIGN framework: %@", fn] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+      [self signBin:[ip stringByAppendingPathComponent:fn] hasHelper:hasH label:[@"fw:" stringByAppendingString:fn] opLog:opLog txnID:txnID];
+
+      NSString *afterFw = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"[TRACE] AFTER SIGN framework: %@", fn] target:ip input:@"" transactionID:txnID];
+      [opLog endPhase:afterFw exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] AFTER SIGN framework: %@", fn] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+      [self signAllAt:ip hasHelper:hasH opLog:opLog txnID:txnID];
+
+      NSString *afterAll = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"[TRACE] AFTER signAllAt: %@", fn] target:ip input:@"" transactionID:txnID];
+      [opLog endPhase:afterAll exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] AFTER signAllAt: %@", fn] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+    } else if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
+      NSString *beforeDy = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"[TRACE] BEFORE SIGN dylib: %@", item] target:ip input:@"" transactionID:txnID];
+      [opLog endPhase:beforeDy exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] BEFORE SIGN dylib: %@", item] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+      [self signBin:ip hasHelper:hasH label:[@"dylib:" stringByAppendingString:item] opLog:opLog txnID:txnID];
+
+      NSString *afterDy = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"[TRACE] AFTER SIGN dylib: %@", item] target:ip input:@"" transactionID:txnID];
+      [opLog endPhase:afterDy exitCode:0 rawOutput:[NSString stringWithFormat:@"[TRACE] AFTER SIGN dylib: %@", item] rawError:@"" verification:@"trace" verified:YES duration:0];
+
+      if (hasH) {
+        [self runRoot:self.chmodPath args:@[@"755", ip] opLog:opLog recordID:nil];
+        [self runRoot:self.chownPath args:@[@"root:wheel", ip] opLog:opLog recordID:nil];
+      }
+    }
+  }
+
+  NSString *exitRec = [opLog beginPhase:OperationPhaseSign operation:@"[TRACE] EXIT fixFrameworks" target:appPath input:@"" transactionID:txnID];
+  [opLog endPhase:exitRec exitCode:0 rawOutput:@"[TRACE] EXIT fixFrameworks" rawError:@"" verification:@"trace" verified:YES duration:0];
 }
+
 
 #pragma mark - Verification
 
