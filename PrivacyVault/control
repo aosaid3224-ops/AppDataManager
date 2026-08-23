@@ -1,8 +1,8 @@
-Package: com.aosaid.privacyvault
-Name: Privacy Vault
+Package: com.aosaid.pvhook
+Name: PV Hook
 Version: 0.1
 Architecture: iphoneos-arm
-Description: Hidden entry prototype — V0.1
+Description: System hook prototype
 Maintainer: aosaid
 Author: aosaid
 Section: Tweaks
