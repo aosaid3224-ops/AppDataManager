@@ -10,7 +10,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Authentication";
+    self.title = @"المصادقة";
 
     if (@available(iOS 13.0, *)) {
         self.view.backgroundColor = [UIColor systemBackgroundColor];
@@ -19,7 +19,7 @@
     }
 
     UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.text = @"Enter Password";
+    titleLabel.text = @"أدخل كلمة المرور";
     titleLabel.font = [UIFont boldSystemFontOfSize:20];
     titleLabel.textAlignment = NSTextAlignmentCenter;
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -28,7 +28,7 @@
     self.passwordField = [[UITextField alloc] init];
     self.passwordField.secureTextEntry = YES;
     self.passwordField.borderStyle = UITextBorderStyleRoundedRect;
-    self.passwordField.placeholder = @"Password";
+    self.passwordField.placeholder = @"كلمة المرور";
     self.passwordField.textAlignment = NSTextAlignmentCenter;
     self.passwordField.returnKeyType = UIReturnKeyGo;
     self.passwordField.autocapitalizationType = UITextAutocapitalizationTypeNone;
@@ -37,7 +37,7 @@
     [self.view addSubview:self.passwordField];
 
     UIButton *submitBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    [submitBtn setTitle:@"Unlock" forState:UIControlStateNormal];
+    [submitBtn setTitle:@"فتح" forState:UIControlStateNormal];
     submitBtn.titleLabel.font = [UIFont boldSystemFontOfSize:17];
     [submitBtn addTarget:self action:@selector(submitTapped:) forControlEvents:UIControlEventTouchUpInside];
     submitBtn.translatesAutoresizingMaskIntoConstraints = NO;
@@ -79,7 +79,7 @@
         PVDummyViewController *vc = [[PVDummyViewController alloc] init];
         [self.navigationController pushViewController:vc animated:YES];
     } else {
-        self.statusLabel.text = @"Incorrect password";
+        self.statusLabel.text = @"كلمة المرور غير صحيحة";
         self.passwordField.text = @"";
         [self.passwordField becomeFirstResponder];
     }
