@@ -1,0 +1,9 @@
+Package: com.aosaid.privacyvault
+Name: Privacy Vault
+Version: 0.1
+Architecture: iphoneos-arm
+Description: Hidden entry prototype — V0.1
+Maintainer: aosaid
+Author: aosaid
+Section: Tweaks
+Depends: firmware (>= 14.0)
