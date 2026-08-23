@@ -892,6 +892,34 @@ extern char **environ;
  return;
  }
 
+  // ─── FIX: Remove invalid UIMainStoryboardFile from Info.plist ───
+  // Flutter apps crash if UIMainStoryboardFile points to missing storyboard
+  NSString *infoPlistPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
+  NSMutableDictionary *infoDict = [NSMutableDictionary dictionaryWithContentsOfFile:infoPlistPath];
+  if (infoDict) {
+      NSString *mainStoryboard = infoDict[@"UIMainStoryboardFile"];
+      if (mainStoryboard && mainStoryboard.length > 0) {
+          NSString *storyboardPath = [destApp stringByAppendingPathComponent:
+              [NSString stringWithFormat:@"%@.storyboardc", mainStoryboard]];
+          if (![fm fileExistsAtPath:storyboardPath]) {
+              NSLog(@"[IPAInstallerPro] WARNING: %@.storyboardc missing — removing UIMainStoryboardFile", mainStoryboard);
+              [infoDict removeObjectForKey:@"UIMainStoryboardFile"];
+              [infoDict writeToFile:infoPlistPath atomically:YES];
+
+              NSString *fixRec = [opLog beginPhase:OperationPhaseFileCopy 
+                                         operation:@"fix-info-plist" 
+                                           target:infoPlistPath 
+                                           input:@"remove-UIMainStoryboardFile" 
+                                     transactionID:txnID];
+              [opLog endPhase:fixRec exitCode:0 rawOutput:
+                  [NSString stringWithFormat:@"Removed UIMainStoryboardFile (%@) — storyboard missing", mainStoryboard]
+                  rawError:@"" verification:@"Info.plist fixed" verified:YES duration:0];
+          }
+      }
+  }
+  // ─── END FIX ───
+
+
  // PHASE 6: SMART SIGN + LEGACY SAFETY NET
  NSLog(@"[IPAInstallerPro] === PHASE 6: SIGNING ===");
  NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"" transactionID:txnID];
