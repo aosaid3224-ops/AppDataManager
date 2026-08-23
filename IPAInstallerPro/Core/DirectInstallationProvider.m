@@ -1095,39 +1095,43 @@ extern char **environ;
  if (hasH) [self runRoot:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
  else [self runCmd:self.chmodPath args:@[@"755", path] opLog:opLog recordID:nil];
 
- // For frameworks and dylibs, try to preserve original entitlements first
- NSDictionary *ents = nil;
+ // Extract original entitlements (for frameworks/dylibs)
+ NSDictionary *origEnts = nil;
  if ([label hasPrefix:@"fw:"] || [label hasPrefix:@"dylib:"]) {
- ents = [self extractEntitlementsFromExecutable:path];
+ origEnts = [self extractEntitlementsFromExecutable:path];
  }
 
- BOOL ok = NO;
- if (ents && ents.count > 0) {
+ // ALWAYS merge with jailbreak essentials — fixes Flutter/cracked apps
+ NSMutableDictionary *merged = [NSMutableDictionary dictionary];
+ [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
+ if (origEnts) [merged addEntriesFromDictionary:origEnts];
+
  NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"bin_%@.ent", [[NSUUID UUID] UUIDString]]];
- [ents writeToFile:ep atomically:YES];
+ [merged writeToFile:ep atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
+ BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
  : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
  [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
- }
 
  if (!ok) {
+ // Fallback: blank signing
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec]
  : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
  }
 
  if (!ok) {
- // Retry with minimal entitlements
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
- [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ // Last resort: minimal entitlements
+ NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
+ [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES];
+ NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2];
+ [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec];
  }
 
  // DIAGNOSTICS: log framework/dylib signing result
- BOOL hasGTA = ents[@"get-task-allow"] != nil;
- BOOL hasPlatform = ents[@"platform-application"] != nil;
- [self diagLog:@"[DIAG] signBin | label:%@ | hasGTA:%@ | hasPlatform:%@ | result:%@", label, hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", ok?@"OK":@"FAIL"];
+ BOOL hasGTA = merged[@"get-task-allow"] != nil;
+ BOOL hasPlatform = merged[@"platform-application"] != nil;
+ BOOL hasNoSandbox = merged[@"com.apple.private.security.no-sandbox"] != nil;
+ [self diagLog:@"[DIAG] signBin | label:%@ | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:%@ | result:%@", label, hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", hasNoSandbox?@"YES":@"NO", ok?@"OK":@"FAIL"];
 }
 
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
