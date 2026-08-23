@@ -5,7 +5,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Diagnostics";
+    self.title = @"التشخيص";
 
     if (@available(iOS 13.0, *)) {
         self.view.backgroundColor = [UIColor systemBackgroundColor];
@@ -14,7 +14,7 @@
     }
 
     UILabel *label = [[UILabel alloc] init];
-    label.text = @"Device diagnostics are not available.";
+    label.text = @"التشخيص غير متاح حالياً.";
     label.textAlignment = NSTextAlignmentCenter;
     if (@available(iOS 13.0, *)) {
         label.textColor = [UIColor secondaryLabelColor];
