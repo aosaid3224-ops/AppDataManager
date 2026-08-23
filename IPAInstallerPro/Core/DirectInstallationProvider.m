@@ -434,7 +434,6 @@ extern char **environ;
     }
 
     // ─── [POST-SIGN VERIFICATION] ───
-    // Verify ACTUAL entitlements on disk after signing
     if (self.lastInstalledAppPath) {
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *exeName = [[self.lastInstalledAppPath lastPathComponent] stringByDeletingPathExtension];
@@ -470,13 +469,9 @@ extern char **environ;
             NSString *flutterEnts = [self runCmdOutput:self.ldidPath args:@[@"-e", flutterPath]];
             BOOL flutterSigned = (flutterEnts && flutterEnts.length > 0);
             [r appendFormat:@"  Flutter.framework:       %@\n", flutterSigned ? @"✅ signed" : @"❌ NOT signed"];
-            if (flutterSigned) {
-                BOOL flutterHasGTA = [flutterEnts containsString:@"get-task-allow"];
-                [r appendFormat:@"    get-task-allow:        %@\n", flutterHasGTA ? @"✅" : @"⚠️"];
-            }
         }
 
-        // Check all dylibs
+        // Check all dylibs/frameworks signing
         NSString *fwDir = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks"];
         if ([fm fileExistsAtPath:fwDir]) {
             NSUInteger fwCount = 0, fwSigned = 0;
@@ -492,20 +487,63 @@ extern char **environ;
             }
             [r appendFormat:@"  Frameworks:              %lu/%lu signed\n", (unsigned long)fwSigned, (unsigned long)fwCount];
         }
+    }
 
-        // Check dylibs
-        NSUInteger dylibCount = 0, dylibSigned = 0;
+    // ─── [BUNDLE STRUCTURE — CRITICAL FOR FLUTTER] ───
+    if (self.lastInstalledAppPath) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [r appendString:@"\n[BUNDLE STRUCTURE — CRITICAL CHECKS]\n"];
+
+        // Check Info.plist keys
+        NSString *infoPath = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Info.plist"];
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+
+        NSString *mainStoryboard = info[@"UIMainStoryboardFile"];
+        NSString *launchStoryboard = info[@"UILaunchStoryboardName"];
+        NSString *mainNib = info[@"NSMainNibFile"];
+
+        [r appendFormat:@"  Info.plist UIMainStoryboardFile:   %@\n", mainStoryboard ?: @"(not set)"];
+        [r appendFormat:@"  Info.plist UILaunchStoryboardName: %@\n", launchStoryboard ?: @"(not set)"];
+        [r appendFormat:@"  Info.plist NSMainNibFile:          %@\n", mainNib ?: @"(not set)"];
+
+        // Check if referenced storyboards exist
+        if (mainStoryboard) {
+            NSString *sbPath = [self.lastInstalledAppPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.storyboardc", mainStoryboard]];
+            BOOL exists = [fm fileExistsAtPath:sbPath];
+            [r appendFormat:@"  Main.storyboardc exists:           %@\n", exists ? @"✅ YES" : @"❌ NO — THIS CAUSES CRASH!"];
+        }
+        if (launchStoryboard) {
+            NSString *sbPath = [self.lastInstalledAppPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.storyboardc", launchStoryboard]];
+            BOOL exists = [fm fileExistsAtPath:sbPath];
+            [r appendFormat:@"  LaunchScreen.storyboardc exists:   %@\n", exists ? @"✅ YES" : @"❌ NO"];
+        }
+
+        // Check App.framework (CRITICAL for Flutter)
+        NSString *appFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/App.framework/App"];
+        BOOL hasAppFw = [fm fileExistsAtPath:appFw];
+        [r appendFormat:@"  App.framework/App exists:          %@\n", hasAppFw ? @"✅ YES" : @"❌ NO — FLUTTER WILL CRASH!"];
+
+        // Check Flutter.framework
+        NSString *flutterFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
+        BOOL hasFlutter = [fm fileExistsAtPath:flutterFw];
+        [r appendFormat:@"  Flutter.framework exists:          %@\n", hasFlutter ? @"✅ YES" : @"❌ NO"];
+
+        // Check for .dylib files
+        NSString *fwDir = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks"];
+        NSUInteger dylibCount = 0;
         if ([fm fileExistsAtPath:fwDir]) {
             for (NSString *item in [fm contentsOfDirectoryAtPath:fwDir error:nil]) {
-                if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
-                    dylibCount++;
-                    NSString *dylibPath = [fwDir stringByAppendingPathComponent:item];
-                    NSString *dylibSig = [self runCmdOutput:self.ldidPath args:@[@"-d", dylibPath]];
-                    if (dylibSig && dylibSig.length > 0) dylibSigned++;
-                }
+                if ([item hasSuffix:@".dylib"]) dylibCount++;
             }
         }
-        [r appendFormat:@"  Dylibs:                  %lu/%lu signed\n", (unsigned long)dylibSigned, (unsigned long)dylibCount];
+        [r appendFormat:@"  .dylib files in Frameworks:       %lu\n", (unsigned long)dylibCount];
+
+        // List ALL files in bundle root (to see if anything is missing)
+        [r appendString:@"\n  Bundle root contents:\n"];
+        NSArray *rootItems = [fm contentsOfDirectoryAtPath:self.lastInstalledAppPath error:nil];
+        for (NSString *item in rootItems) {
+            [r appendFormat:@"    %@\n", item];
+        }
     }
 
     // ─── [SIGNING COVERAGE] ───
@@ -553,21 +591,6 @@ extern char **environ;
         }
     }
     if (!foundCrash) [r appendString:@"  No recent crash reports found ✅\n"];
-
-    // ─── [FLUTTER CHECKS] ───
-    if (self.lastInstalledAppPath) {
-        NSString *flutterFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
-        if ([fm fileExistsAtPath:flutterFw]) {
-            [r appendString:@"\n[FLUTTER CHECKS]\n"];
-            [r appendString:@"  Flutter.framework detected ✅\n"];
-            NSString *flutterOut = [self runCmdOutput:self.ldidPath args:@[@"-d", flutterFw]];
-            BOOL flutterSigned = (flutterOut && flutterOut.length > 0);
-            [r appendFormat:@"  Flutter signed:    %@\n", flutterSigned ? @"YES ✅" : @"NO ❌"];
-            NSString *runnerEnt = [self runCmdOutput:self.ldidPath args:@[@"-e", [self.lastInstalledAppPath stringByAppendingPathComponent:[[self.lastInstalledAppPath lastPathComponent] stringByDeletingPathExtension]]]];
-            BOOL runnerHasPlatform = runnerEnt && [runnerEnt containsString:@"platform-application"];
-            [r appendFormat:@"  Runner platform-app: %@\n", runnerHasPlatform ? @"YES ✅" : @"NO ❌"];
-        }
-    }
 
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
     NSString *rec = [opLog beginPhase:OperationPhaseComplete operation:@"diagnostics-report" target:bundleID ?: @"" input:@"" transactionID:txnID];
