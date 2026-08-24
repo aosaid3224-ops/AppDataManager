@@ -80,7 +80,8 @@
 %ctor {
     if (%c(PSUIPrefsListController)) {
         %init(iOS15Up);
-    } else {
+    }
+    if (%c(PSListController)) {
         %init(iOS14Down);
     }
 }
