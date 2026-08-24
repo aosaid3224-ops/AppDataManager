@@ -1,5 +1,6 @@
 #import "PVPassword1ViewController.h"
 #import "PVDummyViewController.h"
+#import "PVPasswordStore.h"
 
 @interface PVPassword1ViewController ()
 @property (nonatomic, strong) UITextField *passwordField;
@@ -71,10 +72,10 @@
 }
 
 - (void)submitTapped:(UIButton *)sender {
-    NSString *input = self.passwordField.text;
-    NSString *correct = @"1234";
+    NSString *input = self.passwordField.text ?: @"";
+    BOOL valid = [[PVPasswordStore sharedStore] verifyPassword1:input error:nil];
 
-    if ([input isEqualToString:correct]) {
+    if (valid) {
         self.statusLabel.text = @"";
         PVDummyViewController *vc = [[PVDummyViewController alloc] init];
         [self.navigationController pushViewController:vc animated:YES];

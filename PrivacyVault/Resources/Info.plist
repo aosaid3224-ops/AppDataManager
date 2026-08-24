@@ -15,9 +15,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
+    <string>0.1.3</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>4</string>
     <key>CFBundleIcons</key>
     <dict>
         <key>CFBundlePrimaryIcon</key>
@@ -33,8 +33,6 @@
                 <string>Icon@2x.png</string>
                 <string>Icon@3x.png</string>
             </array>
-            <key>CFBundleIconName</key>
-            <string>Icon</string>
         </dict>
     </dict>
     <key>CFBundleIconFiles</key>

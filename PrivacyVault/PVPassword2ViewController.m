@@ -1,5 +1,6 @@
 #import "PVPassword2ViewController.h"
 #import "PVVaultViewController.h"
+#import "PVPasswordStore.h"
 
 @interface PVPassword2ViewController ()
 @property (nonatomic, strong) UITextField *passwordField;
@@ -71,10 +72,10 @@
 }
 
 - (void)submitTapped:(UIButton *)sender {
-    NSString *input = self.passwordField.text;
-    NSString *correct = @"5678";
+    NSString *input = self.passwordField.text ?: @"";
+    BOOL valid = [[PVPasswordStore sharedStore] verifyPassword2:input error:nil];
 
-    if ([input isEqualToString:correct]) {
+    if (valid) {
         self.statusLabel.text = @"";
         PVVaultViewController *vc = [[PVVaultViewController alloc] init];
         [self.navigationController pushViewController:vc animated:YES];
