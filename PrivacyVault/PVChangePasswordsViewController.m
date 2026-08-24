@@ -1,7 +1,7 @@
 #import "PVChangePasswordsViewController.h"
 #import "PVPasswordStore.h"
 
-@interface PVChangePasswordsViewController ()
+@interface PVChangePasswordsViewController () <UITextFieldDelegate>
 @property (nonatomic, strong) UITextField *password1CurrentField;
 @property (nonatomic, strong) UITextField *password1NewField;
 @property (nonatomic, strong) UITextField *password1ConfirmationField;
@@ -10,6 +10,8 @@
 @property (nonatomic, strong) UITextField *password2NewField;
 @property (nonatomic, strong) UITextField *password2ConfirmationField;
 @property (nonatomic, strong) UILabel *password2StatusLabel;
+@property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, weak) UITextField *activeField;
 @end
 
 @implementation PVChangePasswordsViewController
@@ -24,7 +26,9 @@
     }
 
     UIScrollView *scrollView = [[UIScrollView alloc] init];
+    self.scrollView = scrollView;
     scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     [self.view addSubview:scrollView];
     UIView *contentView = [[UIView alloc] init];
     contentView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -111,6 +115,84 @@
     ]];
 
     (void)views;
+
+    NSArray<UITextField *> *fields = @[
+        self.password1CurrentField, self.password1NewField, self.password1ConfirmationField,
+        self.password2CurrentField, self.password2NewField, self.password2ConfirmationField
+    ];
+    for (UITextField *field in fields) {
+        field.delegate = self;
+        field.enablesReturnKeyAutomatically = YES;
+    }
+    self.password1CurrentField.returnKeyType = UIReturnKeyNext;
+    self.password1NewField.returnKeyType = UIReturnKeyNext;
+    self.password1ConfirmationField.returnKeyType = UIReturnKeyNext;
+    self.password2CurrentField.returnKeyType = UIReturnKeyNext;
+    self.password2NewField.returnKeyType = UIReturnKeyNext;
+    self.password2ConfirmationField.returnKeyType = UIReturnKeyDone;
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+}
+
+- (NSArray<UITextField *> *)orderedFields {
+    return @[
+        self.password1CurrentField, self.password1NewField, self.password1ConfirmationField,
+        self.password2CurrentField, self.password2NewField, self.password2ConfirmationField
+    ];
+}
+
+- (BOOL)textFieldShouldReturn:(UITextField *)textField {
+    if (textField == self.password1ConfirmationField) {
+        [self savePassword1Tapped:nil];
+        return YES;
+    }
+    if (textField == self.password2ConfirmationField) {
+        [self savePassword2Tapped:nil];
+        return YES;
+    }
+
+    NSArray<UITextField *> *fields = [self orderedFields];
+    NSUInteger index = [fields indexOfObjectIdenticalTo:textField];
+    if (index != NSNotFound && index + 1 < fields.count) {
+        [fields[index + 1] becomeFirstResponder];
+        [self scrollFieldIntoView:fields[index + 1]];
+    }
+    return YES;
+}
+
+- (void)textFieldDidBeginEditing:(UITextField *)textField {
+    self.activeField = textField;
+    [self scrollFieldIntoView:textField];
+}
+
+- (void)scrollFieldIntoView:(UITextField *)field {
+    if (!field || !self.scrollView) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.scrollView scrollRectToVisible:CGRectInset(field.frame, 0, -24) animated:YES];
+    });
+}
+
+- (void)keyboardWillChangeFrame:(NSNotification *)notification {
+    CGRect keyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect convertedFrame = [self.view convertRect:keyboardFrame fromView:nil];
+    CGFloat overlap = MAX(0.0, CGRectGetMaxY(self.view.bounds) - CGRectGetMinY(convertedFrame));
+    UIEdgeInsets insets = self.scrollView.contentInset;
+    insets.bottom = overlap + 24.0;
+    self.scrollView.contentInset = insets;
+    self.scrollView.scrollIndicatorInsets = insets;
+    [self scrollFieldIntoView:self.activeField];
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    UIEdgeInsets insets = self.scrollView.contentInset;
+    insets.bottom = 0.0;
+    self.scrollView.contentInset = insets;
+    self.scrollView.scrollIndicatorInsets = insets;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (UILabel *)makeHeader:(NSString *)text {
@@ -161,6 +243,7 @@
     if ([self.password1StatusLabel.text isEqualToString:@"تم تغيير كلمة المرور الأولى بنجاح"]) {
         [self clearFields:@[self.password1CurrentField, self.password1NewField, self.password1ConfirmationField]];
         self.password1StatusLabel.textColor = [UIColor systemGreenColor];
+        [self.view endEditing:YES];
     }
 }
 
@@ -172,6 +255,7 @@
     if ([self.password2StatusLabel.text isEqualToString:@"تم تغيير كلمة المرور الثانية بنجاح"]) {
         [self clearFields:@[self.password2CurrentField, self.password2NewField, self.password2ConfirmationField]];
         self.password2StatusLabel.textColor = [UIColor systemGreenColor];
+        [self.view endEditing:YES];
     }
 }
 
