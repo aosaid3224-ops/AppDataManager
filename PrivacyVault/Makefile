@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = PrivacyVault
 
-PrivacyVault_FILES = Tweak.mm
+PrivacyVault_FILES = Tweak.xm
 PrivacyVault_CFLAGS = -fobjc-arc
 PrivacyVault_PRIVATE_FRAMEWORKS = Preferences
 
