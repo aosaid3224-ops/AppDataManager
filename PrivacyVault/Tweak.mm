@@ -3,7 +3,7 @@
 
 #import <UIKit/UIKit.h>
 
-%ctor {
-    // Empty constructor — just proves dylib loads
+__attribute__((constructor))
+static void PVInitialize(void) {
     NSLog(@"[PrivacyVault] Phase 1: dylib loaded successfully");
 }
