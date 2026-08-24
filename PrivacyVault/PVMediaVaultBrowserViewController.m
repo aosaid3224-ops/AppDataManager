@@ -23,6 +23,16 @@ static NSCache *PVBrowserDurationCache(void) {
 @property (nonatomic, strong) UISegmentedControl *mediaSegmentedControl;
 @property (nonatomic, strong) NSArray<PVMediaVaultItem *> *visibleItems;
 @property (nonatomic, assign) NSInteger selectedTab;
+@property (nonatomic, strong) UIBarButtonItem *selectionBarButton;
+@property (nonatomic, strong) UIVisualEffectView *selectionToolbar;
+@property (nonatomic, strong) UIStackView *selectionStack;
+@property (nonatomic, strong) UILabel *selectionCountLabel;
+@property (nonatomic, strong) UIButton *selectAllButton;
+@property (nonatomic, strong) UIButton *bulkRestoreButton;
+@property (nonatomic, strong) UIButton *bulkDeleteButton;
+@property (nonatomic, strong) NSMutableSet<NSString *> *selectedIdentifiers;
+@property (nonatomic, assign) BOOL selectionMode;
+@property (nonatomic, assign) BOOL bulkOperationInProgress;
 @end
 
 @implementation PVMediaVaultBrowserViewController
@@ -33,6 +43,10 @@ static NSCache *PVBrowserDurationCache(void) {
     self.title = @"";
     self.navigationItem.backButtonTitle = @"";
     self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.selectedIdentifiers = [NSMutableSet set];
+    self.selectionBarButton = [[UIBarButtonItem alloc] initWithTitle:@"تحديد" style:UIBarButtonItemStylePlain target:self action:@selector(selectionButtonTapped:)];
+    self.selectionBarButton.accessibilityLabel = @"الدخول إلى وضع التحديد";
+    self.navigationItem.rightBarButtonItem = self.selectionBarButton;
 
     if ([self.mediaType isEqualToString:@"image"]) self.selectedTab = 1;
     else if ([self.mediaType isEqualToString:@"video"]) self.selectedTab = 2;
@@ -75,6 +89,34 @@ static NSCache *PVBrowserDurationCache(void) {
     self.emptyLabel.textColor = [UIColor secondaryLabelColor];
     [self.view addSubview:self.emptyLabel];
 
+    UIBlurEffect *toolbarBlur = nil;
+    if (@available(iOS 13.0, *)) toolbarBlur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial];
+    self.selectionToolbar = toolbarBlur ? [[UIVisualEffectView alloc] initWithEffect:toolbarBlur] : [[UIVisualEffectView alloc] initWithFrame:CGRectZero];
+    self.selectionToolbar.translatesAutoresizingMaskIntoConstraints = NO;
+    self.selectionToolbar.layer.cornerRadius = 18.0;
+    self.selectionToolbar.clipsToBounds = YES;
+    [self.view addSubview:self.selectionToolbar];
+
+    self.bulkDeleteButton = [self selectionButtonWithTitle:@"حذف المحدد" action:@selector(bulkDeleteTapped:)];
+    self.bulkRestoreButton = [self selectionButtonWithTitle:@"استرداد المحدد" action:@selector(bulkRestoreTapped:)];
+    self.selectAllButton = [self selectionButtonWithTitle:@"تحديد الكل" action:@selector(selectAllTapped:)];
+    self.selectionCountLabel = [[UILabel alloc] init];
+    self.selectionCountLabel.textAlignment = NSTextAlignmentCenter;
+    self.selectionCountLabel.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
+    self.selectionCountLabel.textColor = [UIColor secondaryLabelColor];
+    self.selectionCountLabel.numberOfLines = 2;
+    self.selectionCountLabel.adjustsFontSizeToFitWidth = YES;
+    self.selectionCountLabel.minimumScaleFactor = 0.72;
+    self.selectionCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.selectionStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.bulkDeleteButton, self.bulkRestoreButton, self.selectionCountLabel, self.selectAllButton]];
+    self.selectionStack.translatesAutoresizingMaskIntoConstraints = NO;
+    self.selectionStack.axis = UILayoutConstraintAxisHorizontal;
+    self.selectionStack.alignment = UIStackViewAlignmentFill;
+    self.selectionStack.distribution = UIStackViewDistributionFillEqually;
+    self.selectionStack.spacing = 2.0;
+    self.selectionStack.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [self.selectionToolbar.contentView addSubview:self.selectionStack];
+
     [NSLayoutConstraint activateConstraints:@[
         [self.mediaSegmentedControl.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:10.0],
         [self.mediaSegmentedControl.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:14.0],
@@ -87,9 +129,35 @@ static NSCache *PVBrowserDurationCache(void) {
         [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.collectionView.centerYAnchor],
         [self.emptyLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:24.0],
-        [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0]
+        [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0],
+        [self.selectionToolbar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12.0],
+        [self.selectionToolbar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12.0],
+        [self.selectionToolbar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-10.0],
+        [self.selectionToolbar.heightAnchor constraintEqualToConstant:58.0],
+        [self.selectionStack.leadingAnchor constraintEqualToAnchor:self.selectionToolbar.contentView.leadingAnchor constant:6.0],
+        [self.selectionStack.trailingAnchor constraintEqualToAnchor:self.selectionToolbar.contentView.trailingAnchor constant:-6.0],
+        [self.selectionStack.topAnchor constraintEqualToAnchor:self.selectionToolbar.contentView.topAnchor constant:5.0],
+        [self.selectionStack.bottomAnchor constraintEqualToAnchor:self.selectionToolbar.contentView.bottomAnchor constant:-5.0]
     ]];
+    self.selectionToolbar.alpha = 0.0;
+    self.selectionToolbar.hidden = YES;
     [self rebuildVisibleItemsAnimated:NO];
+}
+
+- (UIButton *)selectionButtonWithTitle:(NSString *)title action:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button setTitle:title forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    button.titleLabel.adjustsFontSizeToFitWidth = YES;
+    button.titleLabel.minimumScaleFactor = 0.68;
+    button.titleLabel.numberOfLines = 2;
+    button.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [button setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    [button setTitleColor:[UIColor tertiaryLabelColor] forState:UIControlStateDisabled];
+    button.accessibilityTraits = UIAccessibilityTraitButton;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -100,6 +168,7 @@ static NSCache *PVBrowserDurationCache(void) {
 - (void)segmentChanged:(UISegmentedControl *)sender {
     if (sender.selectedSegmentIndex == self.selectedTab) return;
     self.selectedTab = sender.selectedSegmentIndex;
+    [self.selectedIdentifiers removeAllObjects];
     [self rebuildVisibleItemsAnimated:YES];
 }
 
@@ -110,12 +179,24 @@ static NSCache *PVBrowserDurationCache(void) {
         if (matches) [filtered addObject:item];
     }
     self.visibleItems = [filtered copy];
+    NSMutableSet *validIdentifiers = [NSMutableSet set];
+    for (PVMediaVaultItem *item in self.visibleItems) [validIdentifiers addObject:[self identifierForItem:item]];
+    [self.selectedIdentifiers intersectSet:validIdentifiers];
     self.emptyLabel.hidden = self.visibleItems.count > 0;
+    [self updateSelectionUIAnimated:NO];
     if (animated) {
         [UIView transitionWithView:self.collectionView duration:0.16 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionBeginFromCurrentState animations:^{ [self.collectionView reloadData]; } completion:nil];
     } else {
         [self.collectionView reloadData];
     }
+}
+
+- (NSString *)identifierForItem:(PVMediaVaultItem *)item {
+    return item.identifier.length > 0 ? item.identifier : (item.path ?: @"");
+}
+
+- (BOOL)isItemSelected:(PVMediaVaultItem *)item {
+    return [self.selectedIdentifiers containsObject:[self identifierForItem:item]];
 }
 
 - (NSInteger)numberOfSectionsInCollectionView:(UICollectionView *)collectionView { return 1; }
@@ -125,7 +206,7 @@ static NSCache *PVBrowserDurationCache(void) {
     UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PVVaultGridCell" forIndexPath:indexPath];
     for (UIView *subview in [cell.contentView.subviews copy]) [subview removeFromSuperview];
     PVMediaVaultItem *item = self.visibleItems[indexPath.item];
-    cell.accessibilityIdentifier = item.identifier;
+    cell.accessibilityIdentifier = [self identifierForItem:item];
     cell.accessibilityLabel = [item.type isEqualToString:@"video"] ? @"فيديو مخفي" : @"صورة مخفية";
     cell.accessibilityTraits = UIAccessibilityTraitButton;
     cell.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
@@ -151,6 +232,7 @@ static NSCache *PVBrowserDurationCache(void) {
         UIView *shade = [[UIView alloc] init];
         shade.translatesAutoresizingMaskIntoConstraints = NO;
         shade.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.10];
+        shade.userInteractionEnabled = NO;
         [cell.contentView addSubview:shade];
         [NSLayoutConstraint activateConstraints:@[
             [shade.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor],
@@ -167,6 +249,7 @@ static NSCache *PVBrowserDurationCache(void) {
         durationLabel.textAlignment = NSTextAlignmentCenter;
         durationLabel.layer.cornerRadius = 8.0;
         durationLabel.clipsToBounds = YES;
+        durationLabel.userInteractionEnabled = NO;
         [cell.contentView addSubview:durationLabel];
         [NSLayoutConstraint activateConstraints:@[
             [durationLabel.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-6.0],
@@ -177,18 +260,50 @@ static NSCache *PVBrowserDurationCache(void) {
         [self loadDurationForItem:item intoLabel:durationLabel cell:cell];
     }
     [self loadThumbnailForItem:item intoImageView:imageView cell:cell];
+    if (self.selectionMode) [self addSelectionIndicatorForItem:item toCell:cell];
     return cell;
 }
 
+- (void)addSelectionIndicatorForItem:(PVMediaVaultItem *)item toCell:(UICollectionViewCell *)cell {
+    BOOL selected = [self isItemSelected:item];
+    UIView *badge = [[UIView alloc] init];
+    badge.translatesAutoresizingMaskIntoConstraints = NO;
+    badge.tag = 8101;
+    badge.backgroundColor = selected ? [UIColor systemBlueColor] : [UIColor colorWithWhite:0.0 alpha:0.30];
+    badge.layer.cornerRadius = 13.0;
+    badge.layer.borderWidth = 1.5;
+    badge.layer.borderColor = UIColor.whiteColor.CGColor;
+    badge.userInteractionEnabled = NO;
+    [cell.contentView addSubview:badge];
+    [NSLayoutConstraint activateConstraints:@[
+        [badge.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor constant:7.0],
+        [badge.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-7.0],
+        [badge.widthAnchor constraintEqualToConstant:26.0],
+        [badge.heightAnchor constraintEqualToConstant:26.0]
+    ]];
+    if (selected) {
+        UIImageView *check = nil;
+        if (@available(iOS 13.0, *)) check = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark"]];
+        if (!check) return;
+        check.translatesAutoresizingMaskIntoConstraints = NO;
+        check.tintColor = UIColor.whiteColor;
+        check.contentMode = UIViewContentModeScaleAspectFit;
+        [badge addSubview:check];
+        [NSLayoutConstraint activateConstraints:@[
+            [check.centerXAnchor constraintEqualToAnchor:badge.centerXAnchor],
+            [check.centerYAnchor constraintEqualToAnchor:badge.centerYAnchor],
+            [check.widthAnchor constraintEqualToConstant:14.0],
+            [check.heightAnchor constraintEqualToConstant:14.0]
+        ]];
+    }
+}
+
 - (UIImage *)cachedThumbnailForItem:(PVMediaVaultItem *)item {
-    UIImage *thumbnail = [PVBrowserThumbnailCache() objectForKey:item.identifier ?: item.path];
-    if (thumbnail) return thumbnail;
-    if ([item.type isEqualToString:@"video"]) return nil;
-    return nil;
+    return [PVBrowserThumbnailCache() objectForKey:[self identifierForItem:item]];
 }
 
 - (void)loadThumbnailForItem:(PVMediaVaultItem *)item intoImageView:(UIImageView *)imageView cell:(UICollectionViewCell *)cell {
-    NSString *key = item.identifier ?: item.path;
+    NSString *key = [self identifierForItem:item];
     UIImage *cached = [PVBrowserThumbnailCache() objectForKey:key];
     if (cached) { imageView.image = cached; return; }
     NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
@@ -206,17 +321,17 @@ static NSCache *PVBrowserDurationCache(void) {
         }
         if (thumbnail) [PVBrowserThumbnailCache() setObject:thumbnail forKey:key];
         dispatch_async(dispatch_get_main_queue(), ^{
-            if ([cell.accessibilityIdentifier isEqualToString:item.identifier] && thumbnail) imageView.image = thumbnail;
+            if ([cell.accessibilityIdentifier isEqualToString:key] && thumbnail) imageView.image = thumbnail;
         });
     });
 }
 
 - (NSString *)cachedDurationForItem:(PVMediaVaultItem *)item {
-    return [PVBrowserDurationCache() objectForKey:item.identifier ?: item.path];
+    return [PVBrowserDurationCache() objectForKey:[self identifierForItem:item]];
 }
 
 - (void)loadDurationForItem:(PVMediaVaultItem *)item intoLabel:(UILabel *)label cell:(UICollectionViewCell *)cell {
-    NSString *key = item.identifier ?: item.path;
+    NSString *key = [self identifierForItem:item];
     NSString *cached = [self cachedDurationForItem:item];
     if (cached) { label.text = [NSString stringWithFormat:@"▶ %@", cached]; return; }
     NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
@@ -230,7 +345,7 @@ static NSCache *PVBrowserDurationCache(void) {
         }
         [PVBrowserDurationCache() setObject:duration forKey:key];
         dispatch_async(dispatch_get_main_queue(), ^{
-            if ([cell.accessibilityIdentifier isEqualToString:item.identifier]) label.text = [NSString stringWithFormat:@"▶ %@", duration];
+            if ([cell.accessibilityIdentifier isEqualToString:key]) label.text = [NSString stringWithFormat:@"▶ %@", duration];
         });
     });
 }
@@ -242,9 +357,73 @@ static NSCache *PVBrowserDurationCache(void) {
     return CGSizeMake(side, side);
 }
 
+- (void)selectionButtonTapped:(UIBarButtonItem *)sender {
+    if (self.bulkOperationInProgress) return;
+    if (self.selectionMode) [self exitSelectionMode];
+    else [self enterSelectionMode];
+}
+
+- (void)enterSelectionMode {
+    self.selectionMode = YES;
+    [self.selectedIdentifiers removeAllObjects];
+    self.selectionBarButton.title = @"إلغاء";
+    self.selectionBarButton.accessibilityLabel = @"الخروج من وضع التحديد";
+    [self.collectionView reloadData];
+    [self updateSelectionUIAnimated:YES];
+}
+
+- (void)exitSelectionMode {
+    if (self.bulkOperationInProgress) return;
+    self.selectionMode = NO;
+    [self.selectedIdentifiers removeAllObjects];
+    self.selectionBarButton.title = @"تحديد";
+    self.selectionBarButton.accessibilityLabel = @"الدخول إلى وضع التحديد";
+    [self.collectionView reloadData];
+    [self updateSelectionUIAnimated:YES];
+}
+
+- (void)updateSelectionUIAnimated:(BOOL)animated {
+    NSUInteger count = self.selectedIdentifiers.count;
+    NSUInteger total = self.visibleItems.count;
+    self.selectionCountLabel.text = count == 0 ? @"لم يتم تحديد أي عنصر" : [NSString stringWithFormat:@"تم تحديد %lu عنصر", (unsigned long)count];
+    self.selectAllButton.enabled = total > 0 && !self.bulkOperationInProgress;
+    self.bulkDeleteButton.enabled = count > 0 && !self.bulkOperationInProgress;
+    self.bulkRestoreButton.enabled = count > 0 && !self.bulkOperationInProgress;
+    BOOL allSelected = total > 0 && count == total;
+    [self.bulkDeleteButton setTitle:allSelected ? @"حذف الكل" : @"حذف المحدد" forState:UIControlStateNormal];
+    [self.bulkRestoreButton setTitle:allSelected ? @"استرداد الكل" : @"استرداد المحدد" forState:UIControlStateNormal];
+    [self.selectAllButton setTitle:allSelected ? @"إلغاء تحديد الكل" : @"تحديد الكل" forState:UIControlStateNormal];
+    if (!self.selectionMode) {
+        self.selectionToolbar.hidden = YES;
+        self.selectionToolbar.alpha = 0.0;
+        return;
+    }
+    self.selectionToolbar.hidden = NO;
+    void (^changes)(void) = ^{ self.selectionToolbar.alpha = 1.0; };
+    if (animated) [UIView animateWithDuration:0.18 animations:changes];
+    else changes();
+}
+
+- (void)selectAllTapped:(UIButton *)sender {
+    if (!self.selectionMode || self.bulkOperationInProgress) return;
+    BOOL shouldClear = self.visibleItems.count > 0 && self.selectedIdentifiers.count == self.visibleItems.count;
+    if (shouldClear) [self.selectedIdentifiers removeAllObjects];
+    else for (PVMediaVaultItem *item in self.visibleItems) [self.selectedIdentifiers addObject:[self identifierForItem:item]];
+    [self.collectionView reloadData];
+    [self updateSelectionUIAnimated:YES];
+}
+
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.item >= self.visibleItems.count) return;
     PVMediaVaultItem *item = self.visibleItems[indexPath.item];
+    if (self.selectionMode) {
+        NSString *identifier = [self identifierForItem:item];
+        if ([self.selectedIdentifiers containsObject:identifier]) [self.selectedIdentifiers removeObject:identifier];
+        else [self.selectedIdentifiers addObject:identifier];
+        [collectionView reloadItemsAtIndexPaths:@[indexPath]];
+        [self updateSelectionUIAnimated:YES];
+        return;
+    }
     PVMediaVaultPreviewViewController *preview = [[PVMediaVaultPreviewViewController alloc] init];
     preview.item = item;
     preview.items = self.visibleItems;
@@ -253,7 +432,7 @@ static NSCache *PVBrowserDurationCache(void) {
     UIImageView *selectedImageView = (UIImageView *)[selectedCell.contentView viewWithTag:8100];
     NSMutableDictionary<NSString *, UIImage *> *preloadedThumbnails = [NSMutableDictionary dictionary];
     for (PVMediaVaultItem *candidate in self.visibleItems) {
-        UIImage *cached = [PVBrowserThumbnailCache() objectForKey:candidate.identifier ?: candidate.path];
+        UIImage *cached = [PVBrowserThumbnailCache() objectForKey:[self identifierForItem:candidate]];
         if (cached && candidate.identifier.length > 0) preloadedThumbnails[candidate.identifier] = cached;
     }
     if (selectedImageView.image && item.identifier.length > 0) preloadedThumbnails[item.identifier] = selectedImageView.image;
@@ -270,6 +449,103 @@ static NSCache *PVBrowserDurationCache(void) {
         [weakSelf deleteItemDirectly:deleteItem completion:completion];
     };
     [self presentViewController:preview animated:YES completion:nil];
+}
+
+- (NSArray<PVMediaVaultItem *> *)selectedItemsSnapshot {
+    NSMutableArray<PVMediaVaultItem *> *result = [NSMutableArray array];
+    for (PVMediaVaultItem *item in self.visibleItems) if ([self isItemSelected:item]) [result addObject:item];
+    return [result copy];
+}
+
+- (void)bulkDeleteTapped:(UIButton *)sender {
+    if (self.bulkOperationInProgress) return;
+    NSArray<PVMediaVaultItem *> *selected = [self selectedItemsSnapshot];
+    if (selected.count == 0) return;
+    NSString *title = [NSString stringWithFormat:@"حذف %lu عنصرًا؟", (unsigned long)selected.count];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:@"سيتم حذف النسخ الموجودة داخل PrivacyVault فقط." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"حذف" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [weakSelf performBulkDelete:selected];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)performBulkDelete:(NSArray<PVMediaVaultItem *> *)selected {
+    self.bulkOperationInProgress = YES;
+    [self updateSelectionUIAnimated:NO];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSMutableArray<PVMediaVaultItem *> *succeeded = [NSMutableArray array];
+        NSMutableArray<NSString *> *failures = [NSMutableArray array];
+        for (PVMediaVaultItem *item in selected) {
+            NSError *error = nil;
+            if ([[PVMediaVaultStore sharedStore] removeItem:item error:&error]) [succeeded addObject:item];
+            else [failures addObject:error.localizedDescription ?: @"تعذر حذف عنصر واحد"];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableArray *updated = [self.items mutableCopy];
+            for (PVMediaVaultItem *item in succeeded) {
+                [updated removeObject:item];
+                [self.selectedIdentifiers removeObject:[self identifierForItem:item]];
+            }
+            self.items = [updated copy];
+            self.bulkOperationInProgress = NO;
+            [self rebuildVisibleItemsAnimated:NO];
+            if (failures.count > 0) {
+                [self showBulkResultWithSuccess:succeeded.count failureCount:failures.count action:@"الحذف"];
+            } else {
+                [self exitSelectionMode];
+            }
+        });
+    });
+}
+
+- (void)bulkRestoreTapped:(UIButton *)sender {
+    if (self.bulkOperationInProgress) return;
+    NSArray<PVMediaVaultItem *> *selected = [self selectedItemsSnapshot];
+    if (selected.count == 0) return;
+    NSString *title = [NSString stringWithFormat:@"استرداد %lu عنصرًا؟", (unsigned long)selected.count];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:@"سيتم استرداد العناصر المحددة إلى تطبيق الصور بعد التحقق من كل عنصر." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"استرداد" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [weakSelf performBulkRestore:selected];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)performBulkRestore:(NSArray<PVMediaVaultItem *> *)selected {
+    self.bulkOperationInProgress = YES;
+    [self updateSelectionUIAnimated:NO];
+    [self restoreItemsSequentially:selected index:0 successCount:0 failureCount:0];
+}
+
+- (void)restoreItemsSequentially:(NSArray<PVMediaVaultItem *> *)items index:(NSUInteger)index successCount:(NSUInteger)successCount failureCount:(NSUInteger)failureCount {
+    if (index >= items.count) {
+        self.bulkOperationInProgress = NO;
+        [self updateSelectionUIAnimated:NO];
+        if (failureCount > 0) [self showBulkResultWithSuccess:successCount failureCount:failureCount action:@"الاسترداد"];
+        else [self exitSelectionMode];
+        return;
+    }
+    PVMediaVaultItem *item = items[index];
+    __weak typeof(self) weakSelf = self;
+    [self restoreItemDirectly:item completion:^(BOOL success, NSString *message) {
+        PVMediaVaultBrowserViewController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSUInteger nextSuccessCount = success ? successCount + 1 : successCount;
+        NSUInteger nextFailureCount = success ? failureCount : failureCount + 1;
+        if (success) [strongSelf.selectedIdentifiers removeObject:[strongSelf identifierForItem:item]];
+        [strongSelf restoreItemsSequentially:items index:index + 1 successCount:nextSuccessCount failureCount:nextFailureCount];
+    }];
+}
+
+- (void)showBulkResultWithSuccess:(NSUInteger)successCount failureCount:(NSUInteger)failureCount action:(NSString *)action {
+    [self updateSelectionUIAnimated:NO];
+    NSString *message = [NSString stringWithFormat:@"اكتمل %@ لـ%lu عنصر، وفشل لـ%lu عنصر. العناصر الفاشلة بقيت محفوظة.", action, (unsigned long)successCount, (unsigned long)failureCount];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"نتيجة العملية" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)deleteItemDirectly:(PVMediaVaultItem *)item completion:(void (^)(BOOL success, NSString *message))completion {
