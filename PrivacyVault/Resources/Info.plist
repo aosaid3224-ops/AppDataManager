@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ar</string>
+    <key>CFBundleDisplayName</key>
+    <string>iOS</string>
+    <key>CFBundleExecutable</key>
+    <string>PrivacyVault</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.aosaid.privacyvault</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.1</string>
+    <key>CFBundleVersion</key>
+    <string>2</string>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>Icon-60@2x.png</string>
+                <string>Icon-60@3x.png</string>
+                <string>Icon-76.png</string>
+                <string>Icon-76@2x.png</string>
+                <string>Icon-83.5@2x.png</string>
+                <string>Icon.png</string>
+                <string>Icon@2x.png</string>
+                <string>Icon@3x.png</string>
+            </array>
+            <key>CFBundleIconName</key>
+            <string>Icon</string>
+        </dict>
+    </dict>
+    <key>CFBundleIconFiles</key>
+    <array>
+        <string>Icon-60@2x.png</string>
+        <string>Icon-60@3x.png</string>
+        <string>Icon-76.png</string>
+        <string>Icon-76@2x.png</string>
+        <string>Icon-83.5@2x.png</string>
+        <string>Icon.png</string>
+        <string>Icon@2x.png</string>
+        <string>Icon@3x.png</string>
+    </array>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+</dict>
+</plist>
