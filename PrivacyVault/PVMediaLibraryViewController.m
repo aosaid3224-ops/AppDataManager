@@ -176,7 +176,7 @@
     if (self.busy) return;
     [self requestPhotoAccessWithCompletion:^(BOOL granted) {
         if (!granted) return;
-        PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
+        PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] initWithPhotoLibrary:[PHPhotoLibrary sharedPhotoLibrary]];
         configuration.filter = [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter], [PHPickerFilter videosFilter]]];
         configuration.selectionLimit = 0;
         configuration.preferredAssetRepresentationMode = PHPickerConfigurationAssetRepresentationModeCurrent;

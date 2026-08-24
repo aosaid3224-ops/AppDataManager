@@ -72,6 +72,9 @@ static NSString * const PVMediaVaultDirectoryName = @"PrivacyVaultMedia";
         if (error) *error = [self errorWithCode:1 description:@"بيانات العنصر غير صالحة"];
         return NO;
     }
+    for (PVMediaVaultItem *existingItem in [self items]) {
+        if ([existingItem.identifier isEqualToString:identifier] && [self verifyItem:existingItem error:nil]) return YES;
+    }
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSError *fileError = nil;
     if (![fileManager createDirectoryAtPath:[self vaultDirectory] withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:&fileError]) {
