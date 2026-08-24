@@ -1,0 +1,13 @@
+#!/bin/sh
+set -u
+
+APP_PATH="/var/jb/Applications/PrivacyVault.app"
+if [ ! -d "$APP_PATH" ]; then
+    APP_PATH="/Applications/PrivacyVault.app"
+fi
+
+if command -v uicache >/dev/null 2>&1 && [ -d "$APP_PATH" ]; then
+    uicache -p "$APP_PATH" >/dev/null 2>&1 || true
+fi
+
+exit 0
