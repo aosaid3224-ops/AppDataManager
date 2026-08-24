@@ -229,8 +229,8 @@
     browser.sectionTitle = title;
     browser.items = [items copy];
     __weak typeof(self) weakSelf = self;
-    browser.restoreHandler = ^(PVMediaVaultItem *item) {
-        [weakSelf restoreItem:item];
+    browser.restoreHandler = ^(PVMediaVaultItem *item, void (^completion)(BOOL success, NSString *message)) {
+        [weakSelf restoreItem:item completion:completion];
     };
     [self.navigationController pushViewController:browser animated:YES];
 }
@@ -431,14 +431,22 @@
 }
 
 - (void)restoreItem:(PVMediaVaultItem *)item {
+    [self restoreItem:item completion:nil];
+}
+
+- (void)restoreItem:(PVMediaVaultItem *)item completion:(void (^)(BOOL success, NSString *message))completion {
     NSError *verificationError = nil;
     if (![[PVMediaVaultStore sharedStore] verifyItem:item error:&verificationError]) {
         self.statusLabel.textColor = [UIColor systemRedColor];
         self.statusLabel.text = verificationError.localizedDescription ?: @"نسخة PrivacyVault غير مكتملة؛ لم تتم إزالتها.";
+        if (completion) completion(NO, self.statusLabel.text);
         return;
     }
     [self requestPhotoAccessWithCompletion:^(BOOL granted) {
-        if (!granted) return;
+        if (!granted) {
+            if (completion) completion(NO, @"يلزم السماح بإضافة الوسائط إلى تطبيق الصور قبل الاسترداد.");
+            return;
+        }
         NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
         self.busy = YES;
         [self updateStatistics];
@@ -458,6 +466,7 @@
                     self.statusLabel.textColor = [UIColor systemRedColor];
                     self.statusLabel.text = error.localizedDescription ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير.";
                     [self updateStatistics];
+                    if (completion) completion(NO, self.statusLabel.text);
                     return;
                 }
                 PHFetchResult<PHAsset *> *createdAssets = [PHAsset fetchAssetsWithLocalIdentifiers:@[createdIdentifier] options:nil];
@@ -466,6 +475,7 @@
                     self.statusLabel.textColor = [UIColor systemRedColor];
                     self.statusLabel.text = @"لم يتم التحقق من العنصر المسترد؛ بقيت نسخة PrivacyVault دون تغيير.";
                     [self updateStatistics];
+                    if (completion) completion(NO, self.statusLabel.text);
                     return;
                 }
                 NSError *removeError = nil;
@@ -474,6 +484,7 @@
                     self.statusLabel.textColor = [UIColor systemOrangeColor];
                     self.statusLabel.text = @"تم استرداد العنصر، لكن تعذر إزالة نسخة PrivacyVault؛ بقيت النسخة للحماية.";
                     [self reloadVaultItems];
+                    if (completion) completion(NO, self.statusLabel.text);
                     return;
                 }
                 self.busy = NO;
@@ -481,6 +492,7 @@
                 self.statusLabel.text = @"تم استرداد العنصر والتحقق منه وإزالة نسخة PrivacyVault.";
                 [self reloadLibraryStatistics];
                 [self reloadVaultItems];
+                if (completion) completion(YES, self.statusLabel.text);
             });
         }];
     }];

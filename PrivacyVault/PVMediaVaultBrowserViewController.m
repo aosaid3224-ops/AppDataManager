@@ -1,12 +1,10 @@
 #import "PVMediaVaultBrowserViewController.h"
-#import <QuickLook/QuickLook.h>
+#import "PVMediaVaultPreviewViewController.h"
 #import <Photos/Photos.h>
 
-@interface PVMediaVaultBrowserViewController () <UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout, QLPreviewControllerDataSource>
+@interface PVMediaVaultBrowserViewController () <UICollectionViewDataSource, UICollectionViewDelegate, UICollectionViewDelegateFlowLayout>
 @property (nonatomic, strong) UICollectionView *collectionView;
 @property (nonatomic, strong) UILabel *emptyLabel;
-@property (nonatomic, strong) QLPreviewController *previewController;
-@property (nonatomic, strong) PVMediaVaultItem *previewItem;
 @end
 
 @implementation PVMediaVaultBrowserViewController
@@ -14,25 +12,29 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.title = self.sectionTitle ?: @"العناصر المخفية";
-    if (@available(iOS 13.0, *)) self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    else self.view.backgroundColor = [UIColor whiteColor];
+    self.title = @"";
+    self.navigationItem.backButtonTitle = @"";
+    if (@available(iOS 13.0, *)) self.view.backgroundColor = [UIColor systemBackgroundColor];
+    else self.view.backgroundColor = [UIColor blackColor];
 
     UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
-    layout.minimumInteritemSpacing = 10.0;
-    layout.minimumLineSpacing = 14.0;
-    layout.sectionInset = UIEdgeInsetsMake(18, 14, 28, 14);
+    layout.minimumInteritemSpacing = 5.0;
+    layout.minimumLineSpacing = 5.0;
+    layout.sectionInset = UIEdgeInsetsMake(10.0, 5.0, 20.0, 5.0);
     self.collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
     self.collectionView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.collectionView.backgroundColor = UIColor.clearColor;
+    if (@available(iOS 13.0, *)) self.collectionView.backgroundColor = UIColor.systemBackgroundColor;
+    else self.collectionView.backgroundColor = UIColor.blackColor;
     self.collectionView.dataSource = self;
     self.collectionView.delegate = self;
+    self.collectionView.alwaysBounceVertical = YES;
     [self.collectionView registerClass:[UICollectionViewCell class] forCellWithReuseIdentifier:@"PVVaultGridCell"];
     [self.view addSubview:self.collectionView];
 
     self.emptyLabel = [[UILabel alloc] init];
     self.emptyLabel.text = @"لا توجد عناصر مخفية هنا";
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
+    self.emptyLabel.font = [UIFont systemFontOfSize:17.0 weight:UIFontWeightMedium];
     self.emptyLabel.textColor = [UIColor secondaryLabelColor];
     self.emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.emptyLabel];
@@ -44,8 +46,8 @@
         [self.collectionView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
-        [self.emptyLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:24],
-        [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24]
+        [self.emptyLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:24.0],
+        [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0]
     ]];
     [self refreshEmptyState];
 }
@@ -60,130 +62,99 @@
     self.emptyLabel.hidden = self.items.count > 0;
 }
 
-- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    return self.items.count;
-}
-
 - (NSInteger)numberOfSectionsInCollectionView:(UICollectionView *)collectionView {
     return 1;
+}
+
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    return self.items.count;
 }
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"PVVaultGridCell" forIndexPath:indexPath];
     for (UIView *subview in [cell.contentView.subviews copy]) [subview removeFromSuperview];
-    cell.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
-    cell.layer.cornerRadius = 16.0;
+    cell.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
+    cell.layer.cornerRadius = 14.0;
     cell.clipsToBounds = YES;
+    cell.accessibilityLabel = @"وسائط مخفية";
+    cell.accessibilityTraits = UIAccessibilityTraitButton;
 
     PVMediaVaultItem *item = self.items[indexPath.item];
     UIImageView *imageView = [[UIImageView alloc] init];
     imageView.translatesAutoresizingMaskIntoConstraints = NO;
     imageView.contentMode = UIViewContentModeScaleAspectFill;
     imageView.clipsToBounds = YES;
+    imageView.backgroundColor = [UIColor colorWithWhite:0.16 alpha:1.0];
     UIImage *preview = nil;
-    if ([item.type isEqualToString:@"image"]) preview = [UIImage imageWithContentsOfFile:[[PVMediaVaultStore sharedStore] urlForItem:item].path];
+    if ([item.type isEqualToString:@"image"]) {
+        preview = [UIImage imageWithContentsOfFile:[[PVMediaVaultStore sharedStore] urlForItem:item].path];
+    }
     if (!preview) {
-        if (@available(iOS 13.0, *)) preview = [UIImage systemImageNamed:[item.type isEqualToString:@"video"] ? @"video.fill" : @"photo.fill"];
+        if (@available(iOS 13.0, *)) {
+            preview = [UIImage systemImageNamed:[item.type isEqualToString:@"video"] ? @"video.fill" : @"photo.fill"];
+            imageView.contentMode = UIViewContentModeScaleAspectFit;
+            imageView.tintColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+        }
     }
     imageView.image = preview;
-    imageView.tintColor = [UIColor systemBlueColor];
     [cell.contentView addSubview:imageView];
-
-    UILabel *nameLabel = [[UILabel alloc] init];
-    nameLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    nameLabel.text = item.filename;
-    nameLabel.textAlignment = NSTextAlignmentCenter;
-    nameLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-    nameLabel.textColor = [UIColor labelColor];
-    nameLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-    [cell.contentView addSubview:nameLabel];
-
-    UILabel *typeLabel = [[UILabel alloc] init];
-    typeLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    typeLabel.text = [item.type isEqualToString:@"video"] ? @"فيديو" : @"صورة";
-    typeLabel.textAlignment = NSTextAlignmentCenter;
-    typeLabel.font = [UIFont systemFontOfSize:10];
-    typeLabel.textColor = [UIColor secondaryLabelColor];
-    [cell.contentView addSubview:typeLabel];
-
     [NSLayoutConstraint activateConstraints:@[
         [imageView.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor],
         [imageView.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor],
         [imageView.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor],
-        [imageView.bottomAnchor constraintEqualToAnchor:typeLabel.topAnchor constant:-2],
-        [typeLabel.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:4],
-        [typeLabel.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-4],
-        [typeLabel.bottomAnchor constraintEqualToAnchor:nameLabel.topAnchor constant:-1],
-        [nameLabel.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:4],
-        [nameLabel.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-4],
-        [nameLabel.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor constant:-6]
+        [imageView.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor]
     ]];
+
+    if ([item.type isEqualToString:@"video"]) {
+        if (@available(iOS 13.0, *)) {
+            UIImageView *playBadge = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"play.circle.fill"]];
+        playBadge.translatesAutoresizingMaskIntoConstraints = NO;
+        playBadge.tintColor = [UIColor colorWithWhite:1.0 alpha:0.92];
+        playBadge.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.28];
+        playBadge.layer.cornerRadius = 18.0;
+        playBadge.clipsToBounds = YES;
+        [cell.contentView addSubview:playBadge];
+            [NSLayoutConstraint activateConstraints:@[
+                [playBadge.centerXAnchor constraintEqualToAnchor:cell.contentView.centerXAnchor],
+                [playBadge.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+                [playBadge.widthAnchor constraintEqualToConstant:36.0],
+                [playBadge.heightAnchor constraintEqualToConstant:36.0]
+            ]];
+        }
+    }
     return cell;
 }
 
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
     UICollectionViewFlowLayout *flowLayout = (UICollectionViewFlowLayout *)layout;
     CGFloat availableWidth = CGRectGetWidth(collectionView.bounds) - flowLayout.sectionInset.left - flowLayout.sectionInset.right - (flowLayout.minimumInteritemSpacing * 2.0);
-    return CGSizeMake(floor(availableWidth / 3.0), 154.0);
+    CGFloat side = floor(availableWidth / 3.0);
+    return CGSizeMake(side, side);
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.item >= self.items.count) return;
-    [self showActionsForItem:self.items[indexPath.item]];
+    PVMediaVaultItem *item = self.items[indexPath.item];
+    PVMediaVaultPreviewViewController *preview = [[PVMediaVaultPreviewViewController alloc] init];
+    preview.item = item;
+    __weak typeof(self) weakSelf = self;
+    preview.restoreHandler = ^(PVMediaVaultItem *restoreItem, void (^completion)(BOOL success, NSString *message)) {
+        [weakSelf restoreItemDirectly:restoreItem completion:completion];
+    };
+    [self.navigationController pushViewController:preview animated:YES];
 }
 
-- (void)showActionsForItem:(PVMediaVaultItem *)item {
-    UIAlertController *actions = [UIAlertController alertControllerWithTitle:item.filename message:@"اختر الإجراء المطلوب" preferredStyle:UIAlertControllerStyleActionSheet];
-    [actions addAction:[UIAlertAction actionWithTitle:@"فتح" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self openItem:item];
-    }]];
-    [actions addAction:[UIAlertAction actionWithTitle:@"مشاركة" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self shareItem:item];
-    }]];
-    [actions addAction:[UIAlertAction actionWithTitle:@"استرداد إلى تطبيق الصور" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        if (self.restoreHandler) self.restoreHandler(item);
-        else [self restoreItemDirectly:item];
-    }]];
-    [actions addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
-        actions.popoverPresentationController.sourceView = self.view;
-        actions.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
-    }
-    [self presentViewController:actions animated:YES completion:nil];
-}
-
-- (void)openItem:(PVMediaVaultItem *)item {
-    self.previewItem = item;
-    self.previewController = [[QLPreviewController alloc] init];
-    self.previewController.dataSource = self;
-    [self presentViewController:self.previewController animated:YES completion:nil];
-}
-
-- (void)shareItem:(PVMediaVaultItem *)item {
-    NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
-        [self showMessage:@"تعذر العثور على ملف الوسائط داخل PrivacyVault."];
-        return;
-    }
-    UIActivityViewController *shareController = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
-        shareController.popoverPresentationController.sourceView = self.view;
-        shareController.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
-    }
-    [self presentViewController:shareController animated:YES completion:nil];
-}
-
-- (void)restoreItemDirectly:(PVMediaVaultItem *)item {
+- (void)restoreItemDirectly:(PVMediaVaultItem *)item completion:(void (^)(BOOL success, NSString *message))completion {
     NSError *verificationError = nil;
     if (![[PVMediaVaultStore sharedStore] verifyItem:item error:&verificationError]) {
-        [self showMessage:verificationError.localizedDescription ?: @"نسخة الوسائط غير مكتملة؛ لم تتم إزالتها."];
+        completion(NO, verificationError.localizedDescription ?: @"نسخة الوسائط غير مكتملة؛ بقيت نسخة PrivacyVault دون تغيير.");
         return;
     }
     PHAuthorizationStatus authorizationStatus;
     if (@available(iOS 14.0, *)) authorizationStatus = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelAddOnly];
     else authorizationStatus = [PHPhotoLibrary authorizationStatus];
     if (authorizationStatus != PHAuthorizationStatusAuthorized && authorizationStatus != PHAuthorizationStatusLimited) {
-        [self showMessage:@"يلزم السماح بإضافة الوسائط إلى تطبيق الصور قبل الاسترداد."];
+        completion(NO, @"يلزم السماح بإضافة الوسائط إلى تطبيق الصور قبل الاسترداد.");
         return;
     }
     NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
@@ -197,17 +168,17 @@
     } completionHandler:^(BOOL success, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!success || createdIdentifier.length == 0) {
-                [self showMessage:error.localizedDescription ?: @"فشل الاسترداد؛ بقيت نسخة Vault دون تغيير."];
+                completion(NO, error.localizedDescription ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير.");
                 return;
             }
             PHFetchResult<PHAsset *> *createdAssets = [PHAsset fetchAssetsWithLocalIdentifiers:@[createdIdentifier] options:nil];
             if (createdAssets.count == 0) {
-                [self showMessage:@"تعذر التحقق من العنصر المسترد؛ بقيت نسخة Vault دون تغيير."];
+                completion(NO, @"تعذر التحقق من العنصر المسترد؛ بقيت نسخة PrivacyVault دون تغيير.");
                 return;
             }
             NSError *removeError = nil;
             if (![[PVMediaVaultStore sharedStore] removeItem:item error:&removeError]) {
-                [self showMessage:@"تم الاسترداد، لكن تعذر إزالة نسخة Vault؛ بقيت النسخة للحماية."];
+                completion(NO, @"تم الاسترداد، لكن تعذر إزالة نسخة PrivacyVault؛ بقيت النسخة للحماية.");
                 return;
             }
             NSMutableArray *updatedItems = [self.items mutableCopy];
@@ -215,23 +186,9 @@
             self.items = [updatedItems copy];
             [self refreshEmptyState];
             [self.collectionView reloadData];
-            [self showMessage:@"تم استرداد العنصر وإزالة نسخة Vault."];
+            completion(YES, @"تم استرداد العنصر إلى تطبيق الصور.");
         });
     }];
-}
-
-- (void)showMessage:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"PrivacyVault" message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (NSInteger)numberOfPreviewItemsInPreviewController:(QLPreviewController *)controller {
-    return self.previewItem ? 1 : 0;
-}
-
-- (id<QLPreviewItem>)previewController:(QLPreviewController *)controller previewItemAtIndex:(NSInteger)index {
-    return [[PVMediaVaultStore sharedStore] urlForItem:self.previewItem];
 }
 
 @end
