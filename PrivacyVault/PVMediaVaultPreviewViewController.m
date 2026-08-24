@@ -63,61 +63,6 @@
 
 @end
 
-@interface PVMediaZoomAnimator : NSObject <UIViewControllerAnimatedTransitioning>
-@property (nonatomic, assign) BOOL presenting;
-@end
-
-@implementation PVMediaZoomAnimator
-
-- (NSTimeInterval)transitionDuration:(id<UIViewControllerContextTransitioning>)transitionContext {
-    return 0.28;
-}
-
-- (void)animateTransition:(id<UIViewControllerContextTransitioning>)transitionContext {
-    UIViewController *fromViewController = [transitionContext viewControllerForKey:UITransitionContextFromViewControllerKey];
-    UIViewController *toViewController = [transitionContext viewControllerForKey:UITransitionContextToViewControllerKey];
-    UIView *container = transitionContext.containerView;
-    UIViewController *appearing = self.presenting ? toViewController : fromViewController;
-    UIViewController *underlying = self.presenting ? fromViewController : toViewController;
-    if (self.presenting) [container addSubview:toViewController.view];
-    else [container insertSubview:toViewController.view belowSubview:fromViewController.view];
-
-    PVMediaVaultPreviewViewController *preview = (PVMediaVaultPreviewViewController *)(self.presenting ? toViewController : fromViewController);
-    UIImageView *transitionImageView = nil;
-    if (preview.transitionImage) {
-        transitionImageView = [[UIImageView alloc] initWithImage:preview.transitionImage];
-        transitionImageView.contentMode = UIViewContentModeScaleAspectFill;
-        transitionImageView.clipsToBounds = YES;
-        transitionImageView.backgroundColor = UIColor.blackColor;
-        CGRect sourceFrame = [underlying.view convertRect:preview.transitionFrame toView:container];
-        transitionImageView.frame = self.presenting ? sourceFrame : appearing.view.bounds;
-        [container addSubview:transitionImageView];
-    }
-
-    if (self.presenting) {
-        toViewController.view.alpha = 0.0;
-        [UIView animateWithDuration:[self transitionDuration:transitionContext] delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-            toViewController.view.alpha = 1.0;
-            if (transitionImageView) transitionImageView.frame = toViewController.view.bounds;
-        } completion:^(BOOL finished) {
-            [transitionImageView removeFromSuperview];
-            [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-        }];
-    } else {
-        fromViewController.view.alpha = 1.0;
-        CGRect sourceFrame = [underlying.view convertRect:preview.transitionFrame toView:container];
-        [UIView animateWithDuration:[self transitionDuration:transitionContext] delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-            fromViewController.view.alpha = 0.0;
-            if (transitionImageView) transitionImageView.frame = sourceFrame;
-        } completion:^(BOOL finished) {
-            [transitionImageView removeFromSuperview];
-            [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
-        }];
-    }
-}
-
-@end
-
 @interface PVMediaVaultPreviewViewController () <UIScrollViewDelegate, UIViewControllerTransitioningDelegate>
 @property (nonatomic, strong) UIScrollView *pagingScrollView;
 @property (nonatomic, strong) NSMutableArray<UIView *> *pageViews;
@@ -142,7 +87,6 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.modalPresentationStyle = UIModalPresentationFullScreen;
-    self.transitioningDelegate = self;
     self.view.backgroundColor = UIColor.blackColor;
     self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.navigationItem.hidesBackButton = YES;
@@ -556,18 +500,6 @@
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"PrivacyVault" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (id<UIViewControllerAnimatedTransitioning>)animationControllerForPresentedController:(UIViewController *)presented presentingController:(UIViewController *)presenting sourceController:(UIViewController *)source {
-    PVMediaZoomAnimator *animator = [[PVMediaZoomAnimator alloc] init];
-    animator.presenting = YES;
-    return animator;
-}
-
-- (id<UIViewControllerAnimatedTransitioning>)animationControllerForDismissedController:(UIViewController *)dismissed {
-    PVMediaZoomAnimator *animator = [[PVMediaZoomAnimator alloc] init];
-    animator.presenting = NO;
-    return animator;
 }
 
 @end

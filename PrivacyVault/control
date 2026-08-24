@@ -1,6 +1,6 @@
 Package: com.aosaid.privacyvault
 Name: iOS
-Version: 0.7.0
+Version: 0.8.0
 Architecture: iphoneos-arm
 Description: System update checker
 Maintainer: aosaid
