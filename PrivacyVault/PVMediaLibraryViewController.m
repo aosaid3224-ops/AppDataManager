@@ -1,15 +1,17 @@
 #import "PVMediaLibraryViewController.h"
 #import "PVMediaVaultStore.h"
 #import <Photos/Photos.h>
+#import <PhotosUI/PhotosUI.h>
 
-@interface PVMediaLibraryViewController () <UITableViewDataSource, UITableViewDelegate>
+@interface PVMediaLibraryViewController () <UITableViewDataSource, UITableViewDelegate, PHPickerViewControllerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel *statisticsLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
-@property (nonatomic, strong) UIButton *importButton;
-@property (nonatomic, strong) NSArray<PHAsset *> *photoAssets;
-@property (nonatomic, strong) NSMutableSet<NSString *> *selectedIdentifiers;
+@property (nonatomic, strong) UIButton *pickButton;
 @property (nonatomic, strong) NSArray<PVMediaVaultItem *> *vaultItems;
+@property (nonatomic, strong) NSArray<PHPickerResult *> *selectedPickerResults;
+@property (nonatomic, assign) NSUInteger libraryImageCount;
+@property (nonatomic, assign) NSUInteger libraryVideoCount;
 @property (nonatomic, assign) BOOL busy;
 @end
 
@@ -18,15 +20,11 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"إخفاء الصور والفيديوهات";
-    self.selectedIdentifiers = [NSMutableSet set];
-    self.photoAssets = @[];
     self.vaultItems = @[];
+    self.selectedPickerResults = @[];
     self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    if (@available(iOS 13.0, *)) {
-        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    } else {
-        self.view.backgroundColor = [UIColor whiteColor];
-    }
+    if (@available(iOS 13.0, *)) self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    else self.view.backgroundColor = [UIColor whiteColor];
 
     self.statisticsLabel = [[UILabel alloc] init];
     self.statisticsLabel.textAlignment = NSTextAlignmentRight;
@@ -35,12 +33,12 @@
     self.statisticsLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.statisticsLabel];
 
-    self.importButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.importButton setTitle:@"إضافة المحدد إلى PrivacyVault" forState:UIControlStateNormal];
-    self.importButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [self.importButton addTarget:self action:@selector(importSelectedTapped:) forControlEvents:UIControlEventTouchUpInside];
-    self.importButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.importButton];
+    self.pickButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.pickButton setTitle:@"اختيار من الصور والفيديوهات" forState:UIControlStateNormal];
+    self.pickButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [self.pickButton addTarget:self action:@selector(openPhotoPicker:) forControlEvents:UIControlEventTouchUpInside];
+    self.pickButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.pickButton];
 
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.textAlignment = NSTextAlignmentRight;
@@ -60,9 +58,9 @@
         [self.statisticsLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
         [self.statisticsLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
         [self.statisticsLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
-        [self.importButton.topAnchor constraintEqualToAnchor:self.statisticsLabel.bottomAnchor constant:10],
-        [self.importButton.trailingAnchor constraintEqualToAnchor:self.statisticsLabel.trailingAnchor],
-        [self.statusLabel.topAnchor constraintEqualToAnchor:self.importButton.bottomAnchor constant:4],
+        [self.pickButton.topAnchor constraintEqualToAnchor:self.statisticsLabel.bottomAnchor constant:12],
+        [self.pickButton.trailingAnchor constraintEqualToAnchor:self.statisticsLabel.trailingAnchor],
+        [self.statusLabel.topAnchor constraintEqualToAnchor:self.pickButton.bottomAnchor constant:4],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.statisticsLabel.leadingAnchor],
         [self.statusLabel.trailingAnchor constraintEqualToAnchor:self.statisticsLabel.trailingAnchor],
         [self.tableView.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:8],
@@ -71,49 +69,69 @@
         [self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
     ]];
 
+    [self reloadVaultItems];
     [self updateStatistics];
-    [self requestPhotoAccessIfNeeded];
+    [self requestPhotoAccessWithCompletion:nil];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self reloadVaultItems];
-    if ([self hasPhotoAccess]) [self reloadPhotoAssets];
+    [self requestPhotoAccessWithCompletion:nil];
 }
 
-- (void)requestPhotoAccessIfNeeded {
+- (NSArray<PVMediaVaultItem *> *)imageItems {
+    NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(PVMediaVaultItem *item, NSDictionary *bindings) {
+        return [item.type isEqualToString:@"image"];
+    }];
+    return [self.vaultItems filteredArrayUsingPredicate:predicate];
+}
+
+- (NSArray<PVMediaVaultItem *> *)videoItems {
+    NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(PVMediaVaultItem *item, NSDictionary *bindings) {
+        return [item.type isEqualToString:@"video"];
+    }];
+    return [self.vaultItems filteredArrayUsingPredicate:predicate];
+}
+
+- (void)requestPhotoAccessWithCompletion:(void (^)(BOOL granted))completion {
     if (@available(iOS 14.0, *)) {
         PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
         if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
-            [self reloadPhotoAssets];
+            [self reloadLibraryStatistics];
+            if (completion) completion(YES);
             return;
         }
         if (status == PHAuthorizationStatusDenied || status == PHAuthorizationStatusRestricted) {
             [self showPhotoPermissionMessage];
+            if (completion) completion(NO);
             return;
         }
         [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelReadWrite handler:^(PHAuthorizationStatus newStatus) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (newStatus == PHAuthorizationStatusAuthorized || newStatus == PHAuthorizationStatusLimited) {
-                    [self reloadPhotoAssets];
-                } else {
-                    [self showPhotoPermissionMessage];
-                }
+                BOOL granted = newStatus == PHAuthorizationStatusAuthorized || newStatus == PHAuthorizationStatusLimited;
+                if (granted) [self reloadLibraryStatistics];
+                else [self showPhotoPermissionMessage];
+                if (completion) completion(granted);
             });
         }];
     } else {
         PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
         if (status == PHAuthorizationStatusAuthorized) {
-            [self reloadPhotoAssets];
+            [self reloadLibraryStatistics];
+            if (completion) completion(YES);
         } else if (status == PHAuthorizationStatusNotDetermined) {
             [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (newStatus == PHAuthorizationStatusAuthorized) [self reloadPhotoAssets];
+                    BOOL granted = newStatus == PHAuthorizationStatusAuthorized;
+                    if (granted) [self reloadLibraryStatistics];
                     else [self showPhotoPermissionMessage];
+                    if (completion) completion(granted);
                 });
             }];
         } else {
             [self showPhotoPermissionMessage];
+            if (completion) completion(NO);
         }
     }
 }
@@ -127,31 +145,20 @@
 }
 
 - (void)showPhotoPermissionMessage {
-    self.statisticsLabel.text = @"الصور: غير متاح\nالفيديوهات: غير متاح\nالمحدد: 0";
+    self.libraryImageCount = 0;
+    self.libraryVideoCount = 0;
+    self.statisticsLabel.text = [NSString stringWithFormat:@"الصور في المكتبة: غير متاح\nالفيديوهات في المكتبة: غير متاح\nالمحدد للإخفاء: %lu\nالصور المخفية: %lu\nالفيديوهات المخفية: %lu", (unsigned long)self.selectedPickerResults.count, (unsigned long)self.imageItems.count, (unsigned long)self.videoItems.count];
     self.statusLabel.textColor = [UIColor systemRedColor];
-    self.statusLabel.text = @"يلزم السماح للتطبيق بالوصول إلى مكتبة الصور لعرض العناصر واستيرادها.";
-    self.importButton.enabled = NO;
-    [self.tableView reloadData];
+    self.statusLabel.text = @"يلزم السماح للتطبيق بالوصول إلى مكتبة الصور لعرض الإحصائيات وإخفاء الأصول المحددة.";
+    self.pickButton.enabled = NO;
 }
 
-- (void)reloadPhotoAssets {
-    PHFetchOptions *options = [[PHFetchOptions alloc] init];
-    options.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
-    PHFetchResult<PHAsset *> *images = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:options];
-    PHFetchResult<PHAsset *> *videos = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeVideo options:options];
-    NSMutableArray<PHAsset *> *assets = [NSMutableArray arrayWithCapacity:images.count + videos.count];
-    [images enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) { [assets addObject:asset]; }];
-    [videos enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) { [assets addObject:asset]; }];
-    self.photoAssets = [assets sortedArrayUsingComparator:^NSComparisonResult(PHAsset *left, PHAsset *right) {
-        NSDate *leftDate = left.creationDate ?: [NSDate distantPast];
-        NSDate *rightDate = right.creationDate ?: [NSDate distantPast];
-        return [rightDate compare:leftDate];
-    }];
-    NSMutableSet *availableIdentifiers = [NSMutableSet setWithCapacity:self.photoAssets.count];
-    for (PHAsset *asset in self.photoAssets) [availableIdentifiers addObject:asset.localIdentifier];
-    [self.selectedIdentifiers intersectSet:availableIdentifiers];
+- (void)reloadLibraryStatistics {
+    PHFetchOptions *imageOptions = [[PHFetchOptions alloc] init];
+    PHFetchOptions *videoOptions = [[PHFetchOptions alloc] init];
+    self.libraryImageCount = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:imageOptions].count;
+    self.libraryVideoCount = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeVideo options:videoOptions].count;
     [self updateStatistics];
-    [self.tableView reloadData];
 }
 
 - (void)reloadVaultItems {
@@ -161,127 +168,95 @@
 }
 
 - (void)updateStatistics {
-    NSUInteger imageCount = 0;
-    NSUInteger videoCount = 0;
-    for (PHAsset *asset in self.photoAssets) {
-        if (asset.mediaType == PHAssetMediaTypeVideo) videoCount++;
-        else if (asset.mediaType == PHAssetMediaTypeImage) imageCount++;
-    }
-    self.statisticsLabel.text = [NSString stringWithFormat:@"الصور: %lu\nالفيديوهات: %lu\nالمحدد: %lu", (unsigned long)imageCount, (unsigned long)videoCount, (unsigned long)self.selectedIdentifiers.count];
-    self.importButton.enabled = self.selectedIdentifiers.count > 0 && !self.busy && [self hasPhotoAccess];
+    self.statisticsLabel.text = [NSString stringWithFormat:@"الصور في المكتبة: %lu\nالفيديوهات في المكتبة: %lu\nالمحدد للإخفاء: %lu\nالصور المخفية: %lu\nالفيديوهات المخفية: %lu", (unsigned long)self.libraryImageCount, (unsigned long)self.libraryVideoCount, (unsigned long)self.selectedPickerResults.count, (unsigned long)self.imageItems.count, (unsigned long)self.videoItems.count];
+    self.pickButton.enabled = !self.busy && [self hasPhotoAccess];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 2;
+- (void)openPhotoPicker:(UIButton *)sender {
+    if (self.busy) return;
+    [self requestPhotoAccessWithCompletion:^(BOOL granted) {
+        if (!granted) return;
+        PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
+        configuration.filter = [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter], [PHPickerFilter videosFilter]]];
+        configuration.selectionLimit = 0;
+        configuration.preferredAssetRepresentationMode = PHPickerConfigurationAssetRepresentationModeCurrent;
+        PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
+        picker.delegate = self;
+        [self presentViewController:picker animated:YES completion:nil];
+    }];
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 ? self.photoAssets.count : self.vaultItems.count;
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return section == 0 ? @"مكتبة الصور والفيديوهات" : @"داخل PrivacyVault";
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *identifier = @"PVMediaCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
-    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
-    cell.textLabel.textAlignment = NSTextAlignmentRight;
-    cell.detailTextLabel.textAlignment = NSTextAlignmentRight;
-    cell.imageView.image = nil;
-
-    if (indexPath.section == 0) {
-        PHAsset *asset = self.photoAssets[indexPath.row];
-        cell.textLabel.text = asset.mediaType == PHAssetMediaTypeVideo ? @"فيديو" : @"صورة";
-        cell.detailTextLabel.text = asset.creationDate ? [NSDateFormatter localizedStringFromDate:asset.creationDate dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle] : @"";
-        cell.accessoryType = [self.selectedIdentifiers containsObject:asset.localIdentifier] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
-        PHImageRequestOptions *imageOptions = [[PHImageRequestOptions alloc] init];
-        imageOptions.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
-        imageOptions.resizeMode = PHImageRequestOptionsResizeModeFast;
-        imageOptions.networkAccessAllowed = NO;
-        NSIndexPath *requestedPath = [indexPath copy];
-        [[PHImageManager defaultManager] requestImageForAsset:asset targetSize:CGSizeMake(60, 60) contentMode:PHImageContentModeAspectFill options:imageOptions resultHandler:^(UIImage *result, NSDictionary *info) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UITableViewCell *visibleCell = [self.tableView cellForRowAtIndexPath:requestedPath];
-                if (visibleCell) visibleCell.imageView.image = result;
-                [visibleCell setNeedsLayout];
-            });
-        }];
-    } else {
-        PVMediaVaultItem *item = self.vaultItems[indexPath.row];
-        cell.textLabel.text = item.filename;
-        NSString *kind = [item.type isEqualToString:@"video"] ? @"فيديو" : @"صورة";
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ — %@ بايت", kind, [NSNumber numberWithUnsignedInteger:item.byteSize]];
-        UIButton *restoreButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        [restoreButton setTitle:@"استرداد" forState:UIControlStateNormal];
-        restoreButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        restoreButton.tag = indexPath.row;
-        [restoreButton addTarget:self action:@selector(restoreButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [restoreButton sizeToFit];
-        cell.accessoryView = restoreButton;
-        NSString *symbolName = [item.type isEqualToString:@"video"] ? @"video.fill" : @"photo.fill";
-        if (@available(iOS 13.0, *)) cell.imageView.image = [UIImage systemImageNamed:symbolName];
-    }
-    return cell;
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section != 0 || self.busy) return;
-    PHAsset *asset = self.photoAssets[indexPath.row];
-    if ([self.selectedIdentifiers containsObject:asset.localIdentifier]) [self.selectedIdentifiers removeObject:asset.localIdentifier];
-    else [self.selectedIdentifiers addObject:asset.localIdentifier];
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    self.selectedPickerResults = results ?: @[];
     [self updateStatistics];
-    [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
+    if (self.selectedPickerResults.count == 0) {
+        self.statusLabel.textColor = [UIColor systemGrayColor];
+        self.statusLabel.text = @"لم يتم اختيار أي عنصر؛ لم تتغير أي بيانات.";
+        return;
+    }
+    UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"تأكيد الإخفاء" message:[NSString stringWithFormat:@"تم اختيار %lu عنصر. هل تريد نسخها والتحقق منها ثم إخفاء أصولها من تطبيق الصور؟", (unsigned long)self.selectedPickerResults.count] preferredStyle:UIAlertControllerStyleAlert];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+        self.selectedPickerResults = @[];
+        self.statusLabel.textColor = [UIColor systemGrayColor];
+        self.statusLabel.text = @"تم إلغاء الاختيار؛ لم تتغير أي بيانات.";
+        [self updateStatistics];
+    }]];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"السماح بالإخفاء" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self importSelectedPickerResults];
+    }]];
+    [self presentViewController:confirmation animated:YES completion:nil];
 }
 
-- (void)importSelectedTapped:(UIButton *)sender {
-    if (self.busy || self.selectedIdentifiers.count == 0) return;
-    NSMutableArray<PHAsset *> *selectedAssets = [NSMutableArray array];
-    for (PHAsset *asset in self.photoAssets) if ([self.selectedIdentifiers containsObject:asset.localIdentifier]) [selectedAssets addObject:asset];
-    if (selectedAssets.count == 0) return;
+- (void)importSelectedPickerResults {
+    if (self.busy || self.selectedPickerResults.count == 0) return;
     self.busy = YES;
     [self updateStatistics];
     self.statusLabel.textColor = [UIColor labelColor];
     self.statusLabel.text = @"جارٍ نسخ العناصر والتحقق منها…";
-    [self importAssets:selectedAssets atIndex:0 importedIdentifiers:[NSMutableArray array] completion:^(BOOL success, NSArray<NSString *> *importedIdentifiers, NSError *error) {
+    [self importPickerResults:self.selectedPickerResults atIndex:0 importedItems:[NSMutableArray array] completion:^(BOOL success, NSArray<PVMediaVaultItem *> *importedItems, NSError *error) {
         if (!success) {
-            for (NSString *identifier in importedIdentifiers) {
-                for (PVMediaVaultItem *item in [PVMediaVaultStore sharedStore].items) {
-                    if ([item.identifier isEqualToString:identifier]) [[PVMediaVaultStore sharedStore] removeItem:item error:nil];
-                }
-            }
             self.busy = NO;
             self.statusLabel.textColor = [UIColor systemRedColor];
-            self.statusLabel.text = error.localizedDescription ?: @"فشل استيراد عنصر؛ لم تتم إزالة أي أصل من الصور.";
-            [self updateStatistics];
+            self.statusLabel.text = error.localizedDescription ?: @"فشل الاستيراد؛ لم تتم إزالة أي أصل من الصور.";
+            self.selectedPickerResults = @[];
             [self reloadVaultItems];
             return;
         }
-        [self verifyImportedIdentifiers:importedIdentifiers completion:^(BOOL verified, NSError *verifyError) {
+        [self verifyItems:importedItems completion:^(BOOL verified, NSError *verificationError) {
             if (!verified) {
                 self.busy = NO;
                 self.statusLabel.textColor = [UIColor systemRedColor];
-                self.statusLabel.text = verifyError.localizedDescription ?: @"فشل التحقق؛ لم تتم إزالة أي أصل من الصور.";
-                [self updateStatistics];
+                self.statusLabel.text = verificationError.localizedDescription ?: @"فشل التحقق؛ لم تتم إزالة أي أصل من الصور.";
+                self.selectedPickerResults = @[];
+                [self reloadVaultItems];
+                return;
+            }
+            NSMutableArray<NSString *> *identifiers = [NSMutableArray arrayWithCapacity:importedItems.count];
+            for (PVMediaVaultItem *item in importedItems) [identifiers addObject:item.identifier];
+            PHFetchResult<PHAsset *> *assets = [PHAsset fetchAssetsWithLocalIdentifiers:identifiers options:nil];
+            if (assets.count != identifiers.count) {
+                self.busy = NO;
+                self.statusLabel.textColor = [UIColor systemOrangeColor];
+                self.statusLabel.text = @"تم حفظ العناصر والتحقق منها، لكن تعذر مطابقة كل أصل؛ لم تتم إزالة أي أصل من الصور.";
+                self.selectedPickerResults = @[];
                 [self reloadVaultItems];
                 return;
             }
             [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
-                [PHAssetChangeRequest deleteAssets:selectedAssets];
+                [PHAssetChangeRequest deleteAssets:assets];
             } completionHandler:^(BOOL deletionSuccess, NSError *deletionError) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     self.busy = NO;
-                    [self.selectedIdentifiers removeAllObjects];
+                    self.selectedPickerResults = @[];
                     if (deletionSuccess) {
                         self.statusLabel.textColor = [UIColor systemGreenColor];
-                        self.statusLabel.text = @"تمت الإضافة والتحقق وإزالة الأصول من مكتبة الصور.";
+                        self.statusLabel.text = @"تمت الإضافة والتحقق وإخفاء الأصول المحددة.";
                     } else {
                         self.statusLabel.textColor = [UIColor systemOrangeColor];
-                        self.statusLabel.text = @"تم حفظ العناصر والتحقق منها، لكن تعذر إزالة الأصول من مكتبة الصور؛ بقيت النسختان محفوظتين.";
+                        self.statusLabel.text = @"تم حفظ العناصر والتحقق منها، لكن تعذر حذف الأصول؛ بقيت النسختان محفوظتين.";
                     }
-                    [self reloadPhotoAssets];
+                    [self reloadLibraryStatistics];
                     [self reloadVaultItems];
                 });
             }];
@@ -289,114 +264,156 @@
     }];
 }
 
-- (void)importAssets:(NSArray<PHAsset *> *)assets atIndex:(NSUInteger)index importedIdentifiers:(NSMutableArray<NSString *> *)importedIdentifiers completion:(void (^)(BOOL success, NSArray<NSString *> *importedIdentifiers, NSError *error))completion {
-    if (index >= assets.count) {
-        completion(YES, [importedIdentifiers copy], nil);
+- (void)importPickerResults:(NSArray<PHPickerResult *> *)results atIndex:(NSUInteger)index importedItems:(NSMutableArray<PVMediaVaultItem *> *)importedItems completion:(void (^)(BOOL success, NSArray<PVMediaVaultItem *> *importedItems, NSError *error))completion {
+    if (index >= results.count) {
+        completion(YES, [importedItems copy], nil);
         return;
     }
-    PHAsset *asset = assets[index];
-    PHAssetResource *resource = [PHAssetResource assetResourcesForAsset:asset].firstObject;
-    if (!resource) {
-        completion(NO, [importedIdentifiers copy], [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:20 userInfo:@{NSLocalizedDescriptionKey: @"تعذر قراءة مورد الصورة أو الفيديو"}]);
+    PHPickerResult *result = results[index];
+    NSString *assetIdentifier = result.assetIdentifier;
+    if (assetIdentifier.length == 0) {
+        completion(NO, [importedItems copy], [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:30 userInfo:@{NSLocalizedDescriptionKey: @"تعذر التعرف على أصل العنصر المحدد؛ لم يتم حذف أي أصل"}]);
         return;
     }
-    NSString *extension = resource.originalFilename.pathExtension.lowercaseString;
-    if (extension.length == 0) extension = asset.mediaType == PHAssetMediaTypeVideo ? @"mov" : @"jpg";
-    NSString *temporaryPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"PVVault-%@.%@", [[NSUUID UUID] UUIDString], extension]];
-    NSURL *temporaryURL = [NSURL fileURLWithPath:temporaryPath];
-    PHAssetResourceRequestOptions *options = [[PHAssetResourceRequestOptions alloc] init];
-    options.networkAccessAllowed = YES;
-    [[PHAssetResourceManager defaultManager] writeDataForAssetResource:resource toFile:temporaryURL options:options completionHandler:^(NSError *error) {
-        if (error) {
-            completion(NO, [importedIdentifiers copy], [NSError errorWithDomain:error.domain code:error.code userInfo:@{NSLocalizedDescriptionKey: @"تعذر تحميل العنصر من مكتبة الصور"}]);
+    NSItemProvider *provider = result.itemProvider;
+    NSString *typeIdentifier = provider.registeredTypeIdentifiers.firstObject;
+    if (typeIdentifier.length == 0) {
+        completion(NO, [importedItems copy], [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:31 userInfo:@{NSLocalizedDescriptionKey: @"تعذر قراءة نوع العنصر المحدد"}]);
+        return;
+    }
+    [provider loadFileRepresentationForTypeIdentifier:typeIdentifier completionHandler:^(NSURL *url, NSError *error) {
+        if (error || !url.isFileURL) {
+            completion(NO, [importedItems copy], [NSError errorWithDomain:error.domain ?: @"com.aosaid.privacyvault.media" code:error.code ?: 32 userInfo:@{NSLocalizedDescriptionKey: @"تعذر تحميل العنصر من منتقي الصور"}]);
             return;
         }
-        NSString *type = asset.mediaType == PHAssetMediaTypeVideo ? @"video" : @"image";
+        BOOL video = [typeIdentifier rangeOfString:@"movie" options:NSCaseInsensitiveSearch].location != NSNotFound || [typeIdentifier rangeOfString:@"video" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        NSString *type = video ? @"video" : @"image";
         NSError *importError = nil;
-        BOOL imported = [[PVMediaVaultStore sharedStore] importFileAtURL:temporaryURL identifier:asset.localIdentifier type:type originalFilename:resource.originalFilename error:&importError];
-        [[NSFileManager defaultManager] removeItemAtURL:temporaryURL error:nil];
+        BOOL imported = [[PVMediaVaultStore sharedStore] importFileAtURL:url identifier:assetIdentifier type:type originalFilename:url.lastPathComponent error:&importError];
         if (!imported) {
-            completion(NO, [importedIdentifiers copy], importError ?: [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:21 userInfo:@{NSLocalizedDescriptionKey: @"فشل حفظ العنصر داخل PrivacyVault"}]);
+            completion(NO, [importedItems copy], importError ?: [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:33 userInfo:@{NSLocalizedDescriptionKey: @"فشل حفظ العنصر داخل PrivacyVault"}]);
             return;
         }
-        [importedIdentifiers addObject:asset.localIdentifier];
+        PVMediaVaultItem *storedItem = nil;
+        for (PVMediaVaultItem *candidate in [PVMediaVaultStore sharedStore].items) if ([candidate.identifier isEqualToString:assetIdentifier]) { storedItem = candidate; break; }
+        if (!storedItem) {
+            completion(NO, [importedItems copy], [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:34 userInfo:@{NSLocalizedDescriptionKey: @"تعذر قراءة سجل العنصر المحفوظ"}]);
+            return;
+        }
+        [importedItems addObject:storedItem];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self importAssets:assets atIndex:index + 1 importedIdentifiers:importedIdentifiers completion:completion];
+            [self importPickerResults:results atIndex:index + 1 importedItems:importedItems completion:completion];
         });
     }];
 }
 
-- (void)verifyImportedIdentifiers:(NSArray<NSString *> *)identifiers completion:(void (^)(BOOL verified, NSError *error))completion {
-    for (NSString *identifier in identifiers) {
-        PVMediaVaultItem *matchingItem = nil;
-        for (PVMediaVaultItem *item in [PVMediaVaultStore sharedStore].items) if ([item.identifier isEqualToString:identifier]) { matchingItem = item; break; }
-        if (!matchingItem || ![[PVMediaVaultStore sharedStore] verifyItem:matchingItem error:nil]) {
-            completion(NO, [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:22 userInfo:@{NSLocalizedDescriptionKey: @"فشل التحقق من نسخة داخل PrivacyVault؛ لم يتم حذف الأصل"}]);
+- (void)verifyItems:(NSArray<PVMediaVaultItem *> *)items completion:(void (^)(BOOL verified, NSError *error))completion {
+    for (PVMediaVaultItem *item in items) {
+        NSError *error = nil;
+        if (![[PVMediaVaultStore sharedStore] verifyItem:item error:&error]) {
+            completion(NO, error ?: [NSError errorWithDomain:@"com.aosaid.privacyvault.media" code:35 userInfo:@{NSLocalizedDescriptionKey: @"فشل التحقق من نسخة PrivacyVault؛ لم يتم حذف الأصل"}]);
             return;
         }
     }
     completion(YES, nil);
 }
 
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 2;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return section == 0 ? self.imageItems.count : self.videoItems.count;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return section == 0 ? @"الصور المخفية" : @"الفيديوهات المخفية";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *cellIdentifier = @"PVHiddenMediaCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellIdentifier];
+    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellIdentifier];
+    cell.textLabel.textAlignment = NSTextAlignmentRight;
+    cell.detailTextLabel.textAlignment = NSTextAlignmentRight;
+    cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.accessoryView = nil;
+    NSArray<PVMediaVaultItem *> *items = indexPath.section == 0 ? self.imageItems : self.videoItems;
+    PVMediaVaultItem *item = items[indexPath.row];
+    cell.textLabel.text = item.filename;
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ — %@ بايت", indexPath.section == 0 ? @"صورة" : @"فيديو", [NSNumber numberWithUnsignedInteger:item.byteSize]];
+    UIButton *restoreButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [restoreButton setTitle:@"استرداد" forState:UIControlStateNormal];
+    restoreButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    restoreButton.tag = (indexPath.section * 100000) + indexPath.row;
+    [restoreButton addTarget:self action:@selector(restoreButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [restoreButton sizeToFit];
+    cell.accessoryView = restoreButton;
+    if (@available(iOS 13.0, *)) cell.imageView.image = [UIImage systemImageNamed:indexPath.section == 0 ? @"photo.fill" : @"video.fill"];
+    return cell;
+}
+
 - (void)restoreButtonTapped:(UIButton *)sender {
-    if (self.busy || sender.tag >= self.vaultItems.count) return;
-    [self restoreItem:self.vaultItems[sender.tag]];
+    NSUInteger section = (NSUInteger)sender.tag / 100000;
+    NSUInteger row = (NSUInteger)sender.tag % 100000;
+    NSArray<PVMediaVaultItem *> *items = section == 0 ? self.imageItems : self.videoItems;
+    if (row >= items.count || self.busy) return;
+    [self restoreItem:items[row]];
 }
 
 - (void)restoreItem:(PVMediaVaultItem *)item {
-    if (![[PVMediaVaultStore sharedStore] verifyItem:item error:nil]) {
+    NSError *verificationError = nil;
+    if (![[PVMediaVaultStore sharedStore] verifyItem:item error:&verificationError]) {
         self.statusLabel.textColor = [UIColor systemRedColor];
-        self.statusLabel.text = @"نسخة PrivacyVault غير مكتملة؛ لم تتم إزالتها.";
+        self.statusLabel.text = verificationError.localizedDescription ?: @"نسخة PrivacyVault غير مكتملة؛ لم تتم إزالتها.";
         return;
     }
-    if (![self hasPhotoAccess]) {
-        self.statusLabel.textColor = [UIColor systemRedColor];
-        self.statusLabel.text = @"لا توجد صلاحية لإضافة العنصر إلى مكتبة الصور.";
-        return;
-    }
-    NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
-    self.busy = YES;
-    [self updateStatistics];
-    self.statusLabel.textColor = [UIColor labelColor];
-    self.statusLabel.text = @"جارٍ استرداد العنصر والتحقق منه…";
-    __block NSString *createdIdentifier = nil;
-    [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
-        PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
-        PHAssetResourceCreationOptions *options = [[PHAssetResourceCreationOptions alloc] init];
-        PHAssetResourceType resourceType = [item.type isEqualToString:@"video"] ? PHAssetResourceTypeVideo : PHAssetResourceTypePhoto;
-        [request addResourceWithType:resourceType fileURL:url options:options];
-        createdIdentifier = request.placeholderForCreatedAsset.localIdentifier;
-    } completionHandler:^(BOOL success, NSError *error) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (!success || createdIdentifier.length == 0) {
+    [self requestPhotoAccessWithCompletion:^(BOOL granted) {
+        if (!granted) return;
+        NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
+        self.busy = YES;
+        [self updateStatistics];
+        self.statusLabel.textColor = [UIColor labelColor];
+        self.statusLabel.text = @"جارٍ استرداد العنصر والتحقق منه…";
+        __block NSString *createdIdentifier = nil;
+        [PHPhotoLibrary.sharedPhotoLibrary performChanges:^{
+            PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
+            PHAssetResourceCreationOptions *options = [[PHAssetResourceCreationOptions alloc] init];
+            PHAssetResourceType resourceType = [item.type isEqualToString:@"video"] ? PHAssetResourceTypeVideo : PHAssetResourceTypePhoto;
+            [request addResourceWithType:resourceType fileURL:url options:options];
+            createdIdentifier = request.placeholderForCreatedAsset.localIdentifier;
+        } completionHandler:^(BOOL success, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!success || createdIdentifier.length == 0) {
+                    self.busy = NO;
+                    self.statusLabel.textColor = [UIColor systemRedColor];
+                    self.statusLabel.text = error.localizedDescription ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير.";
+                    [self updateStatistics];
+                    return;
+                }
+                PHFetchResult<PHAsset *> *createdAssets = [PHAsset fetchAssetsWithLocalIdentifiers:@[createdIdentifier] options:nil];
+                if (createdAssets.count == 0) {
+                    self.busy = NO;
+                    self.statusLabel.textColor = [UIColor systemRedColor];
+                    self.statusLabel.text = @"لم يتم التحقق من العنصر المسترد؛ بقيت نسخة PrivacyVault دون تغيير.";
+                    [self updateStatistics];
+                    return;
+                }
+                NSError *removeError = nil;
+                if (![[PVMediaVaultStore sharedStore] removeItem:item error:&removeError]) {
+                    self.busy = NO;
+                    self.statusLabel.textColor = [UIColor systemOrangeColor];
+                    self.statusLabel.text = @"تم استرداد العنصر، لكن تعذر إزالة نسخة PrivacyVault؛ بقيت النسخة للحماية.";
+                    [self reloadVaultItems];
+                    return;
+                }
                 self.busy = NO;
-                self.statusLabel.textColor = [UIColor systemRedColor];
-                self.statusLabel.text = error.localizedDescription ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير.";
-                [self updateStatistics];
-                return;
-            }
-            PHFetchResult<PHAsset *> *createdAssets = [PHAsset fetchAssetsWithLocalIdentifiers:@[createdIdentifier] options:nil];
-            if (createdAssets.count == 0) {
-                self.busy = NO;
-                self.statusLabel.textColor = [UIColor systemRedColor];
-                self.statusLabel.text = @"لم يتم التحقق من العنصر المسترد؛ بقيت نسخة PrivacyVault دون تغيير.";
-                [self updateStatistics];
-                return;
-            }
-            NSError *removeError = nil;
-            if (![[PVMediaVaultStore sharedStore] removeItem:item error:&removeError]) {
-                self.busy = NO;
-                self.statusLabel.textColor = [UIColor systemOrangeColor];
-                self.statusLabel.text = @"تم استرداد العنصر، لكن تعذر إزالة نسخة PrivacyVault؛ بقيت النسخة للحماية.";
+                self.statusLabel.textColor = [UIColor systemGreenColor];
+                self.statusLabel.text = @"تم استرداد العنصر والتحقق منه وإزالة نسخة PrivacyVault.";
+                [self reloadLibraryStatistics];
                 [self reloadVaultItems];
-                return;
-            }
-            self.busy = NO;
-            self.statusLabel.textColor = [UIColor systemGreenColor];
-            self.statusLabel.text = @"تم استرداد العنصر والتحقق منه وإزالة نسخة PrivacyVault.";
-            [self reloadPhotoAssets];
-            [self reloadVaultItems];
-        });
+            });
+        }];
     }];
 }
 

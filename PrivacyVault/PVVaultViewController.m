@@ -34,19 +34,21 @@
     [self.view addSubview:mediaButton];
 
     UIButton *settingsButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [settingsButton setTitle:@"الإعدادات" forState:UIControlStateNormal];
-    settingsButton.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    settingsButton.frame = CGRectMake(0, 0, 40, 40);
+    settingsButton.accessibilityLabel = @"الإعدادات";
+    if (@available(iOS 13.0, *)) {
+        [settingsButton setImage:[UIImage systemImageNamed:@"gearshape.fill"] forState:UIControlStateNormal];
+    } else {
+        [settingsButton setTitle:@"⚙" forState:UIControlStateNormal];
+    }
     [settingsButton addTarget:self action:@selector(settingsTapped:) forControlEvents:UIControlEventTouchUpInside];
-    settingsButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:settingsButton];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:settingsButton];
 
     [NSLayoutConstraint activateConstraints:@[
         [label.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [label.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-64],
         [mediaButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [mediaButton.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:20],
-        [settingsButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [settingsButton.topAnchor constraintEqualToAnchor:mediaButton.bottomAnchor constant:16]
+        [mediaButton.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:20]
     ]];
 }
 

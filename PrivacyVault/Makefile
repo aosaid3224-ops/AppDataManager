@@ -8,7 +8,7 @@ APPLICATION_NAME = PrivacyVault
 
 PrivacyVault_FILES = main.m AppDelegate.m PVDecoyViewController.m PVPassword1ViewController.m PVDummyViewController.m PVPassword2ViewController.m PVVaultViewController.m PVInitialSetupViewController.m PVPasswordStore.m PVSettingsViewController.m PVChangePasswordsViewController.m PVMediaVaultStore.m PVMediaLibraryViewController.m
 PrivacyVault_CFLAGS = -fobjc-arc
-PrivacyVault_FRAMEWORKS = UIKit Security Photos
+PrivacyVault_FRAMEWORKS = UIKit Security Photos PhotosUI
 PrivacyVault_BUNDLE_RESOURCE_DIRS = Resources
 PrivacyVault_CODESIGN_FLAGS = -Sentitlements.plist
 
