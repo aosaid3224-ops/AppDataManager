@@ -1,5 +1,6 @@
 #import "PVVaultViewController.h"
 #import "PVSettingsViewController.h"
+#import "PVMediaLibraryViewController.h"
 
 @implementation PVVaultViewController
 
@@ -25,6 +26,13 @@
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:label];
 
+    UIButton *mediaButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [mediaButton setTitle:@"إخفاء الصور والفيديوهات" forState:UIControlStateNormal];
+    mediaButton.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    [mediaButton addTarget:self action:@selector(mediaLibraryTapped:) forControlEvents:UIControlEventTouchUpInside];
+    mediaButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:mediaButton];
+
     UIButton *settingsButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [settingsButton setTitle:@"الإعدادات" forState:UIControlStateNormal];
     settingsButton.titleLabel.font = [UIFont boldSystemFontOfSize:17];
@@ -34,10 +42,17 @@
 
     [NSLayoutConstraint activateConstraints:@[
         [label.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [label.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-28],
+        [label.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-64],
+        [mediaButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [mediaButton.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:20],
         [settingsButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [settingsButton.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:24]
+        [settingsButton.topAnchor constraintEqualToAnchor:mediaButton.bottomAnchor constant:16]
     ]];
+}
+
+- (void)mediaLibraryTapped:(UIButton *)sender {
+    PVMediaLibraryViewController *controller = [[PVMediaLibraryViewController alloc] init];
+    [self.navigationController pushViewController:controller animated:YES];
 }
 
 - (void)settingsTapped:(UIButton *)sender {

@@ -15,9 +15,13 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.9</string>
+    <string>0.2.2</string>
     <key>CFBundleVersion</key>
-    <string>10</string>
+    <string>13</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>يحتاج PrivacyVault إلى الوصول إلى صورك وفيديوهاتك لعرضها واستيرادها واستردادها.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>يحتاج PrivacyVault إلى إضافة الصور والفيديوهات المستردة إلى مكتبة الصور.</string>
     <key>CFBundleIcons</key>
     <dict>
         <key>CFBundlePrimaryIcon</key>
