@@ -8,7 +8,6 @@
 @property (nonatomic, strong) UIButton *imagesCard;
 @property (nonatomic, strong) UIButton *videosCard;
 @property (nonatomic, strong) UILabel *subtitleLabel;
-@property (nonatomic, strong) UIButton *importButton;
 @end
 
 @implementation PVVaultViewController
@@ -48,13 +47,6 @@
     [self.view addSubview:self.imagesCard];
     [self.view addSubview:self.videosCard];
 
-    self.importButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.importButton setTitle:@"إضافة من تطبيق الصور" forState:UIControlStateNormal];
-    self.importButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    self.importButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.importButton addTarget:self action:@selector(importTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.importButton];
-
     [NSLayoutConstraint activateConstraints:@[
         [titleLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:82],
         [titleLabel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
@@ -70,8 +62,6 @@
         [self.videosCard.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
         [self.videosCard.leadingAnchor constraintEqualToAnchor:self.imagesCard.trailingAnchor constant:20],
         [self.videosCard.heightAnchor constraintEqualToAnchor:self.imagesCard.heightAnchor],
-        [self.importButton.topAnchor constraintEqualToAnchor:self.imagesCard.bottomAnchor constant:24],
-        [self.importButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor]
     ]];
 }
 
@@ -101,6 +91,18 @@
     titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [button addSubview:titleLabel];
 
+    UIButton *addButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    addButton.translatesAutoresizingMaskIntoConstraints = NO;
+    addButton.tag = 300 + tag;
+    addButton.accessibilityLabel = [NSString stringWithFormat:@"إضافة %@ من تطبيق الصور", title];
+    if (@available(iOS 13.0, *)) [addButton setImage:[UIImage systemImageNamed:@"plus.circle.fill"] forState:UIControlStateNormal];
+    else [addButton setTitle:@"+" forState:UIControlStateNormal];
+    addButton.tintColor = [UIColor systemBlueColor];
+    addButton.backgroundColor = UIColor.clearColor;
+    addButton.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    [addButton addTarget:self action:@selector(addMediaTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [button addSubview:addButton];
+
     UILabel *countLabel = [[UILabel alloc] init];
     countLabel.tag = 100 + tag;
     countLabel.textAlignment = NSTextAlignmentCenter;
@@ -110,6 +112,10 @@
     [button addSubview:countLabel];
 
     [NSLayoutConstraint activateConstraints:@[
+        [addButton.topAnchor constraintEqualToAnchor:button.topAnchor constant:10],
+        [addButton.leftAnchor constraintEqualToAnchor:button.leftAnchor constant:10],
+        [addButton.widthAnchor constraintEqualToConstant:34],
+        [addButton.heightAnchor constraintEqualToConstant:34],
         [iconView.topAnchor constraintEqualToAnchor:button.topAnchor constant:30],
         [iconView.centerXAnchor constraintEqualToAnchor:button.centerXAnchor],
         [iconView.widthAnchor constraintEqualToConstant:64],
@@ -154,8 +160,9 @@
     [self.navigationController pushViewController:browser animated:YES];
 }
 
-- (void)importTapped:(UIButton *)sender {
+- (void)addMediaTapped:(UIButton *)sender {
     PVMediaLibraryViewController *controller = [[PVMediaLibraryViewController alloc] init];
+    controller.mediaType = sender.tag == 302 ? @"video" : @"image";
     [self.navigationController pushViewController:controller animated:YES];
 }
 

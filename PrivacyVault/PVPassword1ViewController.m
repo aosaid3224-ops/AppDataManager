@@ -4,7 +4,6 @@
 
 @interface PVPassword1ViewController ()
 @property (nonatomic, strong) UITextField *passwordField;
-@property (nonatomic, strong) UILabel *statusLabel;
 @end
 
 @implementation PVPassword1ViewController
@@ -44,14 +43,6 @@
     submitBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:submitBtn];
 
-    self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.text = @"";
-    self.statusLabel.textAlignment = NSTextAlignmentCenter;
-    self.statusLabel.textColor = [UIColor systemRedColor];
-    self.statusLabel.font = [UIFont systemFontOfSize:14];
-    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.statusLabel];
-
     [NSLayoutConstraint activateConstraints:@[
         [titleLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [titleLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:60],
@@ -64,8 +55,7 @@
         [submitBtn.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [submitBtn.topAnchor constraintEqualToAnchor:self.passwordField.bottomAnchor constant:20],
 
-        [self.statusLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.statusLabel.topAnchor constraintEqualToAnchor:submitBtn.bottomAnchor constant:16]
+        [submitBtn.bottomAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-20]
     ]];
 
     [self.passwordField becomeFirstResponder];
@@ -76,13 +66,12 @@
     BOOL valid = [[PVPasswordStore sharedStore] verifyPassword1:input error:nil];
 
     if (valid) {
-        self.statusLabel.text = @"";
         PVDummyViewController *vc = [[PVDummyViewController alloc] init];
         [self.navigationController pushViewController:vc animated:YES];
     } else {
-        self.statusLabel.text = @"كلمة المرور غير صحيحة";
         self.passwordField.text = @"";
-        [self.passwordField becomeFirstResponder];
+        [self.passwordField resignFirstResponder];
+        [self.navigationController popViewControllerAnimated:YES];
     }
 }
 

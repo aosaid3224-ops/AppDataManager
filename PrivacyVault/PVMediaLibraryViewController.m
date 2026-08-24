@@ -16,6 +16,7 @@
 @property (nonatomic, assign) NSUInteger libraryImageCount;
 @property (nonatomic, assign) NSUInteger libraryVideoCount;
 @property (nonatomic, assign) BOOL busy;
+@property (nonatomic, assign) BOOL didAutoPresentPicker;
 @end
 
 @implementation PVMediaLibraryViewController
@@ -89,12 +90,26 @@
     [self reloadVaultItems];
     [self updateStatistics];
     [self requestPhotoAccessWithCompletion:nil];
+    if (self.mediaType.length > 0) {
+        self.statisticsLabel.hidden = YES;
+        self.pickButton.hidden = YES;
+        self.hiddenImagesButton.hidden = YES;
+        self.hiddenVideosButton.hidden = YES;
+        self.tableView.hidden = YES;
+        self.title = [self.mediaType isEqualToString:@"video"] ? @"إضافة فيديوهات" : @"إضافة صور";
+    }
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self reloadVaultItems];
     [self requestPhotoAccessWithCompletion:nil];
+    if (self.mediaType.length > 0 && !self.didAutoPresentPicker) {
+        self.didAutoPresentPicker = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self openPhotoPicker:nil];
+        });
+    }
 }
 
 - (NSArray<PVMediaVaultItem *> *)imageItems {
@@ -246,7 +261,9 @@
     [self requestPhotoAccessWithCompletion:^(BOOL granted) {
         if (!granted) return;
         PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] initWithPhotoLibrary:[PHPhotoLibrary sharedPhotoLibrary]];
-        configuration.filter = [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter], [PHPickerFilter videosFilter]]];
+        if ([self.mediaType isEqualToString:@"image"]) configuration.filter = [PHPickerFilter imagesFilter];
+        else if ([self.mediaType isEqualToString:@"video"]) configuration.filter = [PHPickerFilter videosFilter];
+        else configuration.filter = [PHPickerFilter anyFilterMatchingSubfilters:@[[PHPickerFilter imagesFilter], [PHPickerFilter videosFilter]]];
         configuration.selectionLimit = 0;
         configuration.preferredAssetRepresentationMode = PHPickerConfigurationAssetRepresentationModeCurrent;
         PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
@@ -260,6 +277,10 @@
     self.selectedPickerResults = results ?: @[];
     [self updateStatistics];
     if (self.selectedPickerResults.count == 0) {
+        if (self.mediaType.length > 0) {
+            [self.navigationController popViewControllerAnimated:YES];
+            return;
+        }
         self.statusLabel.textColor = [UIColor systemGrayColor];
         self.statusLabel.text = @"لم يتم اختيار أي عنصر؛ لم تتغير أي بيانات.";
         return;
@@ -267,6 +288,10 @@
     UIAlertController *confirmation = [UIAlertController alertControllerWithTitle:@"تأكيد الإخفاء" message:[NSString stringWithFormat:@"تم اختيار %lu عنصر. هل تريد نسخها والتحقق منها ثم إخفاء أصولها من تطبيق الصور؟", (unsigned long)self.selectedPickerResults.count] preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         self.selectedPickerResults = @[];
+        if (self.mediaType.length > 0) {
+            [self.navigationController popViewControllerAnimated:YES];
+            return;
+        }
         self.statusLabel.textColor = [UIColor systemGrayColor];
         self.statusLabel.text = @"تم إلغاء الاختيار؛ لم تتغير أي بيانات.";
         [self updateStatistics];
@@ -327,6 +352,7 @@
                     }
                     [self reloadLibraryStatistics];
                     [self reloadVaultItems];
+                    if (deletionSuccess && self.mediaType.length > 0) [self.navigationController popViewControllerAnimated:YES];
                 });
             }];
         }];
