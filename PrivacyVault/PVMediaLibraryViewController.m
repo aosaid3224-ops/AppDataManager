@@ -2,12 +2,15 @@
 #import "PVMediaVaultStore.h"
 #import <Photos/Photos.h>
 #import <PhotosUI/PhotosUI.h>
+#import "PVMediaVaultBrowserViewController.h"
 
 @interface PVMediaLibraryViewController () <UITableViewDataSource, UITableViewDelegate, PHPickerViewControllerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel *statisticsLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *pickButton;
+@property (nonatomic, strong) UIButton *hiddenImagesButton;
+@property (nonatomic, strong) UIButton *hiddenVideosButton;
 @property (nonatomic, strong) NSArray<PVMediaVaultItem *> *vaultItems;
 @property (nonatomic, strong) NSArray<PHPickerResult *> *selectedPickerResults;
 @property (nonatomic, assign) NSUInteger libraryImageCount;
@@ -52,7 +55,13 @@
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.rowHeight = 76.0;
+    self.tableView.hidden = YES;
     [self.view addSubview:self.tableView];
+
+    self.hiddenImagesButton = [self makeHiddenSectionButton:@"الصور المخفية" action:@selector(openHiddenImages:)];
+    self.hiddenVideosButton = [self makeHiddenSectionButton:@"الفيديوهات المخفية" action:@selector(openHiddenVideos:)];
+    [self.view addSubview:self.hiddenImagesButton];
+    [self.view addSubview:self.hiddenVideosButton];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.statisticsLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
@@ -63,7 +72,15 @@
         [self.statusLabel.topAnchor constraintEqualToAnchor:self.pickButton.bottomAnchor constant:4],
         [self.statusLabel.leadingAnchor constraintEqualToAnchor:self.statisticsLabel.leadingAnchor],
         [self.statusLabel.trailingAnchor constraintEqualToAnchor:self.statisticsLabel.trailingAnchor],
-        [self.tableView.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:8],
+        [self.hiddenImagesButton.topAnchor constraintEqualToAnchor:self.statusLabel.bottomAnchor constant:20],
+        [self.hiddenImagesButton.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:20],
+        [self.hiddenImagesButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [self.hiddenImagesButton.heightAnchor constraintEqualToConstant:104],
+        [self.hiddenVideosButton.topAnchor constraintEqualToAnchor:self.hiddenImagesButton.bottomAnchor constant:14],
+        [self.hiddenVideosButton.leadingAnchor constraintEqualToAnchor:self.hiddenImagesButton.leadingAnchor],
+        [self.hiddenVideosButton.trailingAnchor constraintEqualToAnchor:self.hiddenImagesButton.trailingAnchor],
+        [self.hiddenVideosButton.heightAnchor constraintEqualToAnchor:self.hiddenImagesButton.heightAnchor],
+        [self.tableView.topAnchor constraintEqualToAnchor:self.hiddenVideosButton.bottomAnchor constant:8],
         [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
@@ -163,11 +180,63 @@
 
 - (void)reloadVaultItems {
     self.vaultItems = [PVMediaVaultStore sharedStore].items;
+    [self updateHiddenSectionButtons];
     [self updateStatistics];
     [self.tableView reloadData];
 }
 
+- (UIButton *)makeHiddenSectionButton:(NSString *)title action:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    button.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    button.titleLabel.numberOfLines = 0;
+    button.titleLabel.textAlignment = NSTextAlignmentRight;
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentRight;
+    button.contentEdgeInsets = UIEdgeInsetsMake(12, 18, 12, 18);
+    button.layer.cornerRadius = 16.0;
+    button.clipsToBounds = YES;
+    if (@available(iOS 13.0, *)) {
+        button.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+        button.tintColor = [UIColor systemBlueColor];
+    } else {
+        button.backgroundColor = [UIColor colorWithWhite:0.94 alpha:1.0];
+    }
+    button.accessibilityTraits = UIAccessibilityTraitButton;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    [button setTitle:title forState:UIControlStateNormal];
+    return button;
+}
+
+- (void)updateHiddenSectionButtons {
+    NSUInteger imageCount = self.imageItems.count;
+    NSUInteger videoCount = self.videoItems.count;
+    [self.hiddenImagesButton setTitle:[NSString stringWithFormat:@"الصور المخفية\n%lu عنصر — اضغط للتصفح", (unsigned long)imageCount] forState:UIControlStateNormal];
+    [self.hiddenVideosButton setTitle:[NSString stringWithFormat:@"الفيديوهات المخفية\n%lu عنصر — اضغط للتصفح", (unsigned long)videoCount] forState:UIControlStateNormal];
+    self.hiddenImagesButton.accessibilityLabel = [NSString stringWithFormat:@"الصور المخفية، %lu عنصر", (unsigned long)imageCount];
+    self.hiddenVideosButton.accessibilityLabel = [NSString stringWithFormat:@"الفيديوهات المخفية، %lu عنصر", (unsigned long)videoCount];
+}
+
+- (void)openHiddenImages:(UIButton *)sender {
+    [self openBrowserForItems:self.imageItems title:@"الصور المخفية"];
+}
+
+- (void)openHiddenVideos:(UIButton *)sender {
+    [self openBrowserForItems:self.videoItems title:@"الفيديوهات المخفية"];
+}
+
+- (void)openBrowserForItems:(NSArray<PVMediaVaultItem *> *)items title:(NSString *)title {
+    PVMediaVaultBrowserViewController *browser = [[PVMediaVaultBrowserViewController alloc] init];
+    browser.sectionTitle = title;
+    browser.items = [items copy];
+    __weak typeof(self) weakSelf = self;
+    browser.restoreHandler = ^(PVMediaVaultItem *item) {
+        [weakSelf restoreItem:item];
+    };
+    [self.navigationController pushViewController:browser animated:YES];
+}
+
 - (void)updateStatistics {
+    [self updateHiddenSectionButtons];
     self.statisticsLabel.text = [NSString stringWithFormat:@"الصور في المكتبة: %lu\nالفيديوهات في المكتبة: %lu\nالمحدد للإخفاء: %lu\nالصور المخفية: %lu\nالفيديوهات المخفية: %lu", (unsigned long)self.libraryImageCount, (unsigned long)self.libraryVideoCount, (unsigned long)self.selectedPickerResults.count, (unsigned long)self.imageItems.count, (unsigned long)self.videoItems.count];
     self.pickButton.enabled = !self.busy && [self hasPhotoAccess];
 }
