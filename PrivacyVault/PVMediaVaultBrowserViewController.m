@@ -139,11 +139,22 @@
     preview.item = item;
     preview.items = self.items;
     preview.initialIndex = indexPath.item;
+    UICollectionViewCell *selectedCell = [collectionView cellForItemAtIndexPath:indexPath];
+    UIImageView *selectedImageView = nil;
+    for (UIView *subview in selectedCell.contentView.subviews) {
+        if ([subview isKindOfClass:[UIImageView class]]) {
+            selectedImageView = (UIImageView *)subview;
+            break;
+        }
+    }
+    preview.transitionImage = selectedImageView.image;
+    preview.transitionFrame = [selectedCell convertRect:selectedCell.bounds toView:self.view];
+    preview.modalPresentationStyle = UIModalPresentationFullScreen;
     __weak typeof(self) weakSelf = self;
     preview.restoreHandler = ^(PVMediaVaultItem *restoreItem, void (^completion)(BOOL success, NSString *message)) {
         [weakSelf restoreItemDirectly:restoreItem completion:completion];
     };
-    [self.navigationController pushViewController:preview animated:YES];
+    [self presentViewController:preview animated:YES completion:nil];
 }
 
 - (void)restoreItemDirectly:(PVMediaVaultItem *)item completion:(void (^)(BOOL success, NSString *message))completion {

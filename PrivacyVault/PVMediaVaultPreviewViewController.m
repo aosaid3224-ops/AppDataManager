@@ -1,18 +1,138 @@
 #import "PVMediaVaultPreviewViewController.h"
 #import <AVKit/AVKit.h>
 
-@interface PVMediaVaultPreviewViewController () <UIScrollViewDelegate>
+@interface PVMediaInfoSheetViewController : UIViewController
+@property (nonatomic, strong) PVMediaVaultItem *item;
+@end
+
+@implementation PVMediaInfoSheetViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.title = @"معلومات العنصر";
+
+    UIStackView *stack = [[UIStackView alloc] init];
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.alignment = UIStackViewAlignmentFill;
+    stack.spacing = 16.0;
+    [self.view addSubview:stack];
+
+    UILabel *header = [[UILabel alloc] init];
+    header.text = @"معلومات العنصر";
+    header.textAlignment = NSTextAlignmentRight;
+    header.font = [UIFont systemFontOfSize:24.0 weight:UIFontWeightBold];
+    [stack addArrangedSubview:header];
+
+    UILabel *filename = [[UILabel alloc] init];
+    filename.text = [NSString stringWithFormat:@"الاسم\n%@", self.item.filename ?: @"غير معروف"];
+    filename.numberOfLines = 0;
+    filename.textAlignment = NSTextAlignmentRight;
+    filename.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightMedium];
+    [stack addArrangedSubview:filename];
+
+    NSString *type = [self.item.type isEqualToString:@"video"] ? @"فيديو" : @"صورة";
+    double megabytes = ((double)self.item.byteSize / 1024.0 / 1024.0);
+    UILabel *details = [[UILabel alloc] init];
+    details.text = [NSString stringWithFormat:@"النوع: %@\nالحجم: %.2f ميغابايت\nالحالة: محفوظ داخل PrivacyVault", type, megabytes];
+    details.numberOfLines = 0;
+    details.textAlignment = NSTextAlignmentRight;
+    details.textColor = [UIColor secondaryLabelColor];
+    details.font = [UIFont systemFontOfSize:16.0];
+    [stack addArrangedSubview:details];
+
+    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [closeButton setTitle:@"تم" forState:UIControlStateNormal];
+    closeButton.titleLabel.font = [UIFont systemFontOfSize:17.0 weight:UIFontWeightSemibold];
+    [closeButton addTarget:self action:@selector(closeTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:closeButton];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:24.0],
+        [stack.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-24.0],
+        [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:24.0]
+    ]];
+    self.preferredContentSize = CGSizeMake(UIViewNoIntrinsicMetric, 270.0);
+}
+
+- (void)closeTapped:(UIButton *)sender {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+@interface PVMediaZoomAnimator : NSObject <UIViewControllerAnimatedTransitioning>
+@property (nonatomic, assign) BOOL presenting;
+@end
+
+@implementation PVMediaZoomAnimator
+
+- (NSTimeInterval)transitionDuration:(id<UIViewControllerContextTransitioning>)transitionContext {
+    return 0.28;
+}
+
+- (void)animateTransition:(id<UIViewControllerContextTransitioning>)transitionContext {
+    UIViewController *fromViewController = [transitionContext viewControllerForKey:UITransitionContextFromViewControllerKey];
+    UIViewController *toViewController = [transitionContext viewControllerForKey:UITransitionContextToViewControllerKey];
+    UIView *container = transitionContext.containerView;
+    UIViewController *appearing = self.presenting ? toViewController : fromViewController;
+    UIViewController *underlying = self.presenting ? fromViewController : toViewController;
+    if (self.presenting) [container addSubview:toViewController.view];
+    else [container insertSubview:toViewController.view belowSubview:fromViewController.view];
+
+    PVMediaVaultPreviewViewController *preview = (PVMediaVaultPreviewViewController *)(self.presenting ? toViewController : fromViewController);
+    UIImageView *transitionImageView = nil;
+    if (preview.transitionImage) {
+        transitionImageView = [[UIImageView alloc] initWithImage:preview.transitionImage];
+        transitionImageView.contentMode = UIViewContentModeScaleAspectFill;
+        transitionImageView.clipsToBounds = YES;
+        transitionImageView.backgroundColor = UIColor.blackColor;
+        CGRect sourceFrame = [underlying.view convertRect:preview.transitionFrame toView:container];
+        transitionImageView.frame = self.presenting ? sourceFrame : appearing.view.bounds;
+        [container addSubview:transitionImageView];
+    }
+
+    if (self.presenting) {
+        toViewController.view.alpha = 0.0;
+        [UIView animateWithDuration:[self transitionDuration:transitionContext] delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            toViewController.view.alpha = 1.0;
+            if (transitionImageView) transitionImageView.frame = toViewController.view.bounds;
+        } completion:^(BOOL finished) {
+            [transitionImageView removeFromSuperview];
+            [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
+        }];
+    } else {
+        fromViewController.view.alpha = 1.0;
+        CGRect sourceFrame = [underlying.view convertRect:preview.transitionFrame toView:container];
+        [UIView animateWithDuration:[self transitionDuration:transitionContext] delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            fromViewController.view.alpha = 0.0;
+            if (transitionImageView) transitionImageView.frame = sourceFrame;
+        } completion:^(BOOL finished) {
+            [transitionImageView removeFromSuperview];
+            [transitionContext completeTransition:![transitionContext transitionWasCancelled]];
+        }];
+    }
+}
+
+@end
+
+@interface PVMediaVaultPreviewViewController () <UIScrollViewDelegate, UIViewControllerTransitioningDelegate>
 @property (nonatomic, strong) UIScrollView *pagingScrollView;
 @property (nonatomic, strong) NSMutableArray<UIView *> *pageViews;
 @property (nonatomic, strong) UILabel *counterLabel;
 @property (nonatomic, strong) UIVisualEffectView *actionBar;
 @property (nonatomic, strong) UIButton *restoreButton;
-@property (nonatomic, strong) UIButton *shareButton;
+@property (nonatomic, strong) UIButton *deleteButton;
 @property (nonatomic, strong) UIButton *infoButton;
+@property (nonatomic, strong) UIButton *shareButton;
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) AVPlayerViewController *activePlayerController;
+@property (nonatomic, assign) NSInteger activePlayerIndex;
 @property (nonatomic, assign) NSInteger currentIndex;
 @property (nonatomic, assign) BOOL didSetInitialOffset;
+@property (nonatomic, assign) BOOL controlsVisible;
 @property (nonatomic, assign) BOOL restoring;
 @end
 
@@ -20,9 +140,12 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.modalPresentationStyle = UIModalPresentationFullScreen;
+    self.transitioningDelegate = self;
     self.view.backgroundColor = UIColor.blackColor;
     self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.navigationItem.hidesBackButton = YES;
+    self.activePlayerIndex = NSNotFound;
     self.currentIndex = MAX(0, MIN(self.initialIndex, (NSInteger)self.items.count - 1));
     self.pageViews = [NSMutableArray array];
 
@@ -68,12 +191,14 @@
     [self.view addSubview:self.actionBar];
 
     self.restoreButton = [self makeIconButton:@"arrow.uturn.backward.circle" label:@"استرداد" action:@selector(restoreTapped:)];
+    self.deleteButton = [self makeIconButton:@"trash" label:@"حذف" action:@selector(deleteTapped:)];
     self.infoButton = [self makeIconButton:@"info.circle" label:@"معلومات" action:@selector(infoTapped:)];
     self.shareButton = [self makeIconButton:@"square.and.arrow.up" label:@"مشاركة" action:@selector(shareTapped:)];
     self.shareButton.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.90];
     self.shareButton.layer.cornerRadius = 34.0;
     self.shareButton.clipsToBounds = YES;
     [self.actionBar.contentView addSubview:self.restoreButton];
+    [self.actionBar.contentView addSubview:self.deleteButton];
     [self.actionBar.contentView addSubview:self.infoButton];
     [self.view addSubview:self.shareButton];
 
@@ -100,14 +225,18 @@
         [self.actionBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-76.0],
         [self.actionBar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-14.0],
         [self.actionBar.heightAnchor constraintEqualToConstant:68.0],
-        [self.restoreButton.leadingAnchor constraintEqualToAnchor:self.actionBar.contentView.leadingAnchor constant:12.0],
+        [self.restoreButton.leadingAnchor constraintEqualToAnchor:self.actionBar.contentView.leadingAnchor constant:6.0],
         [self.restoreButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
         [self.restoreButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
-        [self.restoreButton.widthAnchor constraintEqualToConstant:94.0],
-        [self.infoButton.centerXAnchor constraintEqualToAnchor:self.actionBar.contentView.centerXAnchor],
+        [self.restoreButton.widthAnchor constraintEqualToConstant:78.0],
+        [self.deleteButton.centerXAnchor constraintEqualToAnchor:self.actionBar.contentView.centerXAnchor],
+        [self.deleteButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
+        [self.deleteButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
+        [self.deleteButton.widthAnchor constraintEqualToConstant:78.0],
+        [self.infoButton.trailingAnchor constraintEqualToAnchor:self.actionBar.contentView.trailingAnchor constant:-6.0],
         [self.infoButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
         [self.infoButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
-        [self.infoButton.widthAnchor constraintEqualToConstant:94.0],
+        [self.infoButton.widthAnchor constraintEqualToConstant:78.0],
         [self.shareButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-18.0],
         [self.shareButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-14.0],
         [self.shareButton.widthAnchor constraintEqualToConstant:62.0],
@@ -116,6 +245,9 @@
         [self.activityIndicator.centerYAnchor constraintEqualToAnchor:self.actionBar.contentView.centerYAnchor]
     ]];
 
+    self.actionBar.alpha = 0.0;
+    self.shareButton.alpha = 0.0;
+    self.controlsVisible = NO;
     [self buildPages];
     [self updateCounter];
 }
@@ -134,18 +266,6 @@
     }
 }
 
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    [self.navigationController setNavigationBarHidden:YES animated:animated];
-    [self activateCurrentPage];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self stopActivePlayer];
-    [self.navigationController setNavigationBarHidden:NO animated:animated];
-}
-
 - (void)buildPages {
     for (UIView *page in self.pageViews) [page removeFromSuperview];
     [self.pageViews removeAllObjects];
@@ -153,6 +273,10 @@
         UIView *page = [[UIView alloc] initWithFrame:CGRectZero];
         page.backgroundColor = UIColor.blackColor;
         page.tag = 7000 + self.pageViews.count;
+        page.userInteractionEnabled = YES;
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(contentTapped:)];
+        tap.cancelsTouchesInView = NO;
+        [page addGestureRecognizer:tap];
         UIImageView *imageView = [[UIImageView alloc] init];
         imageView.tag = 7100;
         imageView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -182,15 +306,33 @@
     button.translatesAutoresizingMaskIntoConstraints = NO;
     button.tintColor = [UIColor colorWithRed:0.12 green:0.56 blue:1.0 alpha:1.0];
     button.accessibilityLabel = label;
-    if (@available(iOS 13.0, *)) {
-        [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
-    }
+    if (@available(iOS 13.0, *)) [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
 
 - (void)updateCounter {
     self.counterLabel.text = self.items.count > 0 ? [NSString stringWithFormat:@"%ld / %lu", (long)self.currentIndex + 1, (unsigned long)self.items.count] : @"0";
+}
+
+- (void)contentTapped:(UITapGestureRecognizer *)gesture {
+    if (self.restoring) return;
+    [self setControlsVisible:!self.controlsVisible animated:YES];
+}
+
+- (void)setControlsVisible:(BOOL)visible animated:(BOOL)animated {
+    self.controlsVisible = visible;
+    void (^changes)(void) = ^{
+        self.actionBar.alpha = visible ? 1.0 : 0.0;
+        self.shareButton.alpha = visible ? 1.0 : 0.0;
+    };
+    if (animated) [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:changes completion:nil];
+    else changes();
+    if (visible && self.currentIndex >= 0 && self.currentIndex < self.items.count && [self.items[self.currentIndex].type isEqualToString:@"video"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.controlsVisible && !self.restoring) [self setControlsVisible:NO animated:YES];
+        });
+    }
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
@@ -211,6 +353,7 @@
         self.currentIndex = newIndex;
         self.item = self.items[newIndex];
         [self updateCounter];
+        [self setControlsVisible:NO animated:YES];
         [self activateCurrentPage];
     }
 }
@@ -221,10 +364,12 @@
     UIView *page = self.pageViews[self.currentIndex];
     UIImageView *imageView = [page viewWithTag:7100];
     if ([item.type isEqualToString:@"video"]) {
+        if (self.activePlayerController && self.activePlayerIndex == self.currentIndex) return;
         [self stopActivePlayer];
         NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
         if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) return;
         self.activePlayerController = [[AVPlayerViewController alloc] init];
+        self.activePlayerIndex = self.currentIndex;
         self.activePlayerController.view.backgroundColor = UIColor.blackColor;
         self.activePlayerController.showsPlaybackControls = YES;
         self.activePlayerController.player = [AVPlayer playerWithURL:url];
@@ -241,7 +386,6 @@
 
 - (void)loadImageForItem:(PVMediaVaultItem *)item intoImageView:(UIImageView *)imageView {
     NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
-    imageView.image = nil;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         UIImage *image = [UIImage imageWithContentsOfFile:url.path];
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -256,10 +400,11 @@
     [self.activePlayerController.view removeFromSuperview];
     [self.activePlayerController removeFromParentViewController];
     self.activePlayerController = nil;
+    self.activePlayerIndex = NSNotFound;
 }
 
 - (void)backTapped:(UIButton *)sender {
-    [self.navigationController popViewControllerAnimated:YES];
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 - (void)shareTapped:(UIButton *)sender {
@@ -279,16 +424,17 @@
 
 - (void)infoTapped:(UIButton *)sender {
     if (self.currentIndex >= self.items.count) return;
-    PVMediaVaultItem *item = self.items[self.currentIndex];
-    NSString *type = [item.type isEqualToString:@"video"] ? @"فيديو" : @"صورة";
-    NSString *message = [NSString stringWithFormat:@"النوع: %@\nتم حفظه داخل PrivacyVault بأمان.", type];
-    [self showMessage:message];
+    PVMediaInfoSheetViewController *sheet = [[PVMediaInfoSheetViewController alloc] init];
+    sheet.item = self.items[self.currentIndex];
+    sheet.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)restoreTapped:(UIButton *)sender {
     if (self.restoring || self.currentIndex >= self.items.count || !self.restoreHandler) return;
     self.restoring = YES;
     self.restoreButton.enabled = NO;
+    self.deleteButton.enabled = NO;
     self.shareButton.enabled = NO;
     self.infoButton.enabled = NO;
     self.activityIndicator.hidden = NO;
@@ -303,21 +449,74 @@
             self.activityIndicator.hidden = YES;
             self.restoring = NO;
             self.restoreButton.enabled = YES;
+            self.deleteButton.enabled = YES;
             self.shareButton.enabled = YES;
             self.infoButton.enabled = YES;
-            if (success) {
-                [self.navigationController popViewControllerAnimated:YES];
-            } else {
-                [self showMessage:message ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير."];
-            }
+            if (success) [self dismissViewControllerAnimated:YES completion:nil];
+            else [self showMessage:message ?: @"فشل الاسترداد؛ بقيت نسخة PrivacyVault دون تغيير."];
         });
     });
+}
+
+- (void)deleteTapped:(UIButton *)sender {
+    if (self.restoring || self.currentIndex >= self.items.count) return;
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"حذف العنصر؟" message:@"سيتم حذف نسخة العنصر من PrivacyVault فقط. لن يتم تعديل مكتبة الصور." preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"حذف" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self performDeleteForItem:self.items[self.currentIndex]];
+    }]];
+    [self presentViewController:confirm animated:YES completion:nil];
+}
+
+- (void)performDeleteForItem:(PVMediaVaultItem *)item {
+    self.restoring = YES;
+    self.restoreButton.enabled = NO;
+    self.deleteButton.enabled = NO;
+    self.shareButton.enabled = NO;
+    self.infoButton.enabled = NO;
+    self.activityIndicator.hidden = NO;
+    [self.activityIndicator startAnimating];
+    __weak typeof(self) weakSelf = self;
+    void (^completion)(BOOL, NSString *) = ^(BOOL success, NSString *message) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+            if (!self) return;
+            [self.activityIndicator stopAnimating];
+            self.activityIndicator.hidden = YES;
+            self.restoring = NO;
+            self.restoreButton.enabled = YES;
+            self.deleteButton.enabled = YES;
+            self.shareButton.enabled = YES;
+            self.infoButton.enabled = YES;
+            if (success) [self dismissViewControllerAnimated:YES completion:nil];
+            else [self showMessage:message ?: @"تعذر حذف العنصر؛ بقيت نسخة PrivacyVault دون تغيير."];
+        });
+    };
+    if (self.deleteHandler) {
+        self.deleteHandler(item, completion);
+    } else {
+        NSError *error = nil;
+        BOOL success = [[PVMediaVaultStore sharedStore] removeItem:item error:&error];
+        completion(success, error.localizedDescription ?: @"تعذر حذف العنصر؛ بقيت نسخة PrivacyVault دون تغيير.");
+    }
 }
 
 - (void)showMessage:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"PrivacyVault" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (id<UIViewControllerAnimatedTransitioning>)animationControllerForPresentedController:(UIViewController *)presented presentingController:(UIViewController *)presenting sourceController:(UIViewController *)source {
+    PVMediaZoomAnimator *animator = [[PVMediaZoomAnimator alloc] init];
+    animator.presenting = YES;
+    return animator;
+}
+
+- (id<UIViewControllerAnimatedTransitioning>)animationControllerForDismissedController:(UIViewController *)dismissed {
+    PVMediaZoomAnimator *animator = [[PVMediaZoomAnimator alloc] init];
+    animator.presenting = NO;
+    return animator;
 }
 
 @end
