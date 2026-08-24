@@ -1,4 +1,5 @@
 #import "PVVaultViewController.h"
+#import "PVSettingsViewController.h"
 
 @implementation PVVaultViewController
 
@@ -24,10 +25,24 @@
     label.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:label];
 
+    UIButton *settingsButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [settingsButton setTitle:@"الإعدادات" forState:UIControlStateNormal];
+    settingsButton.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    [settingsButton addTarget:self action:@selector(settingsTapped:) forControlEvents:UIControlEventTouchUpInside];
+    settingsButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:settingsButton];
+
     [NSLayoutConstraint activateConstraints:@[
         [label.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [label.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor]
+        [label.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor constant:-28],
+        [settingsButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [settingsButton.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:24]
     ]];
+}
+
+- (void)settingsTapped:(UIButton *)sender {
+    PVSettingsViewController *controller = [[PVSettingsViewController alloc] init];
+    [self.navigationController pushViewController:controller animated:YES];
 }
 
 @end

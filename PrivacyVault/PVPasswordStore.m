@@ -72,6 +72,28 @@ static const uint32_t PVPBKDF2Iterations = 120000;
     return [self verifyPassword:password account:PVPassword2Account fileKey:PVFilePassword2Key error:error];
 }
 
+- (BOOL)changePassword1From:(NSString *)currentPassword to:(NSString *)newPassword error:(NSError **)error {
+    if (![self verifyPassword1:currentPassword error:nil]) {
+        if (error) *error = [NSError errorWithDomain:PVPasswordService code:-10 userInfo:@{NSLocalizedDescriptionKey: @"كلمة المرور الأولى الحالية غير صحيحة"}];
+        return NO;
+    }
+    NSData *verifier = [self makeVerifierForPassword:newPassword];
+    if (!verifier || ![self storeFileVerifier:verifier key:PVFilePassword1Key error:error]) return NO;
+    [self storeVerifier:verifier account:PVPassword1Account error:nil];
+    return YES;
+}
+
+- (BOOL)changePassword2From:(NSString *)currentPassword to:(NSString *)newPassword error:(NSError **)error {
+    if (![self verifyPassword2:currentPassword error:nil]) {
+        if (error) *error = [NSError errorWithDomain:PVPasswordService code:-11 userInfo:@{NSLocalizedDescriptionKey: @"كلمة المرور الثانية الحالية غير صحيحة"}];
+        return NO;
+    }
+    NSData *verifier = [self makeVerifierForPassword:newPassword];
+    if (!verifier || ![self storeFileVerifier:verifier key:PVFilePassword2Key error:error]) return NO;
+    [self storeVerifier:verifier account:PVPassword2Account error:nil];
+    return YES;
+}
+
 - (NSData *)makeVerifierForPassword:(NSString *)password {
     NSData *passwordData = [password dataUsingEncoding:NSUTF8StringEncoding];
     if (passwordData.length == 0 || passwordData.length > 1024) return nil;
