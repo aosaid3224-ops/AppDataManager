@@ -51,6 +51,7 @@ static NSCache *PVBrowserDurationCache(void) {
     }
     [self.mediaSegmentedControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.mediaSegmentedControl];
+    self.mediaSegmentedControl.hidden = self.mediaType.length > 0;
 
     UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
     layout.minimumInteritemSpacing = 2.0;
@@ -250,6 +251,13 @@ static NSCache *PVBrowserDurationCache(void) {
     preview.initialIndex = indexPath.item;
     UICollectionViewCell *selectedCell = [collectionView cellForItemAtIndexPath:indexPath];
     UIImageView *selectedImageView = (UIImageView *)[selectedCell.contentView viewWithTag:8100];
+    NSMutableDictionary<NSString *, UIImage *> *preloadedThumbnails = [NSMutableDictionary dictionary];
+    for (PVMediaVaultItem *candidate in self.visibleItems) {
+        UIImage *cached = [PVBrowserThumbnailCache() objectForKey:candidate.identifier ?: candidate.path];
+        if (cached && candidate.identifier.length > 0) preloadedThumbnails[candidate.identifier] = cached;
+    }
+    if (selectedImageView.image && item.identifier.length > 0) preloadedThumbnails[item.identifier] = selectedImageView.image;
+    preview.thumbnailCache = [preloadedThumbnails copy];
     preview.transitionImage = selectedImageView.image;
     preview.transitionFrame = [selectedCell convertRect:selectedCell.bounds toView:self.view];
     preview.modalPresentationStyle = UIModalPresentationFullScreen;

@@ -230,12 +230,8 @@
             [imageView.trailingAnchor constraintEqualToAnchor:page.trailingAnchor],
             [imageView.bottomAnchor constraintEqualToAnchor:page.bottomAnchor]
         ]];
-        if ([item.type isEqualToString:@"video"]) {
-            if (@available(iOS 13.0, *)) {
-                imageView.image = [UIImage systemImageNamed:@"video.fill"];
-                imageView.tintColor = [UIColor colorWithWhite:0.60 alpha:1.0];
-            }
-        }
+        UIImage *cachedThumbnail = item.identifier.length > 0 ? self.thumbnailCache[item.identifier] : nil;
+        if (cachedThumbnail) imageView.image = cachedThumbnail;
         [self.pagingScrollView addSubview:page];
         [self.pageViews addObject:page];
         }
@@ -255,7 +251,7 @@
     button.titleLabel.minimumScaleFactor = 0.75;
     button.imageView.contentMode = UIViewContentModeScaleAspectFit;
     button.tintColor = [UIColor colorWithRed:0.12 green:0.56 blue:1.0 alpha:1.0];
-    button.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
+    button.backgroundColor = UIColor.clearColor;
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }

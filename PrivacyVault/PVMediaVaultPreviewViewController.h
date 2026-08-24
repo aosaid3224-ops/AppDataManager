@@ -11,6 +11,7 @@ typedef void (^PVMediaVaultDeleteHandler)(PVMediaVaultItem *item, void (^complet
 @property (nonatomic, strong) NSArray<PVMediaVaultItem *> *items;
 @property (nonatomic, assign) NSInteger initialIndex;
 @property (nonatomic, strong, nullable) UIImage *transitionImage;
+@property (nonatomic, strong, nullable) NSDictionary<NSString *, UIImage *> *thumbnailCache;
 @property (nonatomic, assign) CGRect transitionFrame;
 @property (nonatomic, copy, nullable) PVMediaVaultRestoreHandler restoreHandler;
 @property (nonatomic, copy, nullable) PVMediaVaultDeleteHandler deleteHandler;
