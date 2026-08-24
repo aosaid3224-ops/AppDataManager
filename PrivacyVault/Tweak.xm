@@ -16,10 +16,10 @@
 %hook PSUIPrefsListController
 - (NSArray *)specifiers {
     NSArray *orig = %orig;
-    NSMutableArray *mutable = orig ? [orig mutableCopy] : [NSMutableArray array];
+    NSMutableArray *mutableSpecifiers = orig ? [orig mutableCopy] : [NSMutableArray array];
 
     BOOL alreadyAdded = NO;
-    for (id spec in mutable) {
+    for (id spec in mutableSpecifiers) {
         if ([spec isKindOfClass:%c(PSSpecifier)]) {
             NSString *name = nil;
             @try { name = [spec valueForKey:@"name"]; } @catch (NSException *e) {}
@@ -35,10 +35,10 @@
                                                            detail:[UIViewController class]
                                                              cell:1
                                                              edit:Nil];
-        [mutable addObject:spec];
+        [mutableSpecifiers addObject:spec];
     }
 
-    return mutable;
+    return mutableSpecifiers;
 }
 %end
 %end
@@ -52,10 +52,10 @@
         return orig;
     }
 
-    NSMutableArray *mutable = orig ? [orig mutableCopy] : [NSMutableArray array];
+    NSMutableArray *mutableSpecifiers = orig ? [orig mutableCopy] : [NSMutableArray array];
 
     BOOL alreadyAdded = NO;
-    for (id spec in mutable) {
+    for (id spec in mutableSpecifiers) {
         NSString *name = nil;
         @try { name = [spec valueForKey:@"name"]; } @catch (NSException *e) {}
         if ([name isEqualToString:@"التشخيص"]) { alreadyAdded = YES; break; }
@@ -69,10 +69,10 @@
                                                            detail:[UIViewController class]
                                                              cell:1
                                                              edit:Nil];
-        [mutable addObject:spec];
+        [mutableSpecifiers addObject:spec];
     }
 
-    return mutable;
+    return mutableSpecifiers;
 }
 %end
 %end
