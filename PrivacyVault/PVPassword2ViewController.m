@@ -1,5 +1,4 @@
 #import "PVPassword2ViewController.h"
-#import "PVVaultViewController.h"
 #import "PVPasswordStore.h"
 
 @interface PVPassword2ViewController ()
@@ -66,12 +65,18 @@
     BOOL valid = [[PVPasswordStore sharedStore] verifyPassword2:input error:nil];
 
     if (valid) {
-        PVVaultViewController *vc = [[PVVaultViewController alloc] init];
-        [self.navigationController pushViewController:vc animated:YES];
+        [self.passwordField resignFirstResponder];
+        if (self.authenticationSuccess) {
+            self.authenticationSuccess();
+        }
     } else {
         self.passwordField.text = @"";
         [self.passwordField resignFirstResponder];
-        [self.navigationController popViewControllerAnimated:YES];
+        if (self.authenticationFailure) {
+            self.authenticationFailure();
+        } else {
+            [self.navigationController popViewControllerAnimated:YES];
+        }
     }
 }
 

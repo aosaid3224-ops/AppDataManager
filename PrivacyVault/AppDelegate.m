@@ -1,12 +1,12 @@
 #import "AppDelegate.h"
-#import "PVDecoyViewController.h"
+#import "PVFrontViewController.h"
 #import "PVInitialSetupViewController.h"
 #import "PVPasswordStore.h"
 
 @implementation AppDelegate
 
 - (void)showMainInterface {
-    PVDecoyViewController *rootVC = [[PVDecoyViewController alloc] init];
+    PVFrontViewController *rootVC = [[PVFrontViewController alloc] init];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:rootVC];
     self.window.rootViewController = nav;
 }

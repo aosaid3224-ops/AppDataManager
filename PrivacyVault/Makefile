@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = PrivacyVault
 
-PrivacyVault_FILES = main.m AppDelegate.m PVDecoyViewController.m PVPassword1ViewController.m PVDummyViewController.m PVPassword2ViewController.m PVVaultViewController.m PVInitialSetupViewController.m PVPasswordStore.m PVSettingsViewController.m PVChangePasswordsViewController.m PVMediaVaultStore.m PVMediaLibraryViewController.m PVMediaVaultBrowserViewController.m PVMediaVaultPreviewViewController.m
+PrivacyVault_FILES = main.m AppDelegate.m PVFrontViewController.m PVEntryViewController.m PVDecoyViewController.m PVPassword1ViewController.m PVDummyViewController.m PVPassword2ViewController.m PVVaultViewController.m PVInitialSetupViewController.m PVPasswordStore.m PVSettingsViewController.m PVChangePasswordsViewController.m PVMediaVaultStore.m PVMediaLibraryViewController.m PVMediaVaultBrowserViewController.m PVMediaVaultPreviewViewController.m
 PrivacyVault_CFLAGS = -fobjc-arc
 PrivacyVault_FRAMEWORKS = UIKit Security Photos PhotosUI AVFoundation AVKit
 PrivacyVault_BUNDLE_RESOURCE_DIRS = Resources
