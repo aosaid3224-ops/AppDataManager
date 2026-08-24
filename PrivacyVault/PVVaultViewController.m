@@ -147,10 +147,9 @@
 - (void)mediaCardTapped:(UIButton *)sender {
     NSArray<PVMediaVaultItem *> *allItems = [PVMediaVaultStore sharedStore].items;
     NSString *type = sender.tag == 2 ? @"video" : @"image";
-    NSMutableArray<PVMediaVaultItem *> *filteredItems = [NSMutableArray array];
-    for (PVMediaVaultItem *item in allItems) if ([item.type isEqualToString:type]) [filteredItems addObject:item];
     PVMediaVaultBrowserViewController *browser = [[PVMediaVaultBrowserViewController alloc] init];
-    browser.items = [filteredItems copy];
+    browser.items = [allItems copy];
+    browser.mediaType = type;
     browser.sectionTitle = sender.tag == 2 ? @"الفيديوهات المخفية" : @"الصور المخفية";
     [self.navigationController pushViewController:browser animated:YES];
 }

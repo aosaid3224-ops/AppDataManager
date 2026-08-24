@@ -129,6 +129,7 @@
 @property (nonatomic, strong) UIButton *shareButton;
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) AVPlayerViewController *activePlayerController;
+@property (nonatomic, strong) AVPlayerItem *pendingPlayerItem;
 @property (nonatomic, assign) NSInteger activePlayerIndex;
 @property (nonatomic, assign) NSInteger currentIndex;
 @property (nonatomic, assign) BOOL didSetInitialOffset;
@@ -263,6 +264,7 @@
         self.didSetInitialOffset = YES;
         [self.pagingScrollView setContentOffset:CGPointMake(pageSize.width * self.currentIndex, 0.0) animated:NO];
         [self activateCurrentPage];
+        [self preloadAdjacentPages];
     }
 }
 
@@ -298,10 +300,12 @@
         }
         [self.pagingScrollView addSubview:page];
         [self.pageViews addObject:page];
-    }
+        }
+    [self preloadAdjacentPages];
 }
 
-- (UIButton *)makeIconButton:(NSString *)symbol label:(NSString *)label action:(SEL)action {
+- (UIButton *)makeIconButton:
+(NSString *)symbol label:(NSString *)label action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.translatesAutoresizingMaskIntoConstraints = NO;
     button.tintColor = [UIColor colorWithRed:0.12 green:0.56 blue:1.0 alpha:1.0];
@@ -370,18 +374,43 @@
         if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) return;
         self.activePlayerController = [[AVPlayerViewController alloc] init];
         self.activePlayerIndex = self.currentIndex;
-        self.activePlayerController.view.backgroundColor = UIColor.blackColor;
+        self.activePlayerController.view.backgroundColor = UIColor.clearColor;
         self.activePlayerController.showsPlaybackControls = YES;
-        self.activePlayerController.player = [AVPlayer playerWithURL:url];
-        [self addChildViewController:self.activePlayerController];
-        self.activePlayerController.view.frame = page.bounds;
-        self.activePlayerController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [page addSubview:self.activePlayerController.view];
-        [self.activePlayerController didMoveToParentViewController:self];
-        [self.activePlayerController.player play];
+        self.pendingPlayerItem = [AVPlayerItem playerItemWithURL:url];
+        [self.pendingPlayerItem addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionInitial context:NULL];
+        self.activePlayerController.player = [AVPlayer playerWithPlayerItem:self.pendingPlayerItem];
     } else {
         [self loadImageForItem:item intoImageView:imageView];
     }
+}
+
+- (void)preloadAdjacentPages {
+    if (self.items.count == 0) return;
+    NSInteger first = MAX(0, self.currentIndex - 1);
+    NSInteger last = MIN((NSInteger)self.items.count - 1, self.currentIndex + 1);
+    for (NSInteger index = first; index <= last; index++) {
+        PVMediaVaultItem *item = self.items[index];
+        UIView *page = self.pageViews[index];
+        UIImageView *imageView = [page viewWithTag:7100];
+        if ([item.type isEqualToString:@"video"]) [self loadVideoPreviewForItem:item intoImageView:imageView];
+        else [self loadImageForItem:item intoImageView:imageView];
+    }
+}
+
+- (void)loadVideoPreviewForItem:(PVMediaVaultItem *)item intoImageView:(UIImageView *)imageView {
+    NSURL *url = [[PVMediaVaultStore sharedStore] urlForItem:item];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        AVAsset *asset = [AVAsset assetWithURL:url];
+        AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
+        generator.appliesPreferredTrackTransform = YES;
+        generator.maximumSize = CGSizeMake(1440.0, 1440.0);
+        CGImageRef imageRef = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(0.05, 600) actualTime:NULL error:NULL];
+        UIImage *image = imageRef ? [UIImage imageWithCGImage:imageRef] : nil;
+        if (imageRef) CGImageRelease(imageRef);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (image && imageView.superview && !self.activePlayerController) imageView.image = image;
+        });
+    });
 }
 
 - (void)loadImageForItem:(PVMediaVaultItem *)item intoImageView:(UIImageView *)imageView {
@@ -394,7 +423,29 @@
     });
 }
 
+- (void)attachActivePlayerIfReady {
+    if (!self.activePlayerController || !self.pendingPlayerItem || self.pendingPlayerItem.status != AVPlayerItemStatusReadyToPlay) return;
+    if (self.activePlayerController.parentViewController) return;
+    if (self.currentIndex < 0 || self.currentIndex >= self.pageViews.count) return;
+    UIView *page = self.pageViews[self.currentIndex];
+    [self addChildViewController:self.activePlayerController];
+    self.activePlayerController.view.frame = page.bounds;
+    self.activePlayerController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [page addSubview:self.activePlayerController.view];
+    [self.activePlayerController didMoveToParentViewController:self];
+    [self.activePlayerController.player play];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
+    if (![keyPath isEqualToString:@"status"] || object != self.pendingPlayerItem) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.pendingPlayerItem.status == AVPlayerItemStatusReadyToPlay) [self attachActivePlayerIfReady];
+    });
+}
+
 - (void)stopActivePlayer {
+    [self.pendingPlayerItem removeObserver:self forKeyPath:@"status"];
+    self.pendingPlayerItem = nil;
     [self.activePlayerController.player pause];
     [self.activePlayerController willMoveToParentViewController:nil];
     [self.activePlayerController.view removeFromSuperview];
