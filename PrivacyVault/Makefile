@@ -10,5 +10,6 @@ PrivacyVault_FILES = main.m AppDelegate.m PVDecoyViewController.m PVPassword1Vie
 PrivacyVault_CFLAGS = -fobjc-arc
 PrivacyVault_FRAMEWORKS = UIKit Security
 PrivacyVault_BUNDLE_RESOURCE_DIRS = Resources
+PrivacyVault_CODESIGN_FLAGS = -Sentitlements.plist
 
 include $(THEOS_MAKE_PATH)/application.mk
