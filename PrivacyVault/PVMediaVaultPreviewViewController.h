@@ -7,6 +7,8 @@ typedef void (^PVMediaVaultRestoreHandler)(PVMediaVaultItem *item, void (^comple
 
 @interface PVMediaVaultPreviewViewController : UIViewController
 @property (nonatomic, strong) PVMediaVaultItem *item;
+@property (nonatomic, strong) NSArray<PVMediaVaultItem *> *items;
+@property (nonatomic, assign) NSInteger initialIndex;
 @property (nonatomic, copy, nullable) PVMediaVaultRestoreHandler restoreHandler;
 @end
 

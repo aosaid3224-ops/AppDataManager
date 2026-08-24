@@ -137,6 +137,8 @@
     PVMediaVaultItem *item = self.items[indexPath.item];
     PVMediaVaultPreviewViewController *preview = [[PVMediaVaultPreviewViewController alloc] init];
     preview.item = item;
+    preview.items = self.items;
+    preview.initialIndex = indexPath.item;
     __weak typeof(self) weakSelf = self;
     preview.restoreHandler = ^(PVMediaVaultItem *restoreItem, void (^completion)(BOOL success, NSString *message)) {
         [weakSelf restoreItemDirectly:restoreItem completion:completion];
