@@ -1,9 +1,0 @@
-Package: com.aosaid.pvhook
-Name: PV Hook
-Version: 0.1.12
-Architecture: iphoneos-arm64
-Description: System hook prototype
-Maintainer: aosaid
-Author: aosaid
-Section: Tweaks
-Depends: firmware (>= 14.0)
