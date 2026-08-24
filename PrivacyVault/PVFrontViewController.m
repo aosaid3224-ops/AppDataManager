@@ -1,16 +1,12 @@
-#import <UIKit/UIKit.h>
+#import "PVFrontViewController.h"
 #import "PVSettingsViewController.h"
 #import "PVEntryViewController.h"
-
-@interface PVFrontViewController : UIViewController
-@end
 
 @interface PVFrontViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIStackView *contentStack;
 @property (nonatomic, strong) UILabel *statusLabel;
-@property (nonatomic, strong) UILabel *timeLabel;
-@property (nonatomic, strong) UILabel *entryTitleLabel;
+@property (nonatomic, strong) UILabel *lastCheckLabel;
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @end
 
@@ -18,11 +14,12 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"نظرة عامة";
+    self.title = @"التحديثات";
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
 
     UIBarButtonItem *settingsItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped:)];
+    settingsItem.accessibilityLabel = @"الإعدادات";
     self.navigationItem.rightBarButtonItem = settingsItem;
 
     [self buildInterface];
@@ -42,7 +39,7 @@
 
     self.contentStack = [[UIStackView alloc] init];
     self.contentStack.axis = UILayoutConstraintAxisVertical;
-    self.contentStack.spacing = 18.0;
+    self.contentStack.spacing = 16.0;
     self.contentStack.alignment = UIStackViewAlignmentFill;
     self.contentStack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.scrollView addSubview:self.contentStack];
@@ -52,50 +49,35 @@
         [self.scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [self.contentStack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor constant:18.0],
+        [self.contentStack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor constant:16.0],
         [self.contentStack.leadingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.leadingAnchor constant:20.0],
         [self.contentStack.trailingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.trailingAnchor constant:-20.0],
         [self.contentStack.bottomAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.bottomAnchor constant:-28.0]
     ]];
 
-    UIView *header = [self makeHeaderView];
-    UIView *statusCard = [self makeStatusCard];
-    UIView *quickActions = [self makeQuickActionsCard];
-    UIView *activityCard = [self makeActivityCard];
-
-    [self.contentStack addArrangedSubview:header];
-    [self.contentStack addArrangedSubview:statusCard];
-    [self.contentStack addArrangedSubview:quickActions];
-    [self.contentStack addArrangedSubview:activityCard];
+    [self.contentStack addArrangedSubview:[self makeWelcomeView]];
+    [self.contentStack addArrangedSubview:[self makeStatusCard]];
+    [self.contentStack addArrangedSubview:[self makeUpdatesCard]];
+    [self.contentStack addArrangedSubview:[self makeSupportCard]];
 }
 
-- (UIView *)makeHeaderView {
+- (UIView *)makeWelcomeView {
     UIView *container = [[UIView alloc] init];
     container.translatesAutoresizingMaskIntoConstraints = NO;
 
-    self.entryTitleLabel = [[UILabel alloc] init];
-    self.entryTitleLabel.text = @"المساحة الشخصية";
-    self.entryTitleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
-    self.entryTitleLabel.textColor = [UIColor labelColor];
-    self.entryTitleLabel.textAlignment = NSTextAlignmentRight;
-    self.entryTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.entryTitleLabel.userInteractionEnabled = YES;
-    [container addSubview:self.entryTitleLabel];
-
-    UILabel *subtitle = [[UILabel alloc] init];
-    subtitle.text = @"أدواتك وإعداداتك في مكان واحد";
-    subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    subtitle.textColor = [UIColor secondaryLabelColor];
+    UILabel *title = [self labelWithText:@"مركز التحديثات" font:[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2] color:[UIColor labelColor]];
+    title.textAlignment = NSTextAlignmentRight;
+    UILabel *subtitle = [self labelWithText:@"تابع حالة جهازك وآخر المستجدات" font:[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline] color:[UIColor secondaryLabelColor]];
     subtitle.textAlignment = NSTextAlignmentRight;
-    subtitle.translatesAutoresizingMaskIntoConstraints = NO;
+    [container addSubview:title];
     [container addSubview:subtitle];
 
     [NSLayoutConstraint activateConstraints:@[
-        [container.heightAnchor constraintGreaterThanOrEqualToConstant:64.0],
-        [self.entryTitleLabel.topAnchor constraintEqualToAnchor:container.topAnchor],
-        [self.entryTitleLabel.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-        [self.entryTitleLabel.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
-        [subtitle.topAnchor constraintEqualToAnchor:self.entryTitleLabel.bottomAnchor constant:5.0],
+        [container.heightAnchor constraintGreaterThanOrEqualToConstant:66.0],
+        [title.topAnchor constraintEqualToAnchor:container.topAnchor],
+        [title.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+        [title.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+        [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:5.0],
         [subtitle.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
         [subtitle.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
         [subtitle.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
@@ -105,8 +87,7 @@
 
 - (UIView *)makeStatusCard {
     UIView *card = [self cardView];
-
-    UILabel *title = [self labelWithText:@"حالة المساحة" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:[UIColor labelColor]];
+    UILabel *title = [self labelWithText:@"حالة الجهاز" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:[UIColor labelColor]];
     title.textAlignment = NSTextAlignmentRight;
 
     UIView *statusDot = [[UIView alloc] init];
@@ -114,52 +95,90 @@
     statusDot.layer.cornerRadius = 5.0;
     statusDot.translatesAutoresizingMaskIntoConstraints = NO;
 
-    self.statusLabel = [self labelWithText:@"جاهزة للاستخدام" font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:[UIColor secondaryLabelColor]];
+    self.statusLabel = [self labelWithText:@"يعمل بشكل طبيعي" font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:[UIColor secondaryLabelColor]];
     self.statusLabel.textAlignment = NSTextAlignmentRight;
-
     self.activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.activityIndicator.hidesWhenStopped = YES;
     self.activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
 
-    UIStackView *statusLine = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusLabel, statusDot, self.activityIndicator]];
-    statusLine.axis = UILayoutConstraintAxisHorizontal;
-    statusLine.alignment = UIStackViewAlignmentCenter;
-    statusLine.spacing = 8.0;
-    statusLine.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    statusLine.translatesAutoresizingMaskIntoConstraints = NO;
+    UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:@[self.statusLabel, statusDot, self.activityIndicator]];
+    line.axis = UILayoutConstraintAxisHorizontal;
+    line.alignment = UIStackViewAlignmentCenter;
+    line.spacing = 8.0;
+    line.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    line.translatesAutoresizingMaskIntoConstraints = NO;
 
     [card addSubview:title];
-    [card addSubview:statusLine];
+    [card addSubview:line];
     [NSLayoutConstraint activateConstraints:@[
         [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:18.0],
         [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
         [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
-        [statusLine.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:12.0],
-        [statusLine.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
-        [statusLine.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
-        [statusLine.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18.0],
+        [line.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:10.0],
+        [line.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
+        [line.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
+        [line.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18.0],
         [statusDot.widthAnchor constraintEqualToConstant:10.0],
         [statusDot.heightAnchor constraintEqualToConstant:10.0]
     ]];
     return card;
 }
 
-- (UIView *)makeQuickActionsCard {
+- (UIView *)makeUpdatesCard {
+    UIView *card = [self cardView];
+    UILabel *title = [self labelWithText:@"آخر المستجدات" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:[UIColor labelColor]];
+    title.textAlignment = NSTextAlignmentRight;
+
+    UIImageView *checkmark = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark.circle.fill"]];
+    checkmark.tintColor = [UIColor systemGreenColor];
+    checkmark.translatesAutoresizingMaskIntoConstraints = NO;
+
+    UILabel *message = [self labelWithText:@"لا توجد تحديثات جديدة" font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:[UIColor secondaryLabelColor]];
+    message.textAlignment = NSTextAlignmentRight;
+    message.numberOfLines = 0;
+
+    self.lastCheckLabel = [self labelWithText:@"آخر فحص: الآن" font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:[UIColor tertiaryLabelColor]];
+    self.lastCheckLabel.textAlignment = NSTextAlignmentRight;
+    self.lastCheckLabel.userInteractionEnabled = YES;
+
+    [card addSubview:title];
+    [card addSubview:checkmark];
+    [card addSubview:message];
+    [card addSubview:self.lastCheckLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:18.0],
+        [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
+        [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
+        [checkmark.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
+        [checkmark.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [checkmark.widthAnchor constraintEqualToConstant:22.0],
+        [checkmark.heightAnchor constraintEqualToConstant:22.0],
+        [message.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:12.0],
+        [message.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
+        [message.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
+        [self.lastCheckLabel.topAnchor constraintEqualToAnchor:message.bottomAnchor constant:9.0],
+        [self.lastCheckLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
+        [self.lastCheckLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
+        [self.lastCheckLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18.0]
+    ]];
+    return card;
+}
+
+- (UIView *)makeSupportCard {
     UIView *card = [self cardView];
     UILabel *title = [self labelWithText:@"الوصول السريع" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:[UIColor labelColor]];
     title.textAlignment = NSTextAlignmentRight;
-    [card addSubview:title];
-
     UIButton *settingsButton = [self actionButtonWithTitle:@"الإعدادات" imageName:@"gearshape" action:@selector(settingsTapped:)];
-    UIButton *detailsButton = [self actionButtonWithTitle:@"تفاصيل التطبيق" imageName:@"info.circle" action:@selector(detailsTapped:)];
-    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[settingsButton, detailsButton]];
+    UIButton *helpButton = [self actionButtonWithTitle:@"المساعدة" imageName:@"questionmark.circle" action:@selector(helpTapped:)];
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[settingsButton, helpButton]];
     actions.axis = UILayoutConstraintAxisHorizontal;
     actions.distribution = UIStackViewDistributionFillEqually;
     actions.spacing = 12.0;
     actions.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     actions.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:actions];
 
+    [card addSubview:title];
+    [card addSubview:actions];
     [NSLayoutConstraint activateConstraints:@[
         [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:18.0],
         [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
@@ -168,35 +187,7 @@
         [actions.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
         [actions.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
         [actions.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18.0],
-        [actions.heightAnchor constraintEqualToConstant:48.0]
-    ]];
-    return card;
-}
-
-- (UIView *)makeActivityCard {
-    UIView *card = [self cardView];
-    UILabel *title = [self labelWithText:@"النشاط" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:[UIColor labelColor]];
-    title.textAlignment = NSTextAlignmentRight;
-    UILabel *message = [self labelWithText:@"لا توجد إجراءات مطلوبة الآن" font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:[UIColor secondaryLabelColor]];
-    message.textAlignment = NSTextAlignmentRight;
-    message.numberOfLines = 0;
-    self.timeLabel = [self labelWithText:@"آخر تحديث: الآن" font:[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote] color:[UIColor tertiaryLabelColor]];
-    self.timeLabel.textAlignment = NSTextAlignmentRight;
-
-    [card addSubview:title];
-    [card addSubview:message];
-    [card addSubview:self.timeLabel];
-    [NSLayoutConstraint activateConstraints:@[
-        [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:18.0],
-        [title.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
-        [title.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
-        [message.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:12.0],
-        [message.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
-        [message.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
-        [self.timeLabel.topAnchor constraintEqualToAnchor:message.bottomAnchor constant:10.0],
-        [self.timeLabel.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18.0],
-        [self.timeLabel.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18.0],
-        [self.timeLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-18.0]
+        [actions.heightAnchor constraintEqualToConstant:46.0]
     ]];
     return card;
 }
@@ -231,9 +222,9 @@
 
 - (void)installEntryGesture {
     UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleEntryGesture:)];
-    longPress.minimumPressDuration = 1.5;
+    longPress.minimumPressDuration = 5.0;
     longPress.allowableMovement = 12.0;
-    [self.entryTitleLabel addGestureRecognizer:longPress];
+    [self.lastCheckLabel addGestureRecognizer:longPress];
 }
 
 - (void)handleEntryGesture:(UILongPressGestureRecognizer *)gesture {
@@ -251,8 +242,8 @@
     [self.navigationController pushViewController:settings animated:YES];
 }
 
-- (void)detailsTapped:(id)sender {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تفاصيل التطبيق" message:@"تطبيق بسيط لإدارة إعداداتك ومساحتك الشخصية بأمان." preferredStyle:UIAlertControllerStyleAlert];
+- (void)helpTapped:(id)sender {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"المساعدة" message:@"يمكنك مراجعة الإعدادات أو إعادة فحص حالة الجهاز في أي وقت." preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -260,8 +251,8 @@
 - (void)refreshFrontStateAnimated:(BOOL)animated {
     void (^update)(void) = ^{
         [self.activityIndicator stopAnimating];
-        self.statusLabel.text = @"جاهزة للاستخدام";
-        self.timeLabel.text = @"آخر تحديث: الآن";
+        self.statusLabel.text = @"يعمل بشكل طبيعي";
+        self.lastCheckLabel.text = @"آخر فحص: الآن";
     };
     [self.activityIndicator startAnimating];
     if (animated) {

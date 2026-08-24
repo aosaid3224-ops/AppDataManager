@@ -1,6 +1,7 @@
 #import "PVEntryViewController.h"
 #import "PVPassword1ViewController.h"
 #import "PVPassword2ViewController.h"
+#import "PVDecoy2ViewController.h"
 #import "PVVaultViewController.h"
 
 @implementation PVEntryViewController
@@ -16,17 +17,8 @@
     password1.authenticationSuccess = ^{
         UINavigationController *strongNavigationController = weakNavigationController;
         if (!strongNavigationController) return;
-        PVPassword2ViewController *password2 = [[PVPassword2ViewController alloc] init];
-        password2.authenticationFailure = ^{
-            [strongNavigationController popToRootViewControllerAnimated:YES];
-        };
-        password2.authenticationSuccess = ^{
-            UINavigationController *finalNavigationController = weakNavigationController;
-            if (!finalNavigationController) return;
-            PVVaultViewController *vault = [[PVVaultViewController alloc] init];
-            [finalNavigationController pushViewController:vault animated:YES];
-        };
-        [strongNavigationController pushViewController:password2 animated:YES];
+        PVDecoy2ViewController *decoy = [[PVDecoy2ViewController alloc] init];
+        [strongNavigationController pushViewController:decoy animated:YES];
     };
     [navigationController pushViewController:password1 animated:YES];
 }
