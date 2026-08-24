@@ -66,8 +66,10 @@
 @interface PVMediaVaultPreviewViewController () <UIScrollViewDelegate, UIViewControllerTransitioningDelegate>
 @property (nonatomic, strong) UIScrollView *pagingScrollView;
 @property (nonatomic, strong) NSMutableArray<UIView *> *pageViews;
+@property (nonatomic, strong) UIButton *backButton;
 @property (nonatomic, strong) UILabel *counterLabel;
 @property (nonatomic, strong) UIVisualEffectView *actionBar;
+@property (nonatomic, strong) UIStackView *actionStack;
 @property (nonatomic, strong) UIButton *restoreButton;
 @property (nonatomic, strong) UIButton *deleteButton;
 @property (nonatomic, strong) UIButton *infoButton;
@@ -106,7 +108,8 @@
     self.pagingScrollView.alwaysBounceVertical = NO;
     [self.view addSubview:self.pagingScrollView];
 
-    UIButton *backButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.backButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIButton *backButton = self.backButton;
     backButton.translatesAutoresizingMaskIntoConstraints = NO;
     backButton.accessibilityLabel = @"رجوع";
     if (@available(iOS 13.0, *)) [backButton setImage:[UIImage systemImageNamed:@"chevron.backward"] forState:UIControlStateNormal];
@@ -139,13 +142,14 @@
     self.deleteButton = [self makeIconButton:@"trash" label:@"حذف" action:@selector(deleteTapped:)];
     self.infoButton = [self makeIconButton:@"info.circle" label:@"معلومات" action:@selector(infoTapped:)];
     self.shareButton = [self makeIconButton:@"square.and.arrow.up" label:@"مشاركة" action:@selector(shareTapped:)];
-    self.shareButton.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.90];
-    self.shareButton.layer.cornerRadius = 34.0;
-    self.shareButton.clipsToBounds = YES;
-    [self.actionBar.contentView addSubview:self.restoreButton];
-    [self.actionBar.contentView addSubview:self.deleteButton];
-    [self.actionBar.contentView addSubview:self.infoButton];
-    [self.view addSubview:self.shareButton];
+    self.actionStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.deleteButton, self.restoreButton, self.shareButton, self.infoButton]];
+    self.actionStack.translatesAutoresizingMaskIntoConstraints = NO;
+    self.actionStack.axis = UILayoutConstraintAxisHorizontal;
+    self.actionStack.alignment = UIStackViewAlignmentFill;
+    self.actionStack.distribution = UIStackViewDistributionFillEqually;
+    self.actionStack.spacing = 2.0;
+    self.actionStack.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [self.actionBar.contentView addSubview:self.actionStack];
 
     self.activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
@@ -166,30 +170,20 @@
         [self.counterLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.counterLabel.widthAnchor constraintGreaterThanOrEqualToConstant:66.0],
         [self.counterLabel.heightAnchor constraintEqualToConstant:30.0],
-        [self.actionBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:76.0],
-        [self.actionBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-76.0],
+        [self.actionBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:18.0],
+        [self.actionBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-18.0],
         [self.actionBar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-14.0],
-        [self.actionBar.heightAnchor constraintEqualToConstant:68.0],
-        [self.restoreButton.leadingAnchor constraintEqualToAnchor:self.actionBar.contentView.leadingAnchor constant:6.0],
-        [self.restoreButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
-        [self.restoreButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
-        [self.restoreButton.widthAnchor constraintEqualToConstant:78.0],
-        [self.deleteButton.centerXAnchor constraintEqualToAnchor:self.actionBar.contentView.centerXAnchor],
-        [self.deleteButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
-        [self.deleteButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
-        [self.deleteButton.widthAnchor constraintEqualToConstant:78.0],
-        [self.infoButton.trailingAnchor constraintEqualToAnchor:self.actionBar.contentView.trailingAnchor constant:-6.0],
-        [self.infoButton.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:4.0],
-        [self.infoButton.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-4.0],
-        [self.infoButton.widthAnchor constraintEqualToConstant:78.0],
-        [self.shareButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-18.0],
-        [self.shareButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-14.0],
-        [self.shareButton.widthAnchor constraintEqualToConstant:62.0],
-        [self.shareButton.heightAnchor constraintEqualToConstant:68.0],
+        [self.actionBar.heightAnchor constraintEqualToConstant:64.0],
+        [self.actionStack.leadingAnchor constraintEqualToAnchor:self.actionBar.contentView.leadingAnchor constant:8.0],
+        [self.actionStack.trailingAnchor constraintEqualToAnchor:self.actionBar.contentView.trailingAnchor constant:-8.0],
+        [self.actionStack.topAnchor constraintEqualToAnchor:self.actionBar.contentView.topAnchor constant:6.0],
+        [self.actionStack.bottomAnchor constraintEqualToAnchor:self.actionBar.contentView.bottomAnchor constant:-6.0],
         [self.activityIndicator.centerXAnchor constraintEqualToAnchor:self.actionBar.contentView.centerXAnchor],
         [self.activityIndicator.centerYAnchor constraintEqualToAnchor:self.actionBar.contentView.centerYAnchor]
     ]];
 
+    self.backButton.alpha = 0.0;
+    self.counterLabel.alpha = 0.0;
     self.actionBar.alpha = 0.0;
     self.shareButton.alpha = 0.0;
     self.controlsVisible = NO;
@@ -255,6 +249,13 @@
     button.tintColor = [UIColor colorWithRed:0.12 green:0.56 blue:1.0 alpha:1.0];
     button.accessibilityLabel = label;
     if (@available(iOS 13.0, *)) [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+    [button setTitle:label forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightSemibold];
+    button.titleLabel.adjustsFontSizeToFitWidth = YES;
+    button.titleLabel.minimumScaleFactor = 0.75;
+    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    button.tintColor = [UIColor colorWithRed:0.12 green:0.56 blue:1.0 alpha:1.0];
+    button.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
@@ -271,6 +272,8 @@
 - (void)setControlsVisible:(BOOL)visible animated:(BOOL)animated {
     self.controlsVisible = visible;
     void (^changes)(void) = ^{
+        self.backButton.alpha = visible ? 1.0 : 0.0;
+        self.counterLabel.alpha = visible ? 1.0 : 0.0;
         self.actionBar.alpha = visible ? 1.0 : 0.0;
         self.shareButton.alpha = visible ? 1.0 : 0.0;
     };
@@ -352,7 +355,7 @@
         UIImage *image = imageRef ? [UIImage imageWithCGImage:imageRef] : nil;
         if (imageRef) CGImageRelease(imageRef);
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (image && imageView.superview && !self.activePlayerController) imageView.image = image;
+            if (image && imageView.superview) imageView.image = image;
         });
     });
 }
