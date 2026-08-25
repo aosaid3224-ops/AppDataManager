@@ -1,5 +1,6 @@
 #import "AppDetailsViewController.h"
 #import "Core/InstallationEngine.h"
+#import "Core/IPAExportManager.h"
 #import "Core/Logger.h"
 
 @interface AppDetailsViewController ()
@@ -9,6 +10,7 @@
 @property (nonatomic, strong) UILabel *nameLabel;
 @property (nonatomic, strong) UILabel *bundleLabel;
 @property (nonatomic, strong) UIButton *openButton;
+@property (nonatomic, strong) UIButton *exportButton;
 @property (nonatomic, strong) UIButton *deleteButton;
 @end
 
@@ -95,6 +97,17 @@
     [self.scrollView addSubview:self.openButton];
     y += 68;
 
+    self.exportButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.exportButton.frame = CGRectMake(20, y, w - 40, 52);
+    [self.exportButton setTitle:@"استخراج IPA" forState:UIControlStateNormal];
+    [self.exportButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.exportButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    self.exportButton.backgroundColor = [UIColor colorWithRed:0.43 green:0.30 blue:0.82 alpha:1.0];
+    self.exportButton.layer.cornerRadius = 14;
+    [self.exportButton addTarget:self action:@selector(exportTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.scrollView addSubview:self.exportButton];
+    y += 68;
+
     if (!self.appInfo.isProtected) {
         self.deleteButton = [UIButton buttonWithType:UIButtonTypeSystem];
         self.deleteButton.frame = CGRectMake(20, y, w - 40, 52);
@@ -119,6 +132,45 @@
         [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
     }
+}
+
+- (void)exportTapped:(UIButton *)sender {
+    if (self.appInfo.bundlePath.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر استخراج IPA"
+            message:@"مسار التطبيق غير متاح من النظام" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    sender.enabled = NO;
+    [sender setTitle:@"جارٍ استخراج IPA…" forState:UIControlStateNormal];
+    NSString *suggestedName = self.appInfo.name.length > 0 ? self.appInfo.name : self.appInfo.bundleID;
+    [[IPAExportManager sharedManager] exportApplicationAtPath:self.appInfo.bundlePath
+                                                suggestedName:suggestedName
+                                                   completion:^(NSURL *ipaURL, NSError *error) {
+        sender.enabled = YES;
+        [sender setTitle:@"استخراج IPA" forState:UIControlStateNormal];
+        if (!ipaURL || error) {
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"فشل استخراج IPA"
+                message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA" preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+            return;
+        }
+
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ipaURL]
+                                                                             applicationActivities:nil];
+        share.excludedActivityTypes = @[UIActivityTypeAssignToContact, UIActivityTypeAddToReadingList];
+        share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+            [[NSFileManager defaultManager] removeItemAtURL:ipaURL error:nil];
+        };
+        if (share.popoverPresentationController) {
+            share.popoverPresentationController.sourceView = sender;
+            share.popoverPresentationController.sourceRect = sender.bounds;
+        }
+        [self presentViewController:share animated:YES completion:nil];
+    }];
 }
 
 - (void)deleteTapped:(UIButton *)sender {
