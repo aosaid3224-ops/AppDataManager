@@ -1,9 +1,12 @@
 #import "IPAExportManager.h"
 #import "RootlessManager.h"
+#import <mach-o/fat.h>
+#import <mach-o/loader.h>
 #import <spawn.h>
 #import <sys/stat.h>
 #import <sys/wait.h>
 #import <unistd.h>
+#import <libkern/OSByteOrder.h>
 
 extern char **environ;
 
@@ -11,8 +14,13 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 
 @interface IPAExportManager ()
 @property (nonatomic, strong) NSString *cpPath;
+@property (nonatomic, strong) NSString *mvPath;
+@property (nonatomic, strong) NSString *chmodPath;
+@property (nonatomic, strong) NSString *rmPath;
 @property (nonatomic, strong) NSString *zipPath;
 @property (nonatomic, strong) NSString *shellPath;
+@property (nonatomic, strong) NSString *fouldecryptPath;
+@property (nonatomic, strong, nullable) NSString *helperPath;
 @end
 
 @implementation IPAExportManager
@@ -31,9 +39,25 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     if (self) {
         RootlessManager *rootless = [RootlessManager sharedManager];
         _cpPath = [rootless resolvePath:@"/bin/cp"];
+        _mvPath = [rootless resolvePath:@"/bin/mv"];
+        _chmodPath = [rootless resolvePath:@"/usr/bin/chmod"];
+        _rmPath = [rootless resolvePath:@"/bin/rm"];
         _zipPath = [rootless resolvePath:@"/usr/bin/zip"];
         _shellPath = [rootless resolvePath:@"/bin/sh"];
+        _fouldecryptPath = [rootless resolvePath:@"/usr/local/bin/fouldecrypt"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:_shellPath]) _shellPath = @"/bin/sh";
+
+        NSArray<NSString *> *helperCandidates = @[
+            [rootless resolvePath:@"/usr/bin/ipainstallerpro_helper"],
+            @"/usr/bin/ipainstallerpro_helper",
+            @"/var/jb/usr/bin/ipainstallerpro_helper"
+        ];
+        for (NSString *candidate in helperCandidates) {
+            if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+                _helperPath = candidate;
+                break;
+            }
+        }
     }
     return self;
 }
@@ -55,7 +79,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     workingDirectory:(NSString *)workingDirectory
               error:(NSError **)error {
     if (command.length == 0 || ![[NSFileManager defaultManager] isExecutableFileAtPath:command]) {
-        if (error) *error = [self errorWithCode:10 description:@"أداة الأرشفة المطلوبة غير موجودة أو غير قابلة للتنفيذ"];
+        if (error) *error = [self errorWithCode:10 description:@"الأداة المطلوبة غير موجودة أو غير قابلة للتنفيذ"];
         return NO;
     }
 
@@ -66,11 +90,9 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     if (workingDirectory.length > 0) {
         if (![[NSFileManager defaultManager] isExecutableFileAtPath:self.shellPath]) {
             posix_spawn_file_actions_destroy(&actions);
-            if (error) *error = [self errorWithCode:11 description:@"أداة تشغيل الأوامر غير متاحة لإنشاء مجلد العمل"];
+            if (error) *error = [self errorWithCode:11 description:@"أداة تشغيل الأوامر غير متاحة للأرشفة"];
             return NO;
         }
-        // Do not interpolate paths into shell source. They are passed as
-        // positional arguments, so spaces and user-provided Unicode are safe.
         spawnCommand = self.shellPath;
         argvStrings = [NSMutableArray arrayWithObjects:self.shellPath,
                        @"-c", @"cd \"$1\" && shift && exec \"$@\"",
@@ -79,10 +101,9 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     } else {
         [argvStrings addObjectsFromArray:args ?: @[]];
     }
+
     char **argv = calloc(argvStrings.count + 1, sizeof(char *));
-    for (NSUInteger i = 0; i < argvStrings.count; i++) {
-        argv[i] = (char *)argvStrings[i].fileSystemRepresentation;
-    }
+    for (NSUInteger i = 0; i < argvStrings.count; i++) argv[i] = (char *)argvStrings[i].fileSystemRepresentation;
     argv[argvStrings.count] = NULL;
 
     pid_t pid = 0;
@@ -90,14 +111,161 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     free(argv);
     posix_spawn_file_actions_destroy(&actions);
     if (spawnStatus != 0) {
-        if (error) *error = [self errorWithCode:12 description:[NSString stringWithFormat:@"تعذر تشغيل أداة الأرشفة (errno=%d)", spawnStatus]];
+        if (error) *error = [self errorWithCode:12 description:[NSString stringWithFormat:@"تعذر تشغيل الأداة (errno=%d)", spawnStatus]];
         return NO;
     }
 
     int waitStatus = 0;
     if (waitpid(pid, &waitStatus, 0) < 0 || !WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) {
-        if (error) *error = [self errorWithCode:13 description:[NSString stringWithFormat:@"فشلت عملية إنشاء ملف IPA (exit=%d)", WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : -1]];
+        if (error) *error = [self errorWithCode:13 description:[NSString stringWithFormat:@"فشلت الأداة (exit=%d)", WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : -1]];
         return NO;
+    }
+    return YES;
+}
+
+- (BOOL)runPrivilegedCommand:(NSString *)command
+                         args:(NSArray<NSString *> *)args
+                         error:(NSError **)error {
+    if (self.helperPath.length == 0) {
+        if (error) *error = [self errorWithCode:20 description:@"لا يتوفر root helper لفك تشفير التطبيق أو تعديل ملفاته"];
+        return NO;
+    }
+    NSMutableArray<NSString *> *argvStrings = [NSMutableArray arrayWithObjects:self.helperPath, command, nil];
+    [argvStrings addObjectsFromArray:args ?: @[]];
+    char **argv = calloc(argvStrings.count + 1, sizeof(char *));
+    for (NSUInteger i = 0; i < argvStrings.count; i++) argv[i] = (char *)argvStrings[i].fileSystemRepresentation;
+    argv[argvStrings.count] = NULL;
+
+    pid_t pid = 0;
+    int spawnStatus = posix_spawn(&pid, self.helperPath.fileSystemRepresentation, NULL, NULL, argv, environ);
+    free(argv);
+    if (spawnStatus != 0) {
+        if (error) *error = [self errorWithCode:21 description:[NSString stringWithFormat:@"تعذر تشغيل root helper (errno=%d)", spawnStatus]];
+        return NO;
+    }
+    int waitStatus = 0;
+    if (waitpid(pid, &waitStatus, 0) < 0 || !WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) {
+        if (error) *error = [self errorWithCode:22 description:[NSString stringWithFormat:@"فشل root helper (exit=%d)", WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : -1]];
+        return NO;
+    }
+    return YES;
+}
+
+- (uint32_t)readUInt32:(const uint8_t *)bytes offset:(size_t)offset swapped:(BOOL)swapped {
+    uint32_t value = 0;
+    memcpy(&value, bytes + offset, sizeof(value));
+    return swapped ? OSSwapInt32(value) : value;
+}
+
+- (BOOL)parseMachOBytes:(const uint8_t *)bytes length:(size_t)length encrypted:(BOOL *)encrypted {
+    if (length < sizeof(uint32_t)) return NO;
+    uint32_t magic = 0;
+    memcpy(&magic, bytes, sizeof(magic));
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM || magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64) {
+        BOOL swapped = (magic == FAT_CIGAM || magic == FAT_CIGAM_64);
+        BOOL fat64 = (magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64);
+        if (length < 8) return NO;
+        uint32_t count = [self readUInt32:bytes offset:4 swapped:swapped];
+        size_t archSize = fat64 ? 32 : 20;
+        if (count > 128 || 8 + (size_t)count * archSize > length) return NO;
+        BOOL found = NO;
+        for (uint32_t i = 0; i < count; i++) {
+            size_t off = 8 + (size_t)i * archSize;
+            uint64_t sliceOffset = fat64
+                ? ((uint64_t)[self readUInt32:bytes offset:off + 8 swapped:swapped] << 32) | [self readUInt32:bytes offset:off + 12 swapped:swapped]
+                : [self readUInt32:bytes offset:off + 8 swapped:swapped];
+            uint64_t sliceSize = fat64
+                ? ((uint64_t)[self readUInt32:bytes offset:off + 16 swapped:swapped] << 32) | [self readUInt32:bytes offset:off + 20 swapped:swapped]
+                : [self readUInt32:bytes offset:off + 12 swapped:swapped];
+            if (sliceOffset >= length || sliceSize > length - sliceOffset) continue;
+            BOOL sliceEncrypted = NO;
+            if ([self parseMachOBytes:bytes + sliceOffset length:(size_t)sliceSize encrypted:&sliceEncrypted]) {
+                found = YES;
+                if (sliceEncrypted && encrypted) *encrypted = YES;
+            }
+        }
+        return found;
+    }
+
+    BOOL swapped = NO;
+    BOOL is64 = NO;
+    if (magic == MH_MAGIC_64) is64 = YES;
+    else if (magic == MH_MAGIC) is64 = NO;
+    else if (magic == MH_CIGAM_64) { is64 = YES; swapped = YES; }
+    else if (magic == MH_CIGAM) { is64 = NO; swapped = YES; }
+    else return NO;
+
+    size_t headerSize = is64 ? sizeof(struct mach_header_64) : sizeof(struct mach_header);
+    if (length < headerSize) return NO;
+    uint32_t ncmds = [self readUInt32:bytes offset:16 swapped:swapped];
+    uint32_t sizeofcmds = [self readUInt32:bytes offset:20 swapped:swapped];
+    if (ncmds > 4096 || sizeofcmds > length - headerSize) return NO;
+    size_t cursor = headerSize;
+    for (uint32_t i = 0; i < ncmds; i++) {
+        if (cursor + 8 > length) return NO;
+        uint32_t cmd = [self readUInt32:bytes offset:cursor swapped:swapped];
+        uint32_t cmdsize = [self readUInt32:bytes offset:cursor + 4 swapped:swapped];
+        if (cmdsize < 8 || cursor + cmdsize > length) return NO;
+        uint32_t baseCmd = cmd & ~LC_REQ_DYLD;
+        if ((baseCmd == LC_ENCRYPTION_INFO || baseCmd == LC_ENCRYPTION_INFO_64) && cmdsize >= 20) {
+            uint32_t cryptid = [self readUInt32:bytes offset:cursor + 16 swapped:swapped];
+            if (cryptid != 0 && encrypted) *encrypted = YES;
+        }
+        cursor += cmdsize;
+    }
+    return YES;
+}
+
+- (BOOL)isMachOAtPath:(NSString *)path encrypted:(BOOL *)encrypted {
+    NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
+    if (data.length < 4) return NO;
+    BOOL value = NO;
+    BOOL result = [self parseMachOBytes:data.bytes length:data.length encrypted:&value];
+    if (encrypted) *encrypted = value;
+    return result;
+}
+
+- (NSArray<NSString *> *)machOPathsInBundle:(NSString *)bundlePath encrypted:(NSMutableArray<NSString *> *)encryptedPaths {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:bundlePath];
+    NSString *relative = nil;
+    while ((relative = [enumerator nextObject])) {
+        NSString *path = [bundlePath stringByAppendingPathComponent:relative];
+        struct stat st;
+        if (lstat(path.fileSystemRepresentation, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        BOOL encrypted = NO;
+        if ([self isMachOAtPath:path encrypted:&encrypted]) {
+            [paths addObject:path];
+            if (encrypted && encryptedPaths) [encryptedPaths addObject:path];
+        }
+    }
+    return paths;
+}
+
+- (BOOL)normalizeMachOPermissions:(NSArray<NSString *> *)machOPaths error:(NSError **)error {
+    for (NSString *path in machOPaths) {
+        struct stat st;
+        mode_t mode = 0755;
+        if (stat(path.fileSystemRepresentation, &st) == 0) mode = st.st_mode | 0755;
+        if (chmod(path.fileSystemRepresentation, mode) != 0 && ![self runPrivilegedCommand:self.chmodPath args:@[[NSString stringWithFormat:@"%o", mode & 0777], path] error:error]) return NO;
+    }
+    return YES;
+}
+
+- (BOOL)removeCodeSignaturesFromBundle:(NSString *)bundlePath error:(NSError **)error {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *signatureDirectories = [NSMutableArray array];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:bundlePath];
+    NSString *relative = nil;
+    while ((relative = [enumerator nextObject])) {
+        if ([relative.lastPathComponent isEqualToString:@"_CodeSignature"]) {
+            [signatureDirectories addObject:[bundlePath stringByAppendingPathComponent:relative]];
+            [enumerator skipDescendants];
+        }
+    }
+    for (NSString *path in signatureDirectories) {
+        if (![fm removeItemAtPath:path error:nil] && ![self runPrivilegedCommand:self.rmPath args:@[@"-rf", path] error:error]) return NO;
     }
     return YES;
 }
@@ -110,27 +278,17 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         NSError *error = nil;
         NSString *workDirectory = nil;
         NSURL *resultURL = nil;
-
         @try {
             if (bundlePath.length == 0 || ![self isDirectoryWithoutSymlinkAtPath:bundlePath]) {
                 error = [self errorWithCode:1 description:@"مسار التطبيق غير صالح أو غير متاح للقراءة"];
             }
-
             NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
             NSDictionary *info = error ? nil : [NSDictionary dictionaryWithContentsOfFile:infoPath];
             NSString *executableName = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
-            if (!error && (info.count == 0 || executableName.length == 0)) {
-                error = [self errorWithCode:2 description:@"Info.plist أو اسم executable غير صالح"];
-            }
-
+            if (!error && (info.count == 0 || executableName.length == 0)) error = [self errorWithCode:2 description:@"Info.plist أو executable غير صالح"];
             NSString *executablePath = executableName.length > 0 ? [bundlePath stringByAppendingPathComponent:executableName] : nil;
-            if (!error && (!executablePath.length || ![fm isReadableFileAtPath:executablePath])) {
-                error = [self errorWithCode:3 description:@"ملف executable الرئيسي غير موجود أو غير قابل للقراءة"];
-            }
-
-            if (!error && ![fm isExecutableFileAtPath:self.zipPath]) {
-                error = [self errorWithCode:4 description:@"أداة zip غير مثبتة؛ لا يمكن إنشاء IPA"];
-            }
+            if (!error && ![fm isReadableFileAtPath:executablePath]) error = [self errorWithCode:3 description:@"executable الرئيسي غير موجود أو غير قابل للقراءة"];
+            if (!error && ![fm isExecutableFileAtPath:self.zipPath]) error = [self errorWithCode:4 description:@"أداة zip غير مثبتة؛ لا يمكن إنشاء IPA"];
 
             if (!error) {
                 NSString *uuid = [NSUUID UUID].UUIDString;
@@ -139,24 +297,50 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 if (![fm createDirectoryAtPath:payloadDirectory withIntermediateDirectories:YES attributes:nil error:&error]) {
                     if (!error) error = [self errorWithCode:5 description:@"تعذر إنشاء مساحة مؤقتة للتصدير"];
                 }
-
                 NSString *bundleName = bundlePath.lastPathComponent;
                 NSString *copiedBundle = [payloadDirectory stringByAppendingPathComponent:bundleName];
+                if (!error && ![self runCommand:self.cpPath args:@[@"-Rp", bundlePath, copiedBundle] workingDirectory:nil error:&error]) {
+                    if (!error) error = [self errorWithCode:6 description:@"فشل نسخ التطبيق إلى مساحة التصدير"];
+                }
+
+                NSMutableArray<NSString *> *encryptedPaths = [NSMutableArray array];
+                NSArray<NSString *> *machOPaths = error ? @[] : [self machOPathsInBundle:copiedBundle encrypted:encryptedPaths];
+                BOOL decryptedAny = NO;
+                if (!error && encryptedPaths.count > 0) {
+                    if (![fm isExecutableFileAtPath:self.fouldecryptPath]) {
+                        error = [self errorWithCode:23 description:@"هذا التطبيق يحتوي Mach-O مشفرًا. يلزم تثبيت مكوّن فك التشفير قبل إنشاء IPA قابل للتثبيت."];
+                    } else if (self.helperPath.length == 0) {
+                        error = [self errorWithCode:24 description:@"هذا التطبيق يحتوي Mach-O مشفرًا، لكن root helper غير متاح لفك تشفيره بأمان."];
+                    } else {
+                        for (NSString *sourcePath in encryptedPaths) {
+                            NSString *decryptedPath = [sourcePath stringByAppendingString:@".decrypted"];
+                            [fm removeItemAtPath:decryptedPath error:nil];
+                            if (![self runPrivilegedCommand:self.fouldecryptPath args:@[sourcePath, decryptedPath] error:&error]) break;
+                            BOOL stillEncrypted = NO;
+                            NSDictionary *attrs = [fm attributesOfItemAtPath:decryptedPath error:nil];
+                            if (![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
+                                error = [self errorWithCode:25 description:@"فك تشفير أحد ملفات Mach-O لم ينتج binary صالحًا"];
+                                break;
+                            }
+                            if (![self runPrivilegedCommand:self.mvPath args:@[@"-f", decryptedPath, sourcePath] error:&error]) break;
+                            decryptedAny = YES;
+                        }
+                    }
+                }
+
                 if (!error) {
-                    // Copy only the selected bundle; no files outside it are included.
-                    BOOL copied = [self runCommand:self.cpPath
-                                              args:@[@"-Rp", bundlePath, copiedBundle]
-                                  workingDirectory:nil
-                                              error:&error];
-                    if (!copied && !error) error = [self errorWithCode:6 description:@"فشل نسخ التطبيق إلى مساحة التصدير"];
-                    if (!copied && [fm fileExistsAtPath:copiedBundle]) [fm removeItemAtPath:copiedBundle error:nil];
+                    machOPaths = [self machOPathsInBundle:copiedBundle encrypted:NULL];
+                    if (![self normalizeMachOPermissions:machOPaths error:&error]) {
+                        if (!error) error = [self errorWithCode:26 description:@"تعذر إصلاح صلاحيات ملفات Mach-O"];
+                    }
+                }
+                if (!error && decryptedAny && ![self removeCodeSignaturesFromBundle:copiedBundle error:&error]) {
+                    if (!error) error = [self errorWithCode:27 description:@"تعذر إزالة التواقيع القديمة بعد فك التشفير"];
                 }
 
                 NSString *copiedInfoPath = [copiedBundle stringByAppendingPathComponent:@"Info.plist"];
                 NSString *copiedExecutablePath = executableName.length > 0 ? [copiedBundle stringByAppendingPathComponent:executableName] : nil;
-                if (!error && (![fm fileExistsAtPath:copiedInfoPath] || ![fm isReadableFileAtPath:copiedExecutablePath])) {
-                    error = [self errorWithCode:7 description:@"فشل التحقق من النسخة قبل إنشاء IPA"];
-                }
+                if (!error && (![fm fileExistsAtPath:copiedInfoPath] || ![fm isReadableFileAtPath:copiedExecutablePath])) error = [self errorWithCode:7 description:@"فشل التحقق من النسخة قبل إنشاء IPA"];
 
                 NSString *safeName = suggestedName.length > 0 ? suggestedName : (info[@"CFBundleIdentifier"] ?: bundleName.stringByDeletingPathExtension);
                 safeName = [safeName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
@@ -165,21 +349,14 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 safeName = [safeName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
                 if (safeName.length == 0) safeName = @"Application";
                 NSString *outputName = [safeName.pathExtension.lowercaseString isEqualToString:@"ipa"] ? safeName : [safeName stringByAppendingPathExtension:@"ipa"];
-                // The UUID is used only for the work directory above. Keep the
-                // user-visible filename clean, while avoiding overwrite when a
-                // previous export with the same name is still being shared.
                 NSString *outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:outputName];
                 NSUInteger collision = 2;
                 while ([fm fileExistsAtPath:outputPath]) {
                     NSString *stem = [outputName stringByDeletingPathExtension];
                     outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ (%lu).ipa", stem, (unsigned long)collision++]];
                 }
-
                 if (!error) {
-                    BOOL zipped = [self runCommand:self.zipPath
-                                              args:@[@"-qry", outputPath, @"Payload"]
-                                  workingDirectory:workDirectory
-                                              error:&error];
+                    BOOL zipped = [self runCommand:self.zipPath args:@[@"-qry", outputPath, @"Payload"] workingDirectory:workDirectory error:&error];
                     NSDictionary *attrs = [fm attributesOfItemAtPath:outputPath error:nil];
                     if (!zipped || ![fm isReadableFileAtPath:outputPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] < 22) {
                         if (!error) error = [self errorWithCode:8 description:@"تم إنشاء أرشيف غير صالح أو فارغ"];
@@ -191,7 +368,6 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         } @catch (NSException *exception) {
             error = [self errorWithCode:9 description:[NSString stringWithFormat:@"حدث خطأ أثناء استخراج IPA: %@", exception.reason ?: @"غير معروف"]];
         }
-
         if (workDirectory.length > 0) [fm removeItemAtPath:workDirectory error:nil];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(resultURL, error);
