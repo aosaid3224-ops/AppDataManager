@@ -160,11 +160,20 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 
                 NSString *safeName = suggestedName.length > 0 ? suggestedName : (info[@"CFBundleIdentifier"] ?: bundleName.stringByDeletingPathExtension);
                 safeName = [safeName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+                safeName = [safeName stringByReplacingOccurrencesOfString:@"\\" withString:@"-"];
                 safeName = [safeName stringByReplacingOccurrencesOfString:@":" withString:@"-"];
                 safeName = [safeName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
                 if (safeName.length == 0) safeName = @"Application";
                 NSString *outputName = [safeName.pathExtension.lowercaseString isEqualToString:@"ipa"] ? safeName : [safeName stringByAppendingPathExtension:@"ipa"];
-                NSString *outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@", uuid, outputName]];
+                // The UUID is used only for the work directory above. Keep the
+                // user-visible filename clean, while avoiding overwrite when a
+                // previous export with the same name is still being shared.
+                NSString *outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:outputName];
+                NSUInteger collision = 2;
+                while ([fm fileExistsAtPath:outputPath]) {
+                    NSString *stem = [outputName stringByDeletingPathExtension];
+                    outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ (%lu).ipa", stem, (unsigned long)collision++]];
+                }
 
                 if (!error) {
                     BOOL zipped = [self runCommand:self.zipPath
