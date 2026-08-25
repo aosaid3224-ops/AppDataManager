@@ -20,6 +20,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 @property (nonatomic, strong) NSString *zipPath;
 @property (nonatomic, strong) NSString *shellPath;
 @property (nonatomic, strong) NSString *fouldecryptPath;
+@property (nonatomic, strong) NSString *flexdecryptPath;
 @property (nonatomic, strong, nullable) NSString *helperPath;
 @end
 
@@ -45,6 +46,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         _zipPath = [rootless resolvePath:@"/usr/bin/zip"];
         _shellPath = [rootless resolvePath:@"/bin/sh"];
         _fouldecryptPath = [rootless resolvePath:@"/usr/local/bin/fouldecrypt"];
+        _flexdecryptPath = [rootless resolvePath:@"/usr/local/bin/flexdecrypt2"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:_shellPath]) _shellPath = @"/bin/sh";
 
         NSArray<NSString *> *helperCandidates = @[
@@ -144,8 +146,16 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         return NO;
     }
     int waitStatus = 0;
-    if (waitpid(pid, &waitStatus, 0) < 0 || !WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) {
-        if (error) *error = [self errorWithCode:22 description:[NSString stringWithFormat:@"فشل root helper (exit=%d)", WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : -1]];
+    if (waitpid(pid, &waitStatus, 0) < 0) {
+        if (error) *error = [self errorWithCode:22 description:[NSString stringWithFormat:@"فشل انتظار root helper (errno=%d)", errno]];
+        return NO;
+    }
+    if (WIFSIGNALED(waitStatus)) {
+        if (error) *error = [self errorWithCode:23 description:[NSString stringWithFormat:@"توقّف root helper بإشارة %d أثناء تشغيل الأداة", WTERMSIG(waitStatus)]];
+        return NO;
+    }
+    if (!WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) {
+        if (error) *error = [self errorWithCode:24 description:[NSString stringWithFormat:@"فشل root helper (exit=%d)", WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : -1]];
         return NO;
     }
     return YES;
@@ -307,19 +317,40 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 NSArray<NSString *> *machOPaths = error ? @[] : [self machOPathsInBundle:copiedBundle encrypted:encryptedPaths];
                 BOOL decryptedAny = NO;
                 if (!error && encryptedPaths.count > 0) {
-                    if (![fm isExecutableFileAtPath:self.fouldecryptPath]) {
-                        error = [self errorWithCode:23 description:@"هذا التطبيق يحتوي Mach-O مشفرًا. يلزم تثبيت مكوّن فك التشفير قبل إنشاء IPA قابل للتثبيت."];
-                    } else if (self.helperPath.length == 0) {
+                    if (self.helperPath.length == 0) {
                         error = [self errorWithCode:24 description:@"هذا التطبيق يحتوي Mach-O مشفرًا، لكن root helper غير متاح لفك تشفيره بأمان."];
                     } else {
                         for (NSString *sourcePath in encryptedPaths) {
                             NSString *decryptedPath = [sourcePath stringByAppendingString:@".decrypted"];
+                            NSError *firstToolError = nil;
+                            BOOL decrypted = NO;
                             [fm removeItemAtPath:decryptedPath error:nil];
-                            if (![self runPrivilegedCommand:self.fouldecryptPath args:@[sourcePath, decryptedPath] error:&error]) break;
+
+                            if ([fm isExecutableFileAtPath:self.fouldecryptPath]) {
+                                NSError *toolError = nil;
+                                decrypted = [self runPrivilegedCommand:self.fouldecryptPath args:@[sourcePath, decryptedPath] error:&toolError];
+                                if (!decrypted) firstToolError = toolError;
+                            }
+
+                            // flexdecrypt2 uses /tmp/<basename> as its output. Move
+                            // that result to our private work path immediately so
+                            // multiple binaries remain isolated and deterministic.
+                            if (!decrypted && [fm isExecutableFileAtPath:self.flexdecryptPath]) {
+                                NSString *flexOutput = [NSTemporaryDirectory() stringByAppendingPathComponent:sourcePath.lastPathComponent];
+                                [fm removeItemAtPath:flexOutput error:nil];
+                                NSError *toolError = nil;
+                                decrypted = [self runPrivilegedCommand:self.flexdecryptPath args:@[sourcePath] error:&toolError];
+                                if (decrypted && [fm fileExistsAtPath:flexOutput]) {
+                                    decrypted = [fm moveItemAtPath:flexOutput toPath:decryptedPath error:&toolError];
+                                }
+                                if (!decrypted && !firstToolError) firstToolError = toolError;
+                            }
+
                             BOOL stillEncrypted = NO;
                             NSDictionary *attrs = [fm attributesOfItemAtPath:decryptedPath error:nil];
-                            if (![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
-                                error = [self errorWithCode:25 description:@"فك تشفير أحد ملفات Mach-O لم ينتج binary صالحًا"];
+                            if (!decrypted || ![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
+                                NSString *reason = firstToolError.localizedDescription ?: @"لم تتوفر أداة فك تشفير صالحة";
+                                error = [self errorWithCode:25 description:[NSString stringWithFormat:@"تعذر فك تشفير %@: %@", sourcePath.lastPathComponent, reason]];
                                 break;
                             }
                             if (![self runPrivilegedCommand:self.mvPath args:@[@"-f", decryptedPath, sourcePath] error:&error]) break;
