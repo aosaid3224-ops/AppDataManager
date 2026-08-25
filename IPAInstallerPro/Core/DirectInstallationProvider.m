@@ -17,6 +17,8 @@
 #import "EntitlementSet.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <mach-o/loader.h>
+#import <mach-o/fat.h>
 #import <objc/runtime.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -900,6 +902,21 @@ extern char **environ;
  NSString *rec10b = [opLog beginPhase:OperationPhasePermission operation:@"chown -R root:wheel" target:destApp input:@"" transactionID:txnID];
  [self runRoot:self.chownPath args:@[@"-R", @"root:wheel", destApp] opLog:opLog recordID:rec10b];
 
+ // Embedded framework binaries are executable code even when an IPA archive
+ // preserved them as 0644. Set the execute bit only on Mach-O files; never
+ // make images, plists, nibs, or other resources executable.
+ NSString *rec10d = [opLog beginPhase:OperationPhasePermission operation:@"ensure Mach-O executable bits" target:destApp input:@"u+x on Mach-O only" transactionID:txnID];
+ BOOL machoModesOk = [self ensureExecutablePermissionsForMachOAtPath:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+ [opLog endPhase:rec10d exitCode:machoModesOk ? 0 : 1 rawOutput:@"Mach-O executable permissions checked" rawError:machoModesOk ? @"" : @"Unable to set executable bit on one or more Mach-O files" verification:@"all Mach-O files executable" verified:machoModesOk duration:0];
+ if (!machoModesOk) {
+     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"Mach-O executable permission repair failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+     return;
+ }
+
  // STAT verification
  NSString *destExe = [destApp stringByAppendingPathComponent:exeName];
  mode_t mode = 0; uid_t uid = 0; gid_t gid = 0;
@@ -1163,6 +1180,39 @@ extern char **environ;
     [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:@"" verification:@"post-sign verification complete" verified:allOk duration:0];
 }
 
+
+#pragma mark - Mach-O permission normalization
+
+- (BOOL)ensureExecutablePermissionsForMachOAtPath:(NSString *)appPath hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:appPath];
+    NSString *relativePath = nil;
+    BOOL allOK = YES;
+    NSUInteger changed = 0;
+    while ((relativePath = [enumerator nextObject])) {
+        NSString *fullPath = [appPath stringByAppendingPathComponent:relativePath];
+        NSDictionary *attributes = [fm attributesOfItemAtPath:fullPath error:nil];
+        if ([attributes[NSFileType] isEqualToString:NSFileTypeDirectory] || [attributes[NSFileType] isEqualToString:NSFileTypeSymbolicLink]) continue;
+        NSData *header = [NSData dataWithContentsOfFile:fullPath options:NSDataReadingMappedIfSafe error:nil];
+        if (header.length < 4) continue;
+        uint32_t magic = 0;
+        [header getBytes:&magic length:sizeof(magic)];
+        BOOL isMachO = (magic == MH_MAGIC || magic == MH_CIGAM || magic == MH_MAGIC_64 || magic == MH_CIGAM_64 || magic == FAT_MAGIC || magic == FAT_CIGAM || magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64);
+        if (!isMachO) continue;
+        NSNumber *permissions = attributes[NSFilePosixPermissions];
+        mode_t mode = permissions ? permissions.unsignedShortValue : 0;
+        if ((mode & S_IXUSR) != 0) continue;
+        BOOL ok = [self runRoot:self.chmodPath args:@[@"u+x", fullPath] opLog:opLog recordID:nil];
+        if (!ok) {
+            allOK = NO;
+            NSLog(@"[IPAInstallerPro] Failed to set executable bit: %@", fullPath);
+        } else {
+            changed++;
+        }
+    }
+    NSLog(@"[IPAInstallerPro] Mach-O executable permission normalization: %lu files changed", (unsigned long)changed);
+    return allOK;
+}
 
 #pragma mark - Signing
 
