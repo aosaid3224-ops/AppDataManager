@@ -985,12 +985,26 @@ extern char **environ;
  // Only use the old broad signer when no complete structural plan is available.
  // Never run it after a complete plan: that would overwrite preserved/minimal
  // entitlement policy and reintroduce launch regressions.
- if (!authoritativeSigning) {
-     NSLog(@"[IPAInstallerPro] Structural plan unavailable/incomplete; using legacy fallback");
-     [self signAllAt:destApp hasHelper:hasH opLog:opLog txnID:txnID];
-     [self signExe:destExe hasHelper:hasH opLog:opLog txnID:txnID];
- }
- [opLog endPhase:rec11 exitCode:authoritativeSigning ? 0 : 0 rawOutput:@"" rawError:@"" verification:authoritativeSigning ? @"authoritative plan applied" : @"legacy fallback applied" verified:YES duration:0];
+  if (!authoritativeSigning) {
+      NSLog(@"[IPAInstallerPro] Structural plan unavailable/incomplete; using legacy fallback");
+      [self signAllAt:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+      [self signExe:destExe hasHelper:hasH opLog:opLog txnID:txnID];
+  } else {
+      // TrollStore performs a final recursive -s pass after assigning
+      // per-bundle entitlements. This signs CodeResources/nested code while
+      // leaving the planned container identity on the bundle executables.
+      BOOL recursiveOK = [self signTarget:destApp withEntitlements:nil hasHelper:hasH opLog:opLog txnID:txnID];
+      if (!recursiveOK) {
+          NSLog(@"[IPAInstallerPro] Recursive bundle signing failed — rollback");
+          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+          [fm removeItemAtPath:tmp error:nil];
+          [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+          [opLog endTransaction:txnID finalResult:OperationResultFailed];
+          if (completion) completion([InstallationResult failureResult:@"Recursive bundle signing failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+          return;
+      }
+  }
+  [opLog endPhase:rec11 exitCode:0 rawOutput:@"" rawError:@"" verification:authoritativeSigning ? @"authoritative plan + recursive signing applied" : @"legacy fallback applied" verified:YES duration:0];
 
  BOOL sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  if (!sigOk) {
@@ -1845,18 +1859,24 @@ extern char **environ;
           ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
       }
-      case SigningStrategyGeneric:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+      case SigningStrategyGeneric: {
+          NSDictionary *ents = target.plannedEntitlements.rawEntitlements ?: [EntitlementSet genericJailbreakEntitlements];
+          ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
-      case SigningStrategyMinimal:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet minimalEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+      }
+      case SigningStrategyMinimal: {
+          NSDictionary *ents = target.plannedEntitlements.rawEntitlements ?: [EntitlementSet minimalEntitlements];
+          ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
+      }
       case SigningStrategySkip:
           ok = YES;
           break;
-      default:
-          ok = [self signTarget:target.filePath withEntitlements:[EntitlementSet genericJailbreakEntitlements] hasHelper:hasH opLog:opLog txnID:txnID];
+      default: {
+          NSDictionary *ents = target.plannedEntitlements.rawEntitlements ?: [EntitlementSet genericJailbreakEntitlements];
+          ok = [self signTarget:target.filePath withEntitlements:ents hasHelper:hasH opLog:opLog txnID:txnID];
           break;
+      }
   }
 
   if (!ok) {
@@ -1888,8 +1908,10 @@ extern char **environ;
              : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:recordID];
  [fm removeItemAtPath:entPath error:nil];
  } else {
- ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID]
-             : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:recordID];
+  // Match TrollStore's no-entitlement path: -s recursively signs the
+  // bundle without fabricating an empty -S argument.
+  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-s", path] opLog:opLog recordID:recordID]
+             : [self runCmd:self.ldidPath args:@[@"-s", path] opLog:opLog recordID:recordID];
  }
  [opLog endPhase:recordID exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Smart sign failed" verification:@"smart ldid" verified:ok duration:0];
  return ok;
