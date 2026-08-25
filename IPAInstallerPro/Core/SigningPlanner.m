@@ -45,6 +45,22 @@
     for (IPAStructuralExecutable *exe in result.executables) {
         SigningTarget *target = [self analyzeExecutable:exe inResult:result];
         if (target) {
+            // Carry the owning bundle identity into the signing target. The
+            // structural analyzer already knows this; do not lose it between
+            // analysis and signing.
+            IPAStructuralBundle *owner = nil;
+            for (IPAStructuralBundle *bundle in result.bundles) {
+                if (![bundle.path isKindOfClass:[NSString class]] || bundle.path.length == 0) continue;
+                NSString *prefix = [bundle.path hasSuffix:@"/"] ? bundle.path : [bundle.path stringByAppendingString:@"/"];
+                if ([target.filePath isEqualToString:bundle.path] || [target.filePath hasPrefix:prefix]) {
+                    if (!owner || bundle.path.length > owner.path.length) owner = bundle;
+                }
+            }
+            if (owner) {
+                target.bundleIdentifier = owner.bundleIdentifier;
+                target.bundlePath = owner.path;
+                [self applyContainerAwarePolicyToTarget:target];
+            }
             if (appRoot.length > 0 && [target.filePath hasPrefix:appRoot]) {
                 NSString *relative = [target.filePath substringFromIndex:appRoot.length];
                 while ([relative hasPrefix:@"/"]) relative = [relative substringFromIndex:1];
@@ -302,6 +318,59 @@
             target.plannedEntitlements = [[EntitlementSet alloc] initWithDictionary:[EntitlementSet genericJailbreakEntitlements] sourcePath:target.filePath];
             break;
     }
+}
+
+#pragma mark - Container-aware entitlement policy
+
+- (void)applyContainerAwarePolicyToTarget:(SigningTarget *)target {
+    if (!target.bundleIdentifier.length || !target.plannedEntitlements) return;
+    // Frameworks/dylibs are not app containers. Their minimal signatures must
+    // remain minimal, while app and extension executables receive a stable
+    // per-bundle container identity.
+    if (target.targetType == SigningTargetTypeFramework ||
+        target.targetType == SigningTargetTypeDylib ||
+        target.targetType == SigningTargetTypeBundle) return;
+
+    NSMutableDictionary *ents = [target.plannedEntitlements.rawEntitlements mutableCopy];
+    if (!ents) ents = [NSMutableDictionary dictionary];
+
+    // For a completely unsigned main app, provide the same baseline identity
+    // that TrollStore synthesizes before its recursive signing pass. This is
+    // generic and deterministic per installer, never tied to one IPA.
+    if (target.targetType == SigningTargetTypeMainExecutable &&
+        target.strategy == SigningStrategyGeneric && !target.hasOriginalSignature) {
+        NSString *appIdentifier = [NSString stringWithFormat:@"IPAINSTALLERPRO.%@", target.bundleIdentifier];
+        if (![ents[@"application-identifier"] isKindOfClass:[NSString class]]) {
+            ents[@"application-identifier"] = appIdentifier;
+        }
+        if (![ents[@"com.apple.developer.team-identifier"] isKindOfClass:[NSString class]]) {
+            ents[@"com.apple.developer.team-identifier"] = @"IPAINSTALLERPRO";
+        }
+        if (![ents[@"keychain-access-groups"] isKindOfClass:[NSArray class]]) {
+            ents[@"keychain-access-groups"] = @[appIdentifier, @"com.apple.token"];
+        }
+    }
+
+    BOOL noContainer = [ents[@"com.apple.private.security.no-container"] boolValue];
+    BOOL noSandbox = [ents[@"com.apple.private.security.no-sandbox"] boolValue];
+    BOOL synthesizedGeneric = (target.strategy == SigningStrategyGeneric && !target.hasOriginalSignature);
+    id existing = ents[@"com.apple.private.security.container-required"];
+    if ((noContainer || noSandbox) && !synthesizedGeneric) {
+        // Preserve an explicitly unsandboxed source target; do not invent a conflict.
+        return;
+    }
+    if ([existing isKindOfClass:[NSString class]] && [(NSString *)existing length] > 0) {
+        // Keep a source-provided string container identity exactly.
+        return;
+    }
+
+    // TrollStore's signApp assigns the bundle identifier to this entitlement
+    // for every container-bearing non-framework bundle. This is especially
+    // important for unsigned/dumped apps whose source has no entitlements.
+    ents[@"com.apple.private.security.container-required"] = target.bundleIdentifier;
+    [ents removeObjectForKey:@"com.apple.private.security.no-container"];
+    [ents removeObjectForKey:@"com.apple.private.security.no-sandbox"];
+    target.plannedEntitlements = [[EntitlementSet alloc] initWithDictionary:ents sourcePath:target.filePath];
 }
 
 #pragma mark - Statistics

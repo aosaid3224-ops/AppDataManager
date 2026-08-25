@@ -34,6 +34,8 @@
     if (self.filePath) d[@"filePath"] = self.filePath;
     if (self.targetName) d[@"targetName"] = self.targetName;
     d[@"targetType"] = [self typeName];
+    if (self.bundleIdentifier) d[@"bundleIdentifier"] = self.bundleIdentifier;
+    if (self.bundlePath) d[@"bundlePath"] = self.bundlePath;
     d[@"hasOriginalSignature"] = @(self.hasOriginalSignature);
     if (self.originalTeamID) d[@"originalTeamID"] = self.originalTeamID;
     if (self.originalAuthority) d[@"originalAuthority"] = self.originalAuthority;

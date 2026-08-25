@@ -33,6 +33,10 @@ typedef NS_ENUM(NSInteger, SigningStrategy) {
 @property (nonatomic, assign) SigningTargetType targetType;
 @property (nonatomic, strong) NSString *targetTypeName;
 
+// Owning bundle context used for per-bundle container-aware signing.
+@property (nonatomic, strong) NSString *bundleIdentifier;
+@property (nonatomic, strong) NSString *bundlePath;
+
 // Original state (from IPA before any modification)
 @property (nonatomic, strong) EntitlementSet *originalEntitlements;
 @property (nonatomic, assign) BOOL hasOriginalSignature;
