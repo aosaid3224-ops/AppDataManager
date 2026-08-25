@@ -21,6 +21,8 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 @property (nonatomic, strong) NSString *shellPath;
 @property (nonatomic, strong) NSString *fouldecryptPath;
 @property (nonatomic, strong) NSString *flexdecryptPath;
+@property (nonatomic, strong) NSString *modernDecryptPath;
+@property (nonatomic, strong) NSString *unzipPath;
 @property (nonatomic, strong, nullable) NSString *helperPath;
 @end
 
@@ -47,6 +49,8 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         _shellPath = [rootless resolvePath:@"/bin/sh"];
         _fouldecryptPath = [rootless resolvePath:@"/usr/local/bin/fouldecrypt"];
         _flexdecryptPath = [rootless resolvePath:@"/usr/local/bin/flexdecrypt2"];
+        _modernDecryptPath = [rootless resolvePath:@"/usr/local/bin/ipadecrypt-helper"];
+        _unzipPath = [rootless resolvePath:@"/usr/bin/unzip"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:_shellPath]) _shellPath = @"/bin/sh";
 
         NSArray<NSString *> *helperCandidates = @[
@@ -320,41 +324,73 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                     if (self.helperPath.length == 0) {
                         error = [self errorWithCode:24 description:@"هذا التطبيق يحتوي Mach-O مشفرًا، لكن root helper غير متاح لفك تشفيره بأمان."];
                     } else {
-                        for (NSString *sourcePath in encryptedPaths) {
-                            NSString *decryptedPath = [sourcePath stringByAppendingString:@".decrypted"];
-                            NSError *firstToolError = nil;
-                            BOOL decrypted = NO;
-                            [fm removeItemAtPath:decryptedPath error:nil];
-
-                            if ([fm isExecutableFileAtPath:self.fouldecryptPath]) {
-                                NSError *toolError = nil;
-                                decrypted = [self runPrivilegedCommand:self.fouldecryptPath args:@[sourcePath, decryptedPath] error:&toolError];
-                                if (!decrypted) firstToolError = toolError;
-                            }
-
-                            // flexdecrypt2 uses /tmp/<basename> as its output. Move
-                            // that result to our private work path immediately so
-                            // multiple binaries remain isolated and deterministic.
-                            if (!decrypted && [fm isExecutableFileAtPath:self.flexdecryptPath]) {
-                                NSString *flexOutput = [NSTemporaryDirectory() stringByAppendingPathComponent:sourcePath.lastPathComponent];
-                                [fm removeItemAtPath:flexOutput error:nil];
-                                NSError *toolError = nil;
-                                decrypted = [self runPrivilegedCommand:self.flexdecryptPath args:@[sourcePath] error:&toolError];
-                                if (decrypted && [fm fileExistsAtPath:flexOutput]) {
-                                    decrypted = [fm moveItemAtPath:flexOutput toPath:decryptedPath error:&toolError];
+                        BOOL modernDecrypted = NO;
+                        NSError *modernError = nil;
+                        NSString *bundleIdentifier = [info[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? info[@"CFBundleIdentifier"] : @"";
+                        if ([fm isExecutableFileAtPath:self.modernDecryptPath] && bundleIdentifier.length > 0) {
+                            NSString *modernIPA = [workDirectory stringByAppendingPathComponent:@"decrypted-modern.ipa"];
+                            NSString *modernExtract = [workDirectory stringByAppendingPathComponent:@"decrypted-modern"];
+                            [fm removeItemAtPath:modernIPA error:nil];
+                            [fm removeItemAtPath:modernExtract error:nil];
+                            if ([self runPrivilegedCommand:self.modernDecryptPath args:@[@"decrypt", bundleIdentifier, bundlePath, modernIPA] error:&modernError]) {
+                                if ([fm createDirectoryAtPath:modernExtract withIntermediateDirectories:YES attributes:nil error:&modernError] &&
+                                    [self runCommand:self.unzipPath args:@[@"-q", modernIPA, @"-d", modernExtract] workingDirectory:nil error:&modernError]) {
+                                    NSString *modernBundle = [[modernExtract stringByAppendingPathComponent:@"Payload"] stringByAppendingPathComponent:bundleName];
+                                    NSDictionary *modernBundleAttrs = [fm attributesOfItemAtPath:modernBundle error:nil];
+                                    if ([modernBundleAttrs[NSFileType] isEqualToString:NSFileTypeDirectory]) {
+                                        if (![fm removeItemAtPath:copiedBundle error:&modernError]) {
+                                            [self runPrivilegedCommand:self.rmPath args:@[@"-rf", copiedBundle] error:nil];
+                                        }
+                                        if ([fm moveItemAtPath:modernBundle toPath:copiedBundle error:&modernError]) modernDecrypted = YES;
+                                    }
                                 }
-                                if (!decrypted && !firstToolError) firstToolError = toolError;
                             }
+                            if (modernDecrypted) decryptedAny = YES;
+                        }
 
-                            BOOL stillEncrypted = NO;
-                            NSDictionary *attrs = [fm attributesOfItemAtPath:decryptedPath error:nil];
-                            if (!decrypted || ![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
-                                NSString *reason = firstToolError.localizedDescription ?: @"لم تتوفر أداة فك تشفير صالحة";
-                                error = [self errorWithCode:25 description:[NSString stringWithFormat:@"تعذر فك تشفير %@: %@", sourcePath.lastPathComponent, reason]];
-                                break;
+                        // Legacy tools are retained only as a compatibility fallback.
+                        // They share the old kernel-offset path and are never used
+                        // before the modern bundle-level backend.
+                        if (!modernDecrypted) {
+                            for (NSString *sourcePath in encryptedPaths) {
+                                NSString *decryptedPath = [sourcePath stringByAppendingString:@".decrypted"];
+                                NSError *firstToolError = modernError;
+                                BOOL decrypted = NO;
+                                [fm removeItemAtPath:decryptedPath error:nil];
+
+                                if ([fm isExecutableFileAtPath:self.fouldecryptPath]) {
+                                    NSError *toolError = nil;
+                                    decrypted = [self runPrivilegedCommand:self.fouldecryptPath args:@[sourcePath, decryptedPath] error:&toolError];
+                                    if (!decrypted && !firstToolError) firstToolError = toolError;
+                                }
+
+                                if (!decrypted && [fm isExecutableFileAtPath:self.flexdecryptPath]) {
+                                    NSString *flexOutput = [NSTemporaryDirectory() stringByAppendingPathComponent:sourcePath.lastPathComponent];
+                                    [fm removeItemAtPath:flexOutput error:nil];
+                                    NSError *toolError = nil;
+                                    decrypted = [self runPrivilegedCommand:self.flexdecryptPath args:@[sourcePath] error:&toolError];
+                                    if (decrypted && [fm fileExistsAtPath:flexOutput]) decrypted = [fm moveItemAtPath:flexOutput toPath:decryptedPath error:&toolError];
+                                    if (!decrypted && !firstToolError) firstToolError = toolError;
+                                }
+
+                                BOOL stillEncrypted = NO;
+                                NSDictionary *attrs = [fm attributesOfItemAtPath:decryptedPath error:nil];
+                                if (!decrypted || ![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
+                                    NSString *reason = firstToolError.localizedDescription ?: @"لم تتوفر أداة فك تشفير صالحة";
+                                    error = [self errorWithCode:25 description:[NSString stringWithFormat:@"تعذر فك تشفير %@: %@", sourcePath.lastPathComponent, reason]];
+                                    break;
+                                }
+                                if (![self runPrivilegedCommand:self.mvPath args:@[@"-f", decryptedPath, sourcePath] error:&error]) break;
+                                decryptedAny = YES;
                             }
-                            if (![self runPrivilegedCommand:self.mvPath args:@[@"-f", decryptedPath, sourcePath] error:&error]) break;
-                            decryptedAny = YES;
+                        }
+
+                        if (!error && decryptedAny) {
+                            NSMutableArray<NSString *> *remainingEncrypted = [NSMutableArray array];
+                            [self machOPathsInBundle:copiedBundle encrypted:remainingEncrypted];
+                            if (remainingEncrypted.count > 0) {
+                                error = [self errorWithCode:28 description:[NSString stringWithFormat:@"بقيت %lu ملفات Mach-O مشفرة بعد فك الحزمة", (unsigned long)remainingEncrypted.count]];
+                            }
                         }
                     }
                 }
