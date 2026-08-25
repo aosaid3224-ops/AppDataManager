@@ -31,10 +31,25 @@
 
     NSMutableArray<SigningTarget *> *targets = [NSMutableArray array];
 
-    // Analyze each executable
+    // Analyze each executable while its extracted source still exists.
+    // Store paths relative to the top-level app bundle: the structural analyzer
+    // cleans its temporary extraction before the install signer runs.
+    NSString *appRoot = nil;
+    for (IPAStructuralBundle *bundle in result.bundles) {
+        if ([bundle.bundleType isEqualToString:@".app"] && bundle.nestingLevel == 0) {
+            appRoot = bundle.path;
+            break;
+        }
+    }
+
     for (IPAStructuralExecutable *exe in result.executables) {
         SigningTarget *target = [self analyzeExecutable:exe inResult:result];
         if (target) {
+            if (appRoot.length > 0 && [target.filePath hasPrefix:appRoot]) {
+                NSString *relative = [target.filePath substringFromIndex:appRoot.length];
+                while ([relative hasPrefix:@"/"]) relative = [relative substringFromIndex:1];
+                target.filePath = relative;
+            }
             [targets addObject:target];
         }
     }

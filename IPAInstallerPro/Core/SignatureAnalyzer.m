@@ -147,26 +147,32 @@
 
 - (NSDictionary *)extractEntitlementsAtPath:(NSString *)path {
     NSString *output = [self runLdid:@"-e" target:path];
-    if (!output || output.length < 10) {
-        return nil;
+    if (!output || output.length < 10) return nil;
+
+    // ldid may write diagnostics before the plist because this helper captures
+    // stdout and stderr together. Isolate the plist payload instead of treating
+    // the whole mixed stream as a property list.
+    NSString *plistPayload = output;
+    NSRange xmlStart = [output rangeOfString:@"<?xml"];
+    NSRange plistEnd = [output rangeOfString:@"</plist>" options:NSBackwardsSearch];
+    if (xmlStart.location != NSNotFound && plistEnd.location != NSNotFound &&
+        NSMaxRange(plistEnd) > xmlStart.location) {
+        plistPayload = [output substringWithRange:NSMakeRange(xmlStart.location,
+                                                               NSMaxRange(plistEnd) - xmlStart.location)];
     }
 
-    // ldid -e outputs a plist XML or binary
-    NSData *data = [output dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *data = [plistPayload dataUsingEncoding:NSUTF8StringEncoding];
     if (!data) return nil;
 
     NSError *error = nil;
-    NSDictionary *plist = [NSPropertyListSerialization propertyListWithData:data
-                                                                    options:NSPropertyListImmutable
-                                                                     format:nil
-                                                                      error:&error];
-    if (error || ![plist isKindOfClass:[NSDictionary class]]) {
-        // Try parsing as XML directly
-        plist = [NSDictionary dictionaryWithContentsOfFile:path]; // This won't work for ldid output
-        return nil;
-    }
+    id plist = [NSPropertyListSerialization propertyListWithData:data
+                                                            options:NSPropertyListImmutable
+                                                             format:nil
+                                                              error:&error];
+    if ([plist isKindOfClass:[NSDictionary class]]) return plist;
 
-    return plist;
+    NSLog(@"[SignatureAnalyzer] Could not parse ldid entitlements for %@: %@", path, error.localizedDescription ?: @"unknown format");
+    return nil;
 }
 
 @end

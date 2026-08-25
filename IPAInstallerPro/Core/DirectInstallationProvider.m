@@ -49,6 +49,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
 @end
 
 @implementation DirectInstallationProvider
@@ -308,8 +309,8 @@ extern char **environ;
  [detail appendFormat:@"missing=%lu sizeMismatch=%lu", (unsigned long)missing, (unsigned long)sizeMismatch];
 
  NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"" transactionID:txnID];
- [opLog endPhase:rec exitCode:0 rawOutput:@"" rawError:@""
- verification:detail verified:YES duration:0];
+ [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Copied bundle does not match source"
+ verification:detail verified:ok duration:0];
   self.diagDeepCopyTotal = srcItems.count;
   self.diagDeepCopyMissing = missing;
   self.diagDeepCopySizeMismatch = sizeMismatch;
@@ -857,16 +858,26 @@ extern char **environ;
  return;
  }
 
- // Deep copy verification (warning only — do NOT block installation)
+ // Deep copy verification is a correctness gate. Continuing after a mismatch
+ // can produce an app that registers successfully but crashes when a missing
+ // framework/resource is first loaded.
  BOOL deepOk = [self verifyDeepCopy:srcApp dst:destApp opLog:opLog txnID:txnID];
  if (!deepOk) {
- NSLog(@"[IPAInstallerPro] WARNING: Deep copy mismatch — continuing anyway");
+ NSLog(@"[IPAInstallerPro] Deep copy mismatch — rolling back installation");
+ [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+ [fm removeItemAtPath:tmp error:nil];
+ [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+ [opLog endTransaction:txnID finalResult:OperationResultFailed];
+ if (completion) completion([InstallationResult failureResult:@"Deep copy verification failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ return;
  }
 
  // PHASE 5: PERMISSION
  NSLog(@"[IPAInstallerPro] === PHASE 5: PERMISSION ===");
- NSString *rec10a = [opLog beginPhase:OperationPhasePermission operation:@"chmod -R 755" target:destApp input:@"" transactionID:txnID];
- [self runRoot:self.chmodPath args:@[@"-R", @"755", destApp] opLog:opLog recordID:rec10a];
+ NSString *rec10a = [opLog beginPhase:OperationPhasePermission operation:@"preserve executable permissions" target:destApp input:@"u+rwX,go+rX" transactionID:txnID];
+ // Do not make every resource executable. Preserve existing executable bits,
+ // make directories traversable, and keep regular resources non-executable.
+ [self runRoot:self.chmodPath args:@[@"-R", @"u+rwX,go+rX", destApp] opLog:opLog recordID:rec10a];
 
  NSString *rec10b = [opLog beginPhase:OperationPhasePermission operation:@"chown -R root:wheel" target:destApp input:@"" transactionID:txnID];
  [self runRoot:self.chownPath args:@[@"-R", @"root:wheel", destApp] opLog:opLog recordID:rec10b];
@@ -920,19 +931,31 @@ extern char **environ;
   // ─── END FIX ───
 
 
- // PHASE 6: SMART SIGN + LEGACY SAFETY NET
+ // PHASE 6: AUTHORITATIVE SMART SIGNING
  NSLog(@"[IPAInstallerPro] === PHASE 6: SIGNING ===");
- NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"" transactionID:txnID];
+ NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"authoritative per-target plan" transactionID:txnID];
  NSUInteger smartSignedCount = 0;
- if (planGenerated && signingPlan) {
- smartSignedCount = [self executeSigningPlan:signingPlan atAppPath:destApp hasHelper:hasH opLog:opLog txnID:txnID];
- NSLog(@"[IPAInstallerPro] Smart signing completed: %lu targets", (unsigned long)smartSignedCount);
+ BOOL authoritativeSigning = NO;
+ if (planGenerated && signingPlan && signingPlan.targets.count > 0) {
+     BOOL remapped = [self remapSigningPlan:signingPlan toInstalledAppPath:destApp];
+     if (remapped) {
+         smartSignedCount = [self executeSigningPlan:signingPlan atAppPath:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+         authoritativeSigning = (smartSignedCount == signingPlan.targets.count);
+         NSLog(@"[IPAInstallerPro] Smart signing completed: %lu/%lu targets", (unsigned long)smartSignedCount, (unsigned long)signingPlan.targets.count);
+     } else {
+         NSLog(@"[IPAInstallerPro] Smart signing plan could not be mapped to installed bundle");
+     }
  }
 
- // ALWAYS run legacy as safety net — catches anything Smart Signing missed
- NSLog(@"[IPAInstallerPro] Running legacy signing as safety net...");
- [self signAllAt:destApp hasHelper:hasH opLog:opLog txnID:txnID];
- [self signExe:destExe hasHelper:hasH opLog:opLog txnID:txnID];
+ // Only use the old broad signer when no complete structural plan is available.
+ // Never run it after a complete plan: that would overwrite preserved/minimal
+ // entitlement policy and reintroduce launch regressions.
+ if (!authoritativeSigning) {
+     NSLog(@"[IPAInstallerPro] Structural plan unavailable/incomplete; using legacy fallback");
+     [self signAllAt:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+     [self signExe:destExe hasHelper:hasH opLog:opLog txnID:txnID];
+ }
+ [opLog endPhase:rec11 exitCode:authoritativeSigning ? 0 : 0 rawOutput:@"" rawError:@"" verification:authoritativeSigning ? @"authoritative plan applied" : @"legacy fallback applied" verified:YES duration:0];
 
  BOOL sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  if (!sigOk) {
@@ -950,13 +973,15 @@ extern char **environ;
          return;
      }
  }
- [opLog endPhase:rec11 exitCode:0 rawOutput:@"" rawError:@"" verification:@"signing complete" verified:YES duration:0];
-
-  // PHASE 7: FRAMEWORK (always run as safety net)
+  // PHASE 7: FRAMEWORK (legacy fallback only)
   NSString *dbgBefore = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] BEFORE fixFrameworks" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgBefore exitCode:0 rawOutput:@"[DEBUG] BEFORE fixFrameworks" rawError:@"" verification:@"debug" verified:YES duration:0];
 
-  [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+  if (!authoritativeSigning) {
+      [self fixFrameworks:destApp hasHelper:hasH opLog:opLog txnID:txnID];
+  } else {
+      NSLog(@"[IPAInstallerPro] Skipping legacy fixFrameworks pass; authoritative plan already signed every target");
+  }
 
   NSString *dbgAfter = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] AFTER fixFrameworks" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgAfter exitCode:0 rawOutput:@"[DEBUG] AFTER fixFrameworks" rawError:@"" verification:@"debug" verified:YES duration:0];
@@ -1679,6 +1704,26 @@ extern char **environ;
  }
 
  return bestIcon;
+}
+
+- (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (!plan || !installedAppPath.length || ![fm fileExistsAtPath:installedAppPath]) return NO;
+
+    NSUInteger validTargets = 0;
+    for (SigningTarget *target in plan.targets) {
+        if (!target.filePath.length) return NO;
+        NSString *relative = target.filePath;
+        while ([relative hasPrefix:@"/"]) relative = [relative substringFromIndex:1];
+        NSString *installedPath = [installedAppPath stringByAppendingPathComponent:relative];
+        if (![fm fileExistsAtPath:installedPath]) {
+            NSLog(@"[SmartSign] Missing mapped target: %@ -> %@", relative, installedPath);
+            return NO;
+        }
+        target.filePath = installedPath;
+        validTargets++;
+    }
+    return (validTargets == plan.targets.count && validTargets > 0);
 }
 
 #pragma mark - Uninstall
