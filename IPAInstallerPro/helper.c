@@ -34,11 +34,14 @@ int main(int argc, char *argv[], char *envp[]) {
         setegid(0);
     }
 
-    // Verify elevation (best effort)
+    // Never execute privileged installer commands unless the helper actually
+    // acquired effective UID 0. Returning success here would make the caller
+    // believe that signing/uicache/chown ran with root while it did not.
     uid_t current_uid = getuid();
     uid_t current_euid = geteuid();
-    if (current_uid != 0 && current_euid != 0) {
-        fprintf(stderr, "Warning: Not running as root (uid=%d, euid=%d)\n", current_uid, current_euid);
+    if (current_euid != 0) {
+        fprintf(stderr, "ERROR: Could not acquire root (uid=%d, euid=%d)\n", current_uid, current_euid);
+        return 126;
     }
 
     // Execute target command with original environment

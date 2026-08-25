@@ -53,6 +53,7 @@ extern char **environ;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
+- (BOOL)verifyPlannedEntitlements:(SigningPlan *)plan opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -1008,15 +1009,27 @@ extern char **environ;
 
  BOOL sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
  if (!sigOk) {
-     NSLog(@"[IPAInstallerPro] Signature weak, retrying with explicit entitlements...");
+     if (authoritativeSigning) {
+         // A complete plan must never be replaced by the legacy signer after a
+         // failed verification. That would make the install report success with
+         // different entitlements than the plan that was analyzed.
+         NSLog(@"[IPAInstallerPro] Planned signature verification failed — refusing legacy entitlement overwrite");
+         [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Planned signature verification failed" verification:@"authoritative signing" verified:NO duration:0];
+         [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+         [fm removeItemAtPath:tmp error:nil];
+         [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+         [opLog endTransaction:txnID finalResult:OperationResultFailed];
+         if (completion) completion([InstallationResult failureResult:@"Planned signature verification failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+         return;
+     }
+     NSLog(@"[IPAInstallerPro] Legacy signature weak, retrying with explicit entitlements...");
      [self signExeWithExplicitEntitlements:destExe hasHelper:hasH opLog:opLog txnID:txnID];
      sigOk = [self verifySignature:destExe opLog:opLog txnID:txnID];
      if (!sigOk) {
          [opLog endPhase:rec11 exitCode:1 rawOutput:@"" rawError:@"Signing failed" verification:@"signing" verified:NO duration:0];
          [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
          [fm removeItemAtPath:tmp error:nil];
-  // Emit diagnostics report even on failure
-  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+         [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
          [opLog endTransaction:txnID finalResult:OperationResultFailed];
          if (completion) completion([InstallationResult failureResult:@"Signature failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
          return;
@@ -1039,6 +1052,15 @@ extern char **environ;
   [opLog endPhase:dbgEnter exitCode:0 rawOutput:@"[DEBUG] ENTERING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
   [self postSignVerification:destApp opLog:opLog txnID:txnID];
+  if (authoritativeSigning && ![self verifyPlannedEntitlements:signingPlan opLog:opLog txnID:txnID]) {
+      NSLog(@"[IPAInstallerPro] Final entitlement invariants failed — rollback");
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Final entitlement verification failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
 
   NSString *dbgExit = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] EXITING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
@@ -1093,6 +1115,65 @@ extern char **environ;
  provider:[self providerName] transaction:txnID evidence:@{@"bundleID": bundleID, @"path": destApp, @"exe": exeName}];
  result.bundleID = bundleID;
  if (completion) completion(result);
+}
+
+- (BOOL)verifyPlannedEntitlements:(SigningPlan *)plan opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    if (!plan || plan.targets.count == 0) return NO;
+    NSMutableString *summary = [NSMutableString string];
+    BOOL allOK = YES;
+    for (SigningTarget *target in plan.targets) {
+        if (!target.needsSigning) continue;
+        BOOL containerBearing = (target.targetType == SigningTargetTypeMainExecutable ||
+                                 target.targetType == SigningTargetTypeAppExtension ||
+                                 target.targetType == SigningTargetTypeXPCService);
+        if (!containerBearing) continue;
+
+        NSDictionary *planned = target.plannedEntitlements.rawEntitlements;
+        NSDictionary *finalEnts = [self extractEntitlementsFromExecutable:target.filePath];
+        BOOL ok = (finalEnts != nil && finalEnts.count > 0);
+        NSMutableArray *failures = [NSMutableArray array];
+
+        id plannedContainer = planned[@"com.apple.private.security.container-required"];
+        if ([plannedContainer isKindOfClass:[NSString class]] && [(NSString *)plannedContainer length] > 0) {
+            if (![finalEnts[@"com.apple.private.security.container-required"] isEqual:plannedContainer]) {
+                ok = NO;
+                [failures addObject:@"container-required mismatch/missing"];
+            }
+            if ([finalEnts[@"com.apple.private.security.no-container"] boolValue] ||
+                [finalEnts[@"com.apple.private.security.no-sandbox"] boolValue]) {
+                ok = NO;
+                [failures addObject:@"conflicting no-container/no-sandbox present"];
+            }
+        }
+
+        if (target.targetType == SigningTargetTypeMainExecutable && !target.hasOriginalSignature) {
+            id expectedAppID = planned[@"application-identifier"];
+            id expectedTeamID = planned[@"com.apple.developer.team-identifier"];
+            if ([expectedAppID isKindOfClass:[NSString class]] &&
+                ![finalEnts[@"application-identifier"] isEqual:expectedAppID]) {
+                ok = NO;
+                [failures addObject:@"application-identifier mismatch/missing"];
+            }
+            if ([expectedTeamID isKindOfClass:[NSString class]] &&
+                ![finalEnts[@"com.apple.developer.team-identifier"] isEqual:expectedTeamID]) {
+                ok = NO;
+                [failures addObject:@"team-identifier mismatch/missing"];
+            }
+            if ([planned[@"keychain-access-groups"] isKindOfClass:[NSArray class]] &&
+                ![finalEnts[@"keychain-access-groups"] isKindOfClass:[NSArray class]]) {
+                ok = NO;
+                [failures addObject:@"keychain-access-groups missing"];
+            }
+        }
+
+        [summary appendFormat:@"%@=%@%@; ", target.targetName ?: target.filePath, ok ? @"OK" : @"FAIL", failures.count ? [NSString stringWithFormat:@" (%@)", [failures componentsJoinedByString:@", "]] : @""];
+        NSLog(@"[IPAInstallerPro] Final entitlement check %@: %@%@", target.targetName, ok ? @"OK" : @"FAIL", failures.count ? [NSString stringWithFormat:@" %@", [failures componentsJoinedByString:@", "]] : @"");
+        if (!ok) allOK = NO;
+    }
+
+    NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"final entitlement invariants" target:@"main/appex" input:@"ldid -e" transactionID:txnID];
+    [opLog endPhase:recordID exitCode:allOK ? 0 : 1 rawOutput:summary rawError:allOK ? @"" : @"Planned entitlement values were not present in final signatures" verification:@"planned versus final entitlements" verified:allOK duration:0];
+    return allOK;
 }
 
 - (void)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {

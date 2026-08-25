@@ -3,6 +3,7 @@
 //
 
 #import "SignatureAnalyzer.h"
+#import "RootlessManager.h"
 #import <spawn.h>
 
 @implementation SignatureInfo
@@ -38,9 +39,9 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _ldidPath = @"/usr/bin/ldid";
+        _ldidPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/ldid"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:_ldidPath]) {
-            _ldidPath = @"ldid"; // fallback to PATH
+            _ldidPath = @"ldid"; // fallback to PATH only when the rootless path is unavailable
         }
     }
     return self;

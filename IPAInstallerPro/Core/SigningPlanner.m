@@ -351,12 +351,13 @@
         }
     }
 
-    BOOL noContainer = [ents[@"com.apple.private.security.no-container"] boolValue];
-    BOOL noSandbox = [ents[@"com.apple.private.security.no-sandbox"] boolValue];
-    BOOL synthesizedGeneric = (target.strategy == SigningStrategyGeneric && !target.hasOriginalSignature);
+    BOOL sourceNoContainer = [target.originalEntitlements.rawEntitlements[@"com.apple.private.security.no-container"] boolValue];
+    BOOL sourceNoSandbox = [target.originalEntitlements.rawEntitlements[@"com.apple.private.security.no-sandbox"] boolValue];
     id existing = ents[@"com.apple.private.security.container-required"];
-    if ((noContainer || noSandbox) && !synthesizedGeneric) {
-        // Preserve an explicitly unsandboxed source target; do not invent a conflict.
+    if ((sourceNoContainer || sourceNoSandbox) && ![existing isKindOfClass:[NSString class]]) {
+        // Preserve an explicitly unsandboxed source target; do not invent a
+        // conflicting container identity. The generic dictionary itself is not
+        // treated as source evidence because it is the installer's baseline.
         return;
     }
     if ([existing isKindOfClass:[NSString class]] && [(NSString *)existing length] > 0) {
