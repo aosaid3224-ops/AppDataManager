@@ -11,6 +11,7 @@
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
 #import "SigningPlanner.h"
+#import "MachORPathRepair.h"
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
@@ -783,6 +784,23 @@ extern char **environ;
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
  [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:YES duration:0];
+
+ // Repair clearly non-portable build-host LC_RPATH values while the extracted
+ // source is still writable. The repaired bytes are then copied and signed;
+ // this avoids requiring the app process to write into the root-owned target.
+ NSArray *changedRPaths = nil;
+ NSString *rpathError = nil;
+ NSString *rpathRecord = [opLog beginPhase:OperationPhaseVerify operation:@"mach-o rpath portability" target:srcApp input:@"repair build-host LC_RPATH" transactionID:txnID];
+ BOOL rpathOk = [[MachORPathRepair sharedRepair] repairAppAtPath:srcApp changedPaths:&changedRPaths error:&rpathError];
+ [opLog endPhase:rpathRecord exitCode:rpathOk ? 0 : 1 rawOutput:[NSString stringWithFormat:@"changed=%lu", (unsigned long)changedRPaths.count] rawError:rpathError ?: @"" verification:rpathOk ? @"portable LC_RPATH state" : @"unsafe LC_RPATH could not be repaired" verified:rpathOk duration:0];
+ if (!rpathOk) {
+     NSLog(@"[IPAInstallerPro] Mach-O rpath repair failed — refusing installation: %@", rpathError);
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"Non-portable Mach-O rpath could not be repaired" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"reason": rpathError ?: @"unknown" }]);
+     return;
+ }
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSLog(@"[IPAInstallerPro] === PHASE 4: FILE_COPY ===");

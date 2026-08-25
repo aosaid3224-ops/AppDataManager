@@ -24,9 +24,10 @@
 #define FAT_MAGIC_64    0xcafebabf
 #define FAT_CIGAM_64    0xbfbafeca
 
+#define LC_REQ_DYLD             0x80000000U
 #define LC_LOAD_DYLIB           0x0c
 #define LC_LOAD_WEAK_DYLIB      0x18
-#define LC_RPATH                0x1f
+#define LC_RPATH                0x1c
 #define LC_ID_DYLIB             0x0d
 #define LC_UUID                 0x1b
 #define LC_CODE_SIGNATURE       0x1d
@@ -481,6 +482,7 @@ static inline uint64_t swap64(uint64_t v) {
 
         const struct load_command *lc = (const struct load_command *)((const uint8_t *)data + lcOffset);
         uint32_t cmd = isSwap ? swap32(lc->cmd) : lc->cmd;
+        uint32_t baseCmd = cmd & ~LC_REQ_DYLD;
         uint32_t cmdsize = isSwap ? swap32(lc->cmdsize) : lc->cmdsize;
 
         if (cmdsize == 0 || lcOffset + cmdsize > length) break;
@@ -489,7 +491,7 @@ static inline uint64_t swap64(uint64_t v) {
         lcObj.cmd = cmd;
         lcObj.cmdsize = cmdsize;
 
-        switch (cmd) {
+        switch (baseCmd) {
             case LC_LOAD_DYLIB:
             case LC_LOAD_WEAK_DYLIB:
             case LC_ID_DYLIB: {
@@ -510,11 +512,11 @@ static inline uint64_t swap64(uint64_t v) {
                         } else {
                             MachODependency *dep = [[MachODependency alloc] init];
                             dep.rawInstallName = name;
-                            dep.isWeak = (cmd == LC_LOAD_WEAK_DYLIB);
+                            dep.isWeak = (baseCmd == LC_LOAD_WEAK_DYLIB);
                             dep.sourceExecutablePath = result.filePath;
                             [deps addObject:dep];
                             lcObj.cmdDescription = [NSString stringWithFormat:@"%@: %@",
-                                (cmd == LC_LOAD_WEAK_DYLIB ? @"LC_LOAD_WEAK_DYLIB" : @"LC_LOAD_DYLIB"), name];
+                                (baseCmd == LC_LOAD_WEAK_DYLIB ? @"LC_LOAD_WEAK_DYLIB" : @"LC_LOAD_DYLIB"), name];
                         }
                     }
                 }
