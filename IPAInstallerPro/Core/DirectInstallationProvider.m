@@ -410,7 +410,7 @@ extern char **environ;
     [detail appendFormat:@"missing=%lu extra=%lu typeMismatch=%lu sizeMismatch=%lu linkMismatch=%lu", (unsigned long)missing, (unsigned long)extra, (unsigned long)typeMismatch, (unsigned long)sizeMismatch, (unsigned long)linkMismatch];
 
     NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"lstat topology + symlink + regular-file size" transactionID:txnID];
-    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:0];
+    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:detail rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:0];
     self.diagDeepCopyTotal = srcItems.count;
     self.diagDeepCopyMissing = missing + extra;
     self.diagDeepCopySizeMismatch = sizeMismatch + typeMismatch + linkMismatch;
@@ -463,7 +463,15 @@ extern char **environ;
 
 - (void)restoreBackup:(NSString *)backupPath to:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
- if (![fm fileExistsAtPath:backupPath]) return;
+ if (![fm fileExistsAtPath:backupPath]) {
+     // There was no pre-existing installation. Never leave a partial bundle
+     // behind, otherwise the next cp -R may merge into it.
+     if ([fm fileExistsAtPath:destApp]) {
+         if ([self hasRootHelper]) [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:nil];
+         else [fm removeItemAtPath:destApp error:nil];
+     }
+     return;
+ }
 
  NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"restoreBackup" target:backupPath input:destApp transactionID:txnID];
 
@@ -938,8 +946,21 @@ extern char **environ;
  return;
  }
 
- // Copy — try root helper first, then copyfile, then NSFileManager
- NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, destApp] input:@"" transactionID:txnID];
+ // Copy only into a fresh destination. cp -R merges when the target exists,
+ // which can create extra stale files after a previous failed attempt.
+ if ([fm fileExistsAtPath:destApp]) {
+     NSString *clearRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"clear destination before copy" target:destApp input:@"rm -rf" transactionID:txnID];
+     BOOL cleared = hasH ? [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:clearRec] : [fm removeItemAtPath:destApp error:nil];
+     if (!cleared || [fm fileExistsAtPath:destApp]) {
+         [opLog endPhase:clearRec exitCode:1 rawOutput:@"" rawError:@"Destination remained before copy" verification:@"destination must be absent" verified:NO duration:0];
+         [fm removeItemAtPath:tmp error:nil];
+         [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+         [opLog endTransaction:txnID finalResult:OperationResultFailed];
+         if (completion) completion([InstallationResult failureResult:@"Destination was not empty before copy — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+         return;
+     }
+ }
+ NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle" target:[NSString stringWithFormat:@"%@ -> fresh:%@", srcApp, destApp] input:@"" transactionID:txnID];
  BOOL copied = NO;
  if (hasH) {
  copied = [self runRoot:self.cpPath args:@[@"-R", srcApp, destApp] opLog:opLog recordID:rec9];
