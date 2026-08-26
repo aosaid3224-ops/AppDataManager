@@ -2034,8 +2034,25 @@ extern char **environ;
             continue;
         }
         NSString *nestedExecutable = [bundlePath stringByAppendingPathComponent:bundleExecutable];
-        if ([machOPaths containsObject:nestedExecutable] && (![fm fileExistsAtPath:nestedExecutable] || access(nestedExecutable.fileSystemRepresentation, X_OK) != 0)) {
-            [failures addObject:[NSString stringWithFormat:@"nested executable is not runnable: %@", nestedExecutable.lastPathComponent]];
+        BOOL isHostBundle = [lower hasSuffix:@".app"] && [bundlePath isEqualToString:appPath];
+        BOOL nestedExists = [fm fileExistsAtPath:nestedExecutable] && [fm isReadableFileAtPath:nestedExecutable];
+        BOOL nestedMachO = [machOPaths containsObject:nestedExecutable];
+        BOOL nestedExecutableBit = nestedExists && access(nestedExecutable.fileSystemRepresentation, X_OK) == 0;
+        if (!nestedExists) {
+            [failures addObject:[NSString stringWithFormat:@"nested executable is missing or unreadable: %@", nestedExecutable.lastPathComponent]];
+        } else if (!nestedMachO) {
+            [failures addObject:[NSString stringWithFormat:@"nested executable is not a recognized Mach-O: %@", nestedExecutable.lastPathComponent]];
+        } else if (isHostBundle && !nestedExecutableBit) {
+            // The host application's executable is the launch-critical contract.
+            [failures addObject:[NSString stringWithFormat:@"main executable is not runnable: %@", nestedExecutable.lastPathComponent]];
+        } else if (!isHostBundle && !nestedExecutableBit) {
+            // Extensions/XPC services are signed child bundles, not standalone
+            // launch targets. Keep existence, Mach-O, arm64, dependencies and
+            // signature checks strict, but do not reject the host only because
+            // an extension cannot be launched as an independent application.
+            NSLog(@"[IPAInstallerPro] Non-host nested executable lacks X_OK; retaining as warning: %@", nestedExecutable);
+            NSString *warningRecord = [opLog beginPhase:OperationPhaseVerify operation:@"nested executable permission warning" target:nestedExecutable input:@"role-aware check" transactionID:txnID];
+            [opLog endPhase:warningRecord exitCode:0 rawOutput:@"" rawError:@"" verification:@"non-host child executable: permission warning only" verified:YES duration:0 context:@{ @"role": [lower hasSuffix:@".appex"] ? @"appex" : ([lower hasSuffix:@".xpc"] ? @"xpc" : @"nested") }];
         }
     }
 
