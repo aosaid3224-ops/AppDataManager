@@ -54,6 +54,8 @@ extern char **environ;
 @property (nonatomic, assign) NSUInteger diagDeepCopyMissing;
 @property (nonatomic, assign) NSUInteger diagDeepCopySizeMismatch;
 @property (nonatomic, strong) NSString *diagDeepCopyDetail;
+@property (nonatomic, strong) NSString *lastMachOVerificationDetail;
+@property (nonatomic, strong) SigningPlan *activeSigningPlan;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
@@ -555,9 +557,9 @@ extern char **environ;
 
 - (BOOL)verifySignature:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSLog(@"[IPAInstallerPro] verifySignature: path=%@ ldid=%@", path, self.ldidPath);
- NSString *output = [self runCmdOutput:self.ldidPath args:@[@"-d", path]];
+ NSString *output = [self runCmdOutput:self.ldidPath args:@[@"-h", path]];
  BOOL hasSig = (output && output.length > 0);
- NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -d signature check" target:path input:@"" transactionID:txnID];
+ NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"ldid -h code signature check" target:path input:@"" transactionID:txnID];
  [opLog endPhase:rec exitCode:hasSig ? 0 : 1 rawOutput:output ?: @"" rawError:hasSig ? @"" : @"No signature detected"
  verification:hasSig ? @"Signature present" : @"No signature" verified:hasSig duration:0];
  NSLog(@"[IPAInstallerPro] verifySignature result: hasSig=%d output=%@", hasSig, output);
@@ -724,7 +726,7 @@ extern char **environ;
                     fwCount++;
                     NSString *fwExe = [fwDir stringByAppendingPathComponent:[item stringByAppendingPathComponent:[item stringByDeletingPathExtension]]];
                     if ([fm fileExistsAtPath:fwExe]) {
-                        NSString *fwSig = [self runCmdOutput:self.ldidPath args:@[@"-d", fwExe]];
+                        NSString *fwSig = [self runCmdOutput:self.ldidPath args:@[@"-h", fwExe]];
                         if (fwSig && fwSig.length > 0) fwSigned++;
                     }
                 }
@@ -994,6 +996,7 @@ extern char **environ;
 // PHASE 3.5: SMART SIGNING PLAN
  NSString *recPlan = [opLog beginPhase:OperationPhaseAppIdentify operation:@"smart-signing-plan" target:srcApp input:@"analyzing structure" transactionID:txnID];
   __block SigningPlan *signingPlan = nil;
+ self.activeSigningPlan = nil;
  BOOL planGenerated = NO;
  @try {
  IPAStructuralResult *structResult = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:ipaPath keepExtracted:NO];
@@ -1006,7 +1009,8 @@ extern char **environ;
  }
  if (structResult.success && structResult.executables.count > 0 && parseComplete) {
  signingPlan = [[SigningPlanner sharedPlanner] createPlanForStructuralResult:structResult];
- planGenerated = signingPlan.isViable;
+  planGenerated = signingPlan.isViable;
+  if (planGenerated) self.activeSigningPlan = signingPlan;
  if (planGenerated) {
  NSLog(@"[SmartSign] Plan: %ld targets, %ld preserve, %ld generic, %ld minimal",
  (long)signingPlan.totalTargets,
@@ -1452,14 +1456,51 @@ extern char **environ;
 - (BOOL)verifyAllMachOSignedAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSArray<NSString *> *paths = [self machOPathsAtPath:appPath];
     BOOL allOK = (paths.count > 0);
+    NSUInteger passedCount = 0;
+    NSMutableString *details = [NSMutableString stringWithFormat:@"Mach-O targets=%lu\n", (unsigned long)paths.count];
     for (NSString *path in paths) {
-        NSString *signature = [self runCmdOutput:self.ldidPath args:@[@"-d", path]];
-        BOOL isSigned = (signature.length > 0);
-        NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"verify every Mach-O signature" target:path input:@"ldid -d" transactionID:txnID];
-        [opLog endPhase:recordID exitCode:isSigned ? 0 : 1 rawOutput:signature ?: @"" rawError:isSigned ? @"" : @"Mach-O has no readable code signature" verification:[NSString stringWithFormat:@"signed=%@", isSigned ? @"YES" : @"NO"] verified:isSigned duration:0];
-        if (!isSigned) allOK = NO;
+        NSString *relativePath = path;
+        NSString *rootPrefix = [appPath stringByAppendingString:@"/"];
+        if ([path hasPrefix:rootPrefix]) relativePath = [path substringFromIndex:rootPrefix.length];
+
+        struct stat st = {0};
+        BOOL lstatOK = (lstat(path.fileSystemRepresentation, &st) == 0);
+        NSString *fileType = lstatOK ? (S_ISREG(st.st_mode) ? @"regular" : (S_ISLNK(st.st_mode) ? @"symlink" : (S_ISDIR(st.st_mode) ? @"directory" : @"other"))) : @"lstat-failed";
+        NSString *mode = lstatOK ? [NSString stringWithFormat:@"%04o", st.st_mode & 07777] : @"-";
+        NSString *uid = lstatOK ? [NSString stringWithFormat:@"%u", st.st_uid] : @"-";
+        NSString *gid = lstatOK ? [NSString stringWithFormat:@"%u", st.st_gid] : @"-";
+        NSString *size = lstatOK ? [NSString stringWithFormat:@"%lld", (long long)st.st_size] : @"-";
+
+        MachOAnalysisResult *analysis = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:path];
+        NSString *parseStatus = analysis ? [NSString stringWithFormat:@"%ld", (long)analysis.parseStatus] : @"none";
+        NSString *machOType = analysis.machOTypeName ?: @"unknown";
+        NSUInteger slices = analysis.slices.count;
+        BOOL hasEmbeddedCodeSignature = analysis && analysis.hasCodeSignature && analysis.codeSignatureSize > 0;
+
+        SigningTarget *plannedTarget = nil;
+        for (SigningTarget *candidate in self.activeSigningPlan.targets) {
+            if ([candidate.filePath isEqualToString:path]) { plannedTarget = candidate; break; }
+        }
+        NSString *planState = plannedTarget ? @"IN_SIGNING_PLAN" : @"OUTSIDE_SIGNING_PLAN";
+        NSString *planType = plannedTarget.targetTypeName ?: (plannedTarget ? [plannedTarget typeName] : @"-");
+        NSString *strategy = plannedTarget.strategyName ?: (plannedTarget ? [plannedTarget strategyNameString] : @"-");
+        NSString *needsSigning = plannedTarget ? (plannedTarget.needsSigning ? @"YES" : @"NO") : @"-";
+
+        NSString *metaRecord = [opLog beginPhase:OperationPhaseVerify operation:@"Mach-O forensic metadata" target:path input:relativePath transactionID:txnID];
+        BOOL metadataOK = lstatOK && analysis && analysis.parseStatus == MachOParseSuccess && analysis.machOType != 0;
+        NSString *metadataError = metadataOK ? @"" : [NSString stringWithFormat:@"metadata validation failed: lstat=%@ parseStatus=%@ machOType=%@", lstatOK ? @"OK" : @"FAIL", parseStatus, machOType];
+        [opLog endPhase:metaRecord exitCode:metadataOK ? 0 : 1 rawOutput:@"" rawError:metadataError verification:[NSString stringWithFormat:@"relative=%@ type=%@ mode=%@ uid=%@ gid=%@ size=%@ macho=%@ slices=%lu codeSignature=%@ plan=%@ type=%@ strategy=%@ needsSigning=%@", relativePath, fileType, mode, uid, gid, size, machOType, (unsigned long)slices, hasEmbeddedCodeSignature ? @"YES" : @"NO", planState, planType, strategy, needsSigning] verified:metadataOK duration:0 context:@{@"path": path ?: @"", @"relativePath": relativePath ?: @"", @"fileType": fileType, @"mode": mode, @"uid": uid, @"gid": gid, @"size": size, @"parseStatus": parseStatus, @"machOType": machOType, @"slices": @(slices), @"hasCodeSignatureLoadCommand": @(hasEmbeddedCodeSignature), @"codeSignatureOffset": @(analysis.codeSignatureOffset), @"codeSignatureSize": @(analysis.codeSignatureSize), @"planState": planState, @"plannedType": planType, @"strategy": strategy, @"needsSigning": needsSigning}];
+
+        NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"verify every Mach-O code signature" target:path input:@"ldid -h" transactionID:txnID];
+        BOOL ldidOK = [self runCmdCapture:self.ldidPath args:@[@"-h", path] opLog:opLog recordID:recordID operation:@"Mach-O ldid -h verification"];
+        BOOL targetOK = metadataOK && hasEmbeddedCodeSignature && ldidOK;
+        if (targetOK) passedCount++;
+        else allOK = NO;
+        [details appendFormat:@"%@ | relative=%@ | full=%@ | type=%@ | mode=%@ uid=%@ gid=%@ size=%@ | parse=%@ macho=%@ slices=%lu | embeddedCodeSignature=%@ offset=%u size=%u | plan=%@ type=%@ strategy=%@ needsSigning=%@ | ldid-h=%@\n", targetOK ? @"PASS" : @"FAIL", relativePath, path, fileType, mode, uid, gid, size, parseStatus, machOType, (unsigned long)slices, hasEmbeddedCodeSignature ? @"YES" : @"NO", analysis.codeSignatureOffset, analysis.codeSignatureSize, planState, planType, strategy, needsSigning, ldidOK ? @"PASS" : @"FAIL"];
     }
-    NSLog(@"[IPAInstallerPro] Nested Mach-O signature coverage: %lu/%lu", (unsigned long)(allOK ? paths.count : 0), (unsigned long)paths.count);
+    [details appendFormat:@"Summary: passed=%lu failed=%lu total=%lu\n", (unsigned long)passedCount, (unsigned long)(paths.count - passedCount), (unsigned long)paths.count];
+    self.lastMachOVerificationDetail = details;
+    NSLog(@"[IPAInstallerPro] Nested Mach-O signature coverage: %lu/%lu", (unsigned long)passedCount, (unsigned long)paths.count);
     return allOK;
 }
 
@@ -1507,7 +1548,7 @@ extern char **environ;
     [r appendString:@"\n[SIGNATURE]\n"];
 
     // Runner signature
-    NSString *runnerSig = [self runCmdOutput:self.ldidPath args:@[@"-d", mainExe]];
+    NSString *runnerSig = [self runCmdOutput:self.ldidPath args:@[@"-h", mainExe]];
     BOOL runnerSigned = (runnerSig && runnerSig.length > 0);
     [r appendFormat:@"  Runner signature:          %@\n", runnerSigned ? @"VALID" : @"INVALID"];
     if (runnerSigned) {
@@ -1524,7 +1565,7 @@ extern char **environ;
                 fwTotal++;
                 NSString *fwExe = [fwDir stringByAppendingPathComponent:[item stringByAppendingPathComponent:[item stringByDeletingPathExtension]]];
                 if ([fm fileExistsAtPath:fwExe]) {
-                    NSString *sig = [self runCmdOutput:self.ldidPath args:@[@"-d", fwExe]];
+                    NSString *sig = [self runCmdOutput:self.ldidPath args:@[@"-h", fwExe]];
                     if (sig && sig.length > 0) {
                         fwSigned++;
                     } else {
@@ -1540,10 +1581,15 @@ extern char **environ;
     [r appendFormat:@"  Frameworks signed:         %lu\n", (unsigned long)fwSigned];
     [r appendFormat:@"  Frameworks failed:         %lu\n", (unsigned long)fwFailed];
 
+    [r appendString:@"\n[MACH-O TARGET RESULTS]\n"];
+    BOOL nestedMachOOk = [self verifyAllMachOSignedAtPath:destApp opLog:opLog txnID:txnID];
+    [r appendString:self.lastMachOVerificationDetail ?: @"Mach-O scan produced no targets\n"];
+    [r appendFormat:@"  Runner signed:             %@\n", runnerSigned ? @"YES" : @"NO"];
+    [r appendFormat:@"  Nested Mach-O verification: %@\n", nestedMachOOk ? @"PASS" : @"FAIL"];
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
 
-    BOOL allOk = runnerSigned && [self verifyAllMachOSignedAtPath:destApp opLog:opLog txnID:txnID];
-    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:allOk ? @"" : @"At least one Mach-O target is unsigned or unreadable" verification:@"post-sign verification complete" verified:allOk duration:0];
+    BOOL allOk = runnerSigned && nestedMachOOk;
+    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:allOk ? @"" : @"Post-sign Mach-O verification failed; see MACH-O TARGET RESULTS for exact target" verification:@"post-sign verification complete" verified:allOk duration:0 context:@{@"runnerSigned": @(runnerSigned), @"nestedMachOTargets": @(nestedMachOOk), @"machOVerification": self.lastMachOVerificationDetail ?: @""}];
     return allOk;
 }
 
@@ -1828,8 +1874,8 @@ extern char **environ;
  NSArray *paths = [self embeddedExecutablePathsAtPath:appPath];
  BOOL allValid = YES;
  for (NSString *path in paths) {
- BOOL valid = [self runCmd:self.ldidPath args:@[@"-d", path] opLog:nil recordID:nil];
- NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"verify embedded executable signature" target:path input:@"ldid -d" transactionID:txnID];
+ BOOL valid = [self runCmd:self.ldidPath args:@[@"-h", path] opLog:nil recordID:nil];
+ NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"verify embedded executable signature" target:path input:@"ldid -h" transactionID:txnID];
  [opLog endPhase:rec exitCode:valid ? 0 : 1 rawOutput:@"" rawError:valid ? @"" : @"Embedded executable signature check failed"
  verification:[NSString stringWithFormat:@"path=%@ signed=%@", path, valid ? @"YES" : @"NO"] verified:valid duration:0];
  if (!valid) allValid = NO;

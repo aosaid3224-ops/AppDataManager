@@ -129,7 +129,9 @@
     SignatureInfo *info = [[SignatureInfo alloc] init];
     info.source = @"ldid";
 
-    NSString *output = [self runLdid:@"-d" target:path];
+    // ldid -d prints only cryptid; it is not a signature-presence check.
+    // ldid -h reports CodeDirectory, CDHash and Authority information.
+    NSString *output = [self runLdid:@"-h" target:path];
     if (!output || output.length == 0) {
         info.isSigned = NO;
         info.signatureStatus = @"unsigned";
@@ -139,29 +141,31 @@
     info.isSigned = YES;
     info.signatureStatus = @"signed";
 
-    // Parse ldid -d output
-    // Example: "Identifier: com.example.app\nTeamIdentifier: ABC123\n..."
+    // Parse ldid -h output, which uses key=value (not key: value).
     NSArray *lines = [output componentsSeparatedByString:@"\n"];
     for (NSString *line in lines) {
         NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (trimmed.length == 0) continue;
-
-        if ([trimmed hasPrefix:@"Identifier:"]) {
-            info.identifier = [[trimmed substringFromIndex:11] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        }
-        else if ([trimmed hasPrefix:@"TeamIdentifier:"]) {
-            info.teamID = [[trimmed substringFromIndex:15] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        }
-        else if ([trimmed hasPrefix:@"Authority:"]) {
-            info.authority = [[trimmed substringFromIndex:10] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if ([info.authority rangeOfString:@"adhoc" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                [info.authority rangeOfString:@"AdHoc" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        NSRange separator = [trimmed rangeOfString:@"="];
+        if (separator.location == NSNotFound) continue;
+        NSString *key = [trimmed substringToIndex:separator.location];
+        NSString *value = [[trimmed substringFromIndex:separator.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if ([key isEqualToString:@"Identifier"]) {
+            info.identifier = value;
+        } else if ([key isEqualToString:@"TeamIdentifier"]) {
+            info.teamID = value;
+        } else if ([key isEqualToString:@"Authority"]) {
+            // ldid emits one Authority line per certificate; retain the leaf authority.
+            if (!info.authority.length) info.authority = value;
+            if ([value rangeOfString:@"adhoc" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [value rangeOfString:@"AdHoc" options:NSCaseInsensitiveSearch].location != NSNotFound) {
                 info.isAdHocSigned = YES;
             }
         }
     }
 
-    // If no authority found but signed, assume ad-hoc
+    // A valid ad-hoc signature may have no Authority lines; do not invent
+    // certificate data, but retain the signed state reported by ldid -h.
     if (!info.authority && info.isSigned) {
         info.isAdHocSigned = YES;
         info.authority = @"AdHoc";
