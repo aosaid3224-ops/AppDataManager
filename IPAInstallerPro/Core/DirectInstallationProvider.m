@@ -1187,11 +1187,12 @@ extern char **environ;
  mode_t mode = 0; uid_t uid = 0; gid_t gid = 0;
  BOOL statOk = [self verifyStat:destExe mode:&mode uid:&uid gid:&gid];
  NSString *rec10c = [opLog beginPhase:OperationPhasePermission operation:@"stat verification" target:destExe input:@"" transactionID:txnID];
- [opLog endPhase:rec10c exitCode:statOk ? 0 : 1 rawOutput:@"" rawError:statOk ? @"" : [NSString stringWithFormat:@"stat failed, errno=%d", errno]
- verification:[NSString stringWithFormat:@"mode=%o uid=%d gid=%d", mode, uid, gid]
- verified:(statOk && mode >= 0755 && uid == 0 && gid == 0) duration:0];
+    BOOL mainModeReady = statOk && ((mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == (S_IXUSR | S_IXGRP | S_IXOTH));
+    [opLog endPhase:rec10c exitCode:mainModeReady ? 0 : 1 rawOutput:@"" rawError:mainModeReady ? @"" : [NSString stringWithFormat:@"stat failed or executable bits incomplete: errno=%d", errno]
+    verification:[NSString stringWithFormat:@"mode=%o uid=%d gid=%d executableBits=%@", mode, uid, gid, mainModeReady ? @"YES" : @"NO"]
+    verified:(mainModeReady && uid == 0 && gid == 0) duration:0];
 
- if (!statOk || mode < 0755 || uid != 0 || gid != 0) {
+    if (!mainModeReady || uid != 0 || gid != 0) {
  // ROLLBACK
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
@@ -1614,8 +1615,11 @@ extern char **environ;
         if (!isMachO) continue;
         NSNumber *permissions = attributes[NSFilePosixPermissions];
         mode_t mode = permissions ? permissions.unsignedShortValue : 0;
-        if ((mode & S_IXUSR) != 0) continue;
-        BOOL ok = [self runRoot:self.chmodPath args:@[@"u+x", fullPath] opLog:opLog recordID:nil];
+        // A nested executable must be executable for the app process, not
+        // merely readable by its owner. Normalize all execute bits while
+        // leaving resource files untouched because only Mach-O files reach here.
+        if ((mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == (S_IXUSR | S_IXGRP | S_IXOTH)) continue;
+        BOOL ok = [self runRoot:self.chmodPath args:@[@"a+x", fullPath] opLog:opLog recordID:nil];
         if (!ok) {
             allOK = NO;
             NSLog(@"[IPAInstallerPro] Failed to set executable bit: %@", fullPath);
@@ -2035,7 +2039,11 @@ extern char **environ;
         }
         NSString *nestedExecutable = [bundlePath stringByAppendingPathComponent:bundleExecutable];
         if ([machOPaths containsObject:nestedExecutable] && (![fm fileExistsAtPath:nestedExecutable] || access(nestedExecutable.fileSystemRepresentation, X_OK) != 0)) {
-            [failures addObject:[NSString stringWithFormat:@"nested executable is not runnable: %@", nestedExecutable.lastPathComponent]];
+            mode_t nestedMode = 0;
+            struct stat nestedStat = {0};
+            BOOL nestedStatOK = (lstat(nestedExecutable.fileSystemRepresentation, &nestedStat) == 0);
+            if (nestedStatOK) nestedMode = nestedStat.st_mode & 07777;
+            [failures addObject:[NSString stringWithFormat:@"nested executable is not runnable: %@ (mode=%04o exists=%@ xok=%@)", nestedExecutable.lastPathComponent, nestedMode, [fm fileExistsAtPath:nestedExecutable] ? @"YES" : @"NO", access(nestedExecutable.fileSystemRepresentation, X_OK) == 0 ? @"YES" : @"NO"]];
         }
     }
 
