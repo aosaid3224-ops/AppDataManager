@@ -382,9 +382,16 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateSuccess animated:YES];
         } else if (record.result == OperationResultFailed || record.result == OperationResultPartial) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateFailed animated:YES];
+            // Once a phase fails, every later phase is unstarted/blocked. This
+            // prevents a previously queued final-verify record from remaining
+            // blue after FILE_COPY has already failed.
+            for (NSInteger later = uiPhase + 1; later < self.phaseViews.count; later++) {
+                [self.phaseViews[later] setState:PhaseVisualStatePending animated:NO];
+            }
             self.failedPhaseIndex = uiPhase;
             self.currentPhaseIndex = uiPhase;
             self.hasFailed = YES;
+            [self.progressView setProgress:(float)(uiPhase + 1) / (float)self.phaseViews.count animated:YES];
         }
     });
 }

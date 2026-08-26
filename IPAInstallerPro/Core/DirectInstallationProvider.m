@@ -2131,9 +2131,12 @@ extern char **environ;
         // LSApplicationWorkspace is invoked by a dedicated root-side tool, not
         // from the sandboxed UI process. This matches the privilege boundary
         // used by appinst and preserves stdout/stderr in OperationLog.
+        NSString *statusPath = [tmp stringByAppendingPathComponent:@"system-install.status"];
+        [fm removeItemAtPath:statusPath error:nil];
         NSString *systemRec = [opLog beginPhase:OperationPhaseUICache operation:@"root system installer" target:installIPA input:self.systemInstallerPath transactionID:txnID];
-        ok = [self runRoot:self.helperPath args:@[self.systemInstallerPath, installIPA] opLog:opLog recordID:systemRec];
-        if (!ok) failure = @"root system installer rejected IPA; inspect system installer stdout/stderr in Raw Log";
+        ok = [self runCmdCapture:self.helperPath args:@[self.systemInstallerPath, installIPA, bundleID ?: @"", statusPath] opLog:opLog recordID:systemRec operation:@"root system installer"];
+        NSString *systemStatus = [NSString stringWithContentsOfFile:statusPath encoding:NSUTF8StringEncoding error:nil];
+        if (!ok) failure = systemStatus.length > 0 ? systemStatus : @"root system installer rejected IPA; no status evidence returned";
     }
     [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:ok ? @"system install request accepted" : @"" rawError:ok ? @"" : failure verification:ok ? @"system installation accepted" : failure verified:ok duration:0 context:@{ @"ipa": installIPA ?: @"", @"appPath": appPath ?: @"" }];
     return ok;
