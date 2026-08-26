@@ -12,6 +12,11 @@
 #import "MachOAnalyzer.h"
 #import <sys/stat.h>
 #import <spawn.h>
+#import <sys/wait.h>
+#import <signal.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <errno.h>
 
 // ============================================
 // Mach-O Magic Constants (for quick detection)
@@ -352,49 +357,69 @@
 }
 
 - (NSString *)runCmdOutput:(NSString *)cmd args:(NSArray *)args {
-    NSMutableArray *cArgs = [NSMutableArray arrayWithObject:cmd];
-    [cArgs addObjectsFromArray:args];
-
-    char **argv = (char **)malloc(sizeof(char *) * (cArgs.count + 1));
-    for (NSUInteger i = 0; i < cArgs.count; i++) {
-        argv[i] = strdup([cArgs[i] UTF8String]);
-    }
-    argv[cArgs.count] = NULL;
-
+    NSMutableArray *cArgs = [NSMutableArray arrayWithObject:cmd ?: @""];
+    [cArgs addObjectsFromArray:args ?: @[]];
+    char **argv = calloc(cArgs.count + 1, sizeof(char *));
+    for (NSUInteger i = 0; i < cArgs.count; i++) argv[i] = strdup([cArgs[i] fileSystemRepresentation]);
+    pid_t pid = 0;
     posix_spawn_file_actions_t action;
     posix_spawn_file_actions_init(&action);
-
     int outPipe[2];
-    pipe(outPipe);
+    if (pipe(outPipe) != 0) {
+        posix_spawn_file_actions_destroy(&action);
+        for (NSUInteger i = 0; i < cArgs.count; i++) free(argv[i]);
+        free(argv);
+        return nil;
+    }
     posix_spawn_file_actions_adddup2(&action, outPipe[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&action, outPipe[1], STDERR_FILENO);
     posix_spawn_file_actions_addclose(&action, outPipe[0]);
-
-    pid_t pid;
-    int status = posix_spawn(&pid, [cmd UTF8String], &action, NULL, argv, NULL);
-
+    posix_spawn_file_actions_addclose(&action, outPipe[1]);
+    int spawnStatus = posix_spawn(&pid, cmd.fileSystemRepresentation, &action, NULL, argv, NULL);
+    posix_spawn_file_actions_destroy(&action);
     for (NSUInteger i = 0; i < cArgs.count; i++) free(argv[i]);
     free(argv);
-    posix_spawn_file_actions_destroy(&action);
     close(outPipe[1]);
-
-    if (status != 0) {
+    if (spawnStatus != 0) {
         close(outPipe[0]);
-        return [NSString stringWithFormat:@"posix_spawn failed: %d", status];
+        return nil;
     }
-
-    waitpid(pid, &status, 0);
-
+    int flags = fcntl(outPipe[0], F_GETFL, 0);
+    if (flags >= 0) fcntl(outPipe[0], F_SETFL, flags | O_NONBLOCK);
     NSMutableData *data = [NSMutableData data];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:300.0];
+    int waitStatus = 0;
+    BOOL reaped = NO;
+    BOOL timedOut = NO;
     char buffer[4096];
-    ssize_t n;
-    while ((n = read(outPipe[0], buffer, sizeof(buffer))) > 0) {
-        [data appendBytes:buffer length:n];
+    for (;;) {
+        ssize_t n;
+        while ((n = read(outPipe[0], buffer, sizeof(buffer))) > 0) [data appendBytes:buffer length:(NSUInteger)n];
+        pid_t waited = waitpid(pid, &waitStatus, WNOHANG);
+        if (waited == pid) reaped = YES;
+        else if (waited < 0 && errno != EINTR) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            timedOut = YES;
+            reaped = YES;
+            break;
+        }
+        if (reaped) {
+            while ((n = read(outPipe[0], buffer, sizeof(buffer))) > 0) [data appendBytes:buffer length:(NSUInteger)n];
+            break;
+        }
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            timedOut = YES;
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            reaped = YES;
+            break;
+        }
+        usleep(10000);
     }
     close(outPipe[0]);
-
-    NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    return output ?: @"";
+    if (timedOut || !reaped || !WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
 }
 
 - (BOOL)isMachOMagic:(uint32_t)magic {

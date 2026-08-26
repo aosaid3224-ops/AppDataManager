@@ -15,6 +15,7 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
+#import "SignatureAnalyzer.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <mach-o/loader.h>
@@ -26,6 +27,8 @@
 #include <copyfile.h>
 #include <unistd.h>
 #include <errno.h>
+#include <signal.h>
+#include <fcntl.h>
 
 extern char **environ;
 
@@ -54,6 +57,10 @@ extern char **environ;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
 - (BOOL)verifyPlannedEntitlements:(SigningPlan *)plan opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)waitForProcess:(pid_t)pid status:(int *)status timeout:(NSTimeInterval)timeout;
+- (NSArray<NSString *> *)machOPathsAtPath:(NSString *)rootPath;
+- (BOOL)verifyAllMachOSignedAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -107,9 +114,9 @@ extern char **environ;
  const char *w = [self.whoamiPath UTF8String];
  char *argv[] = {(char*)h, (char*)w, NULL};
  if (posix_spawn(&pid, h, NULL, NULL, argv, environ) != 0) return NO;
- int ws;
- waitpid(pid, &ws, 0);
- return (WIFEXITED(ws) && WEXITSTATUS(ws) == 0);
+ int ws = 0;
+ BOOL reaped = [self waitForProcess:pid status:&ws timeout:10.0];
+ return (reaped && WIFEXITED(ws) && WEXITSTATUS(ws) == 0);
 }
 
 - (BOOL)isAvailable {
@@ -121,95 +128,150 @@ extern char **environ;
 }
 - (BOOL)hasRootHelper { return (self.helperPath != nil && self.helperPath.length > 0); }
 
+- (BOOL)waitForProcess:(pid_t)pid status:(int *)status timeout:(NSTimeInterval)timeout {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    int localStatus = 0;
+    for (;;) {
+        pid_t waited = waitpid(pid, &localStatus, WNOHANG);
+        if (waited == pid) {
+            if (status) *status = localStatus;
+            return YES;
+        }
+        if (waited < 0) {
+            if (errno == EINTR) continue;
+            if (status) *status = localStatus;
+            return NO;
+        }
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &localStatus, 0) < 0 && errno == EINTR) { }
+            if (status) *status = localStatus;
+            NSLog(@"[IPAInstallerPro] Process %d timed out after %.0f seconds and was terminated", pid, timeout);
+            return NO;
+        }
+        usleep(100000);
+    }
+}
+
 #pragma mark - Command Execution with OperationLog
 
 - (BOOL)runCmd:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recID {
- if (!cmd || cmd.length == 0) {
- if (recID && opLog) {
- [opLog endPhase:recID exitCode:1 rawOutput:@"" rawError:@"Command path is empty" verification:@"Invalid command path" verified:NO duration:0];
- }
- return NO;
- }
- pid_t pid;
- const char *c = [cmd UTF8String];
- char **argv = malloc((args.count + 2) * sizeof(char*));
- argv[0] = (char*)c;
- for (NSUInteger i = 0; i < args.count; i++) argv[i+1] = (char*)[args[i] UTF8String];
- argv[args.count + 1] = NULL;
- int st = posix_spawn(&pid, c, NULL, NULL, argv, environ);
- free(argv);
- if (st != 0) {
- if (recID && opLog) {
- [opLog endPhase:recID exitCode:st rawOutput:@"" rawError:[NSString stringWithFormat:@"posix_spawn failed: errno=%d", errno]
- verification:@"Command could not be executed" verified:NO duration:0];
- }
- return NO;
- }
- int ws; waitpid(pid, &ws, 0);
- BOOL ok = (WIFEXITED(ws) && WEXITSTATUS(ws) == 0);
- if (recID && opLog) {
- [opLog endPhase:recID exitCode:WEXITSTATUS(ws) rawOutput:@"" rawError:ok ? @"" : [NSString stringWithFormat:@"Command failed with exit code %d", WEXITSTATUS(ws)]
- verification:[NSString stringWithFormat:@"cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
- }
- return ok;
+    if (!cmd.length) {
+        if (recID && opLog) [opLog endPhase:recID exitCode:1 rawOutput:@"" rawError:@"Command path is empty" verification:@"Invalid command path" verified:NO duration:0];
+        return NO;
+    }
+    pid_t pid = 0;
+    const char *c = cmd.fileSystemRepresentation;
+    char **argv = calloc(args.count + 2, sizeof(char *));
+    argv[0] = (char *)c;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] fileSystemRepresentation];
+    int spawnStatus = posix_spawn(&pid, c, NULL, NULL, argv, environ);
+    free(argv);
+    if (spawnStatus != 0) {
+        if (recID && opLog) [opLog endPhase:recID exitCode:spawnStatus rawOutput:@"" rawError:[NSString stringWithFormat:@"posix_spawn failed: errno=%d", spawnStatus] verification:@"Command could not be executed" verified:NO duration:0];
+        return NO;
+    }
+    int waitStatus = 0;
+    BOOL reaped = [self waitForProcess:pid status:&waitStatus timeout:300.0];
+    BOOL exited = reaped && WIFEXITED(waitStatus);
+    int exitCode = exited ? WEXITSTATUS(waitStatus) : 124;
+    BOOL ok = exited && exitCode == 0;
+    if (recID && opLog) {
+        NSString *failure = ok ? @"" : (reaped ? [NSString stringWithFormat:@"Command failed with exit code %d", exitCode] : @"Command timed out or was terminated");
+        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
+    }
+    return ok;
 }
 
 - (BOOL)runRoot:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recID {
- if (![self hasRootHelper]) {
- NSLog(@"[IPAInstallerPro] No helper, running as current user: %@", cmd);
- return [self runCmd:cmd args:args opLog:opLog recordID:recID];
- }
- pid_t pid;
- const char *h = [self.helperPath UTF8String];
- const char *c = [cmd UTF8String];
- char **argv = malloc((args.count + 3) * sizeof(char*));
- argv[0] = (char*)h; argv[1] = (char*)c;
- for (NSUInteger i = 0; i < args.count; i++) argv[i+2] = (char*)[args[i] UTF8String];
- argv[args.count + 2] = NULL;
- int st = posix_spawn(&pid, h, NULL, NULL, argv, environ);
- free(argv);
- if (st != 0) {
- NSLog(@"[IPAInstallerPro] Helper spawn failed (errno=%d), falling back to direct", errno);
- return [self runCmd:cmd args:args opLog:opLog recordID:recID];
- }
- int ws; waitpid(pid, &ws, 0);
- if (WIFEXITED(ws) && WEXITSTATUS(ws) == 0) {
- if (recID && opLog) {
- [opLog endPhase:recID exitCode:0 rawOutput:@"" rawError:@""
- verification:[NSString stringWithFormat:@"root cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:YES duration:0];
- }
- return YES;
- }
- NSLog(@"[IPAInstallerPro] Helper failed (exit=%d), falling back to direct", WEXITSTATUS(ws));
- return [self runCmd:cmd args:args opLog:opLog recordID:recID];
+    if (![self hasRootHelper]) {
+        NSLog(@"[IPAInstallerPro] No helper, running as current user: %@", cmd);
+        return [self runCmd:cmd args:args opLog:opLog recordID:recID];
+    }
+    pid_t pid = 0;
+    const char *helper = self.helperPath.fileSystemRepresentation;
+    const char *command = cmd.fileSystemRepresentation;
+    char **argv = calloc(args.count + 3, sizeof(char *));
+    argv[0] = (char *)helper;
+    argv[1] = (char *)command;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i + 2] = (char *)[args[i] fileSystemRepresentation];
+    int spawnStatus = posix_spawn(&pid, helper, NULL, NULL, argv, environ);
+    free(argv);
+    if (spawnStatus != 0) {
+        NSLog(@"[IPAInstallerPro] Root helper spawn failed; command was not retried without root (errno=%d)", spawnStatus);
+        if (recID && opLog) [opLog endPhase:recID exitCode:spawnStatus rawOutput:@"" rawError:@"Root helper could not be spawned; no unsafe fallback was attempted" verification:@"root helper spawn failed" verified:NO duration:0];
+        return NO;
+    }
+    int waitStatus = 0;
+    BOOL reaped = [self waitForProcess:pid status:&waitStatus timeout:300.0];
+    BOOL exited = reaped && WIFEXITED(waitStatus);
+    int exitCode = exited ? WEXITSTATUS(waitStatus) : 124;
+    BOOL ok = exited && exitCode == 0;
+    if (recID && opLog) {
+        NSString *failure = ok ? @"" : (reaped ? [NSString stringWithFormat:@"Root helper failed with exit code %d", exitCode] : @"Root helper timed out or was terminated");
+        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"root cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
+    }
+    return ok;
 }
 
 - (NSString *)runCmdOutput:(NSString *)cmd args:(NSArray *)args {
- int pipefd[2];
- if (pipe(pipefd) != 0) return nil;
- pid_t pid;
- posix_spawn_file_actions_t actions;
- posix_spawn_file_actions_init(&actions);
- posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
- posix_spawn_file_actions_addclose(&actions, pipefd[0]);
- posix_spawn_file_actions_addclose(&actions, pipefd[1]);
- const char *c = [cmd UTF8String];
- char **argv = malloc((args.count + 2) * sizeof(char*));
- argv[0] = (char*)c;
- for (NSUInteger i = 0; i < args.count; i++) argv[i+1] = (char*)[args[i] UTF8String];
- argv[args.count + 1] = NULL;
- int st = posix_spawn(&pid, c, &actions, NULL, argv, environ);
- free(argv);
- posix_spawn_file_actions_destroy(&actions);
- close(pipefd[1]);
- if (st != 0) { close(pipefd[0]); return nil; }
- NSMutableString *output = [NSMutableString string];
- char buf[4096];
- ssize_t n;
- while ((n = read(pipefd[0], buf, sizeof(buf) - 1)) > 0) { buf[n] = '\0'; [output appendString:[NSString stringWithUTF8String:buf]]; }
- close(pipefd[0]);
- waitpid(pid, NULL, 0);
- return output;
+    int pipefd[2];
+    if (!cmd.length || pipe(pipefd) != 0) return nil;
+    pid_t pid = 0;
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
+    posix_spawn_file_actions_addclose(&actions, pipefd[1]);
+    const char *c = cmd.fileSystemRepresentation;
+    char **argv = calloc(args.count + 2, sizeof(char *));
+    argv[0] = (char *)c;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] fileSystemRepresentation];
+    int spawnStatus = posix_spawn(&pid, c, &actions, NULL, argv, environ);
+    free(argv);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipefd[1]);
+    if (spawnStatus != 0) {
+        close(pipefd[0]);
+        return nil;
+    }
+
+    int flags = fcntl(pipefd[0], F_GETFL, 0);
+    if (flags >= 0) fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    NSMutableData *data = [NSMutableData data];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:300.0];
+    int waitStatus = 0;
+    BOOL reaped = NO;
+    BOOL timedOut = NO;
+    char buffer[4096];
+    for (;;) {
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+        if (n > 0) [data appendBytes:buffer length:(NSUInteger)n];
+        pid_t waited = waitpid(pid, &waitStatus, WNOHANG);
+        if (waited == pid) { reaped = YES; }
+        else if (waited < 0 && errno != EINTR) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            timedOut = YES;
+            reaped = YES;
+            break;
+        }
+        if (reaped) {
+            while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) [data appendBytes:buffer length:(NSUInteger)n];
+            break;
+        }
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            timedOut = YES;
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            reaped = YES;
+            break;
+        }
+        usleep(10000);
+    }
+    close(pipefd[0]);
+    if (timedOut || !reaped || !WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 }
 
 #pragma mark - Security Checks
@@ -468,14 +530,6 @@ extern char **environ;
             }
         }
 
-        // Flutter.framework check
-        NSString *flutterPath = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
-        if ([fm fileExistsAtPath:flutterPath]) {
-            NSString *flutterEnts = [self runCmdOutput:self.ldidPath args:@[@"-e", flutterPath]];
-            BOOL flutterSigned = (flutterEnts && flutterEnts.length > 0);
-            [r appendFormat:@"  Flutter.framework:       %@\n", flutterSigned ? @"✅ signed" : @"❌ NOT signed"];
-        }
-
         // Check all dylibs/frameworks signing
         NSString *fwDir = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks"];
         if ([fm fileExistsAtPath:fwDir]) {
@@ -494,7 +548,7 @@ extern char **environ;
         }
     }
 
-    // ─── [BUNDLE STRUCTURE — CRITICAL FOR FLUTTER] ───
+    // ─── [BUNDLE STRUCTURE — CRITICAL CHECKS] ───
     if (self.lastInstalledAppPath) {
         NSFileManager *fm = [NSFileManager defaultManager];
         [r appendString:@"\n[BUNDLE STRUCTURE — CRITICAL CHECKS]\n"];
@@ -515,23 +569,13 @@ extern char **environ;
         if (mainStoryboard) {
             NSString *sbPath = [self.lastInstalledAppPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.storyboardc", mainStoryboard]];
             BOOL exists = [fm fileExistsAtPath:sbPath];
-            [r appendFormat:@"  Main.storyboardc exists:           %@\n", exists ? @"✅ YES" : @"❌ NO — THIS CAUSES CRASH!"];
+            [r appendFormat:@"  Main.storyboardc exists:           %@\n", exists ? @"✅ YES" : @"❌ NO — referenced resource missing"];
         }
         if (launchStoryboard) {
             NSString *sbPath = [self.lastInstalledAppPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.storyboardc", launchStoryboard]];
             BOOL exists = [fm fileExistsAtPath:sbPath];
             [r appendFormat:@"  LaunchScreen.storyboardc exists:   %@\n", exists ? @"✅ YES" : @"❌ NO"];
         }
-
-        // Check App.framework (CRITICAL for Flutter)
-        NSString *appFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/App.framework/App"];
-        BOOL hasAppFw = [fm fileExistsAtPath:appFw];
-        [r appendFormat:@"  App.framework/App exists:          %@\n", hasAppFw ? @"✅ YES" : @"❌ NO — FLUTTER WILL CRASH!"];
-
-        // Check Flutter.framework
-        NSString *flutterFw = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
-        BOOL hasFlutter = [fm fileExistsAtPath:flutterFw];
-        [r appendFormat:@"  Flutter.framework exists:          %@\n", hasFlutter ? @"✅ YES" : @"❌ NO"];
 
         // Check for .dylib files
         NSString *fwDir = [self.lastInstalledAppPath stringByAppendingPathComponent:@"Frameworks"];
@@ -770,20 +814,32 @@ extern char **environ;
 
 // PHASE 3.5: SMART SIGNING PLAN
  NSString *recPlan = [opLog beginPhase:OperationPhaseAppIdentify operation:@"smart-signing-plan" target:srcApp input:@"analyzing structure" transactionID:txnID];
- __block SigningPlan *signingPlan = nil;
+  __block SigningPlan *signingPlan = nil;
  BOOL planGenerated = NO;
  @try {
  IPAStructuralResult *structResult = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:ipaPath keepExtracted:NO];
- if (structResult.success && structResult.executables.count > 0) {
+ BOOL parseComplete = YES;
+ for (IPAStructuralExecutable *executable in structResult.executables) {
+     if (executable.parseStatus == IPAStructuralParseFailed) {
+         parseComplete = NO;
+         NSLog(@"[SmartSign] Refusing authoritative plan because Mach-O parse failed: %@ (%@)", executable.path, executable.parseError ?: @"unknown");
+     }
+ }
+ if (structResult.success && structResult.executables.count > 0 && parseComplete) {
  signingPlan = [[SigningPlanner sharedPlanner] createPlanForStructuralResult:structResult];
  planGenerated = signingPlan.isViable;
  if (planGenerated) {
  NSLog(@"[SmartSign] Plan: %ld targets, %ld preserve, %ld generic, %ld minimal",
- (long)signingPlan.totalTargets, (long)signingPlan.preserveCount,
- (long)signingPlan.genericCount, (long)signingPlan.minimalCount);
+ (long)signingPlan.totalTargets,
+ (long)signingPlan.preserveCount,
+ (long)signingPlan.genericCount,
+ (long)signingPlan.minimalCount);
  }
+ } else if (!parseComplete) {
+     NSLog(@"[SmartSign] Structural plan unavailable due to parse failure; legacy signer will run with strict post-sign verification");
  }
  } @catch (NSException *e) {
+
  NSLog(@"[SmartSign] Plan failed: %@", e.reason);
  }
  [opLog endPhase:recPlan exitCode:0 rawOutput:planGenerated ? @"Smart signing plan generated" : @"Smart signing plan unavailable, using legacy fallback" rawError:@"" verification:@"smart signing plan" verified:YES duration:0];
@@ -939,34 +995,6 @@ extern char **environ;
  return;
  }
 
-  // ─── FIX: Remove invalid UIMainStoryboardFile from Info.plist ───
-  // Flutter apps crash if UIMainStoryboardFile points to missing storyboard
-  NSString *infoPlistPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
-  NSMutableDictionary *infoDict = [NSMutableDictionary dictionaryWithContentsOfFile:infoPlistPath];
-  if (infoDict) {
-      NSString *mainStoryboard = infoDict[@"UIMainStoryboardFile"];
-      if (mainStoryboard && mainStoryboard.length > 0) {
-          NSString *storyboardPath = [destApp stringByAppendingPathComponent:
-              [NSString stringWithFormat:@"%@.storyboardc", mainStoryboard]];
-          if (![fm fileExistsAtPath:storyboardPath]) {
-              NSLog(@"[IPAInstallerPro] WARNING: %@.storyboardc missing — removing UIMainStoryboardFile", mainStoryboard);
-              [infoDict removeObjectForKey:@"UIMainStoryboardFile"];
-              [infoDict writeToFile:infoPlistPath atomically:YES];
-
-              NSString *fixRec = [opLog beginPhase:OperationPhaseFileCopy 
-                                         operation:@"fix-info-plist" 
-                                           target:infoPlistPath 
-                                           input:@"remove-UIMainStoryboardFile" 
-                                     transactionID:txnID];
-              [opLog endPhase:fixRec exitCode:0 rawOutput:
-                  [NSString stringWithFormat:@"Removed UIMainStoryboardFile (%@) — storyboard missing", mainStoryboard]
-                  rawError:@"" verification:@"Info.plist fixed" verified:YES duration:0];
-          }
-      }
-  }
-  // ─── END FIX ───
-
-
  // PHASE 6: AUTHORITATIVE SMART SIGNING
  NSLog(@"[IPAInstallerPro] === PHASE 6: SIGNING ===");
  NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"authoritative per-target plan" transactionID:txnID];
@@ -1051,7 +1079,16 @@ extern char **environ;
   NSString *dbgEnter = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] ENTERING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgEnter exitCode:0 rawOutput:@"[DEBUG] ENTERING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
-  [self postSignVerification:destApp opLog:opLog txnID:txnID];
+  BOOL postSignOK = [self postSignVerification:destApp opLog:opLog txnID:txnID];
+  if (!postSignOK) {
+      NSLog(@"[IPAInstallerPro] Post-sign Mach-O verification failed — rollback");
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Post-sign Mach-O verification failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
   if (authoritativeSigning && ![self verifyPlannedEntitlements:signingPlan opLog:opLog txnID:txnID]) {
       NSLog(@"[IPAInstallerPro] Final entitlement invariants failed — rollback");
       [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
@@ -1176,7 +1213,41 @@ extern char **environ;
     return allOK;
 }
 
-- (void)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+- (NSArray<NSString *> *)machOPathsAtPath:(NSString *)rootPath {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:rootPath];
+    NSString *relative = nil;
+    while ((relative = [enumerator nextObject])) {
+        NSString *fullPath = [rootPath stringByAppendingPathComponent:relative];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+        if ([attrs[NSFileType] isEqualToString:NSFileTypeDirectory] || [attrs[NSFileType] isEqualToString:NSFileTypeSymbolicLink]) continue;
+        NSData *header = [NSData dataWithContentsOfFile:fullPath options:NSDataReadingMappedIfSafe error:nil];
+        if (header.length < sizeof(uint32_t)) continue;
+        uint32_t magic = 0;
+        [header getBytes:&magic length:sizeof(magic)];
+        BOOL macho = (magic == MH_MAGIC || magic == MH_CIGAM || magic == MH_MAGIC_64 || magic == MH_CIGAM_64 ||
+                      magic == FAT_MAGIC || magic == FAT_CIGAM || magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64);
+        if (macho) [paths addObject:fullPath];
+    }
+    return [paths copy];
+}
+
+- (BOOL)verifyAllMachOSignedAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSArray<NSString *> *paths = [self machOPathsAtPath:appPath];
+    BOOL allOK = (paths.count > 0);
+    for (NSString *path in paths) {
+        NSString *signature = [self runCmdOutput:self.ldidPath args:@[@"-d", path]];
+        BOOL isSigned = (signature.length > 0);
+        NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"verify every Mach-O signature" target:path input:@"ldid -d" transactionID:txnID];
+        [opLog endPhase:recordID exitCode:isSigned ? 0 : 1 rawOutput:signature ?: @"" rawError:isSigned ? @"" : @"Mach-O has no readable code signature" verification:[NSString stringWithFormat:@"signed=%@", isSigned ? @"YES" : @"NO"] verified:isSigned duration:0];
+        if (!isSigned) allOK = NO;
+    }
+    NSLog(@"[IPAInstallerPro] Nested Mach-O signature coverage: %lu/%lu", (unsigned long)(allOK ? paths.count : 0), (unsigned long)paths.count);
+    return allOK;
+}
+
+- (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"POST-SIGN VERIFICATION" target:destApp input:@"" transactionID:txnID];
     NSMutableString *r = [NSMutableString string];
@@ -1207,12 +1278,6 @@ extern char **environ;
     NSString *mainExe = [destApp stringByAppendingPathComponent:exeName];
     [r appendFormat:@"  Runner:                    %@\n", [fm fileExistsAtPath:mainExe] ? @"FOUND" : @"MISSING"];
 
-    NSString *flutterFw = [destApp stringByAppendingPathComponent:@"Frameworks/Flutter.framework/Flutter"];
-    [r appendFormat:@"  Flutter.framework/Flutter: %@\n", [fm fileExistsAtPath:flutterFw] ? @"FOUND" : @"MISSING"];
-
-    NSString *appFw = [destApp stringByAppendingPathComponent:@"Frameworks/App.framework/App"];
-    [r appendFormat:@"  App.framework/App:         %@\n", [fm fileExistsAtPath:appFw] ? @"FOUND" : @"MISSING"];
-
     NSString *flutterAssets = [destApp stringByAppendingPathComponent:@"flutter_assets"];
     [r appendFormat:@"  flutter_assets:            %@\n", [fm fileExistsAtPath:flutterAssets] ? @"FOUND" : @"MISSING"];
 
@@ -1233,16 +1298,6 @@ extern char **environ;
         NSString *runnerEnt = [self runCmdOutput:self.ldidPath args:@[@"-e", mainExe]];
         [r appendFormat:@"  Runner entitlements:       %@\n", (runnerEnt && runnerEnt.length > 10) ? @"FOUND" : @"MISSING"];
     }
-
-    // Flutter.framework signature
-    NSString *flutterSig = [self runCmdOutput:self.ldidPath args:@[@"-d", flutterFw]];
-    BOOL flutterSigned = (flutterSig && flutterSig.length > 0);
-    [r appendFormat:@"  Flutter.framework sig:     %@\n", flutterSigned ? @"VALID" : @"INVALID"];
-
-    // App.framework signature
-    NSString *appSig = [self runCmdOutput:self.ldidPath args:@[@"-d", appFw]];
-    BOOL appSigned = (appSig && appSig.length > 0);
-    [r appendFormat:@"  App.framework sig:         %@\n", appSigned ? @"VALID" : @"INVALID"];
 
     // Frameworks count
     NSString *fwDir = [destApp stringByAppendingPathComponent:@"Frameworks"];
@@ -1271,8 +1326,9 @@ extern char **environ;
 
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
 
-    BOOL allOk = runnerSigned;
-    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:@"" verification:@"post-sign verification complete" verified:allOk duration:0];
+    BOOL allOk = runnerSigned && [self verifyAllMachOSignedAtPath:destApp opLog:opLog txnID:txnID];
+    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:allOk ? @"" : @"At least one Mach-O target is unsigned or unreadable" verification:@"post-sign verification complete" verified:allOk duration:0];
+    return allOk;
 }
 
 
@@ -1344,24 +1400,9 @@ extern char **environ;
 }
 
 - (NSDictionary *)extractEntitlementsFromExecutable:(NSString *)path {
- NSString *entOutput = [self runCmdOutput:self.ldidPath args:@[@"-e", path]];
- if (!entOutput || entOutput.length < 5) return nil;
-
- NSData *data = [entOutput dataUsingEncoding:NSUTF8StringEncoding];
- if (!data) return nil;
-
- NSError *err = nil;
- NSPropertyListFormat fmt = 0;
- id plist = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:&fmt error:&err];
- if ([plist isKindOfClass:[NSDictionary class]] && [(NSDictionary *)plist count] > 0) {
- return (NSDictionary *)plist;
- }
-
- NSString *tmpEnt = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ext_ent_%@.plist", [[NSUUID UUID] UUIDString]]];
- [entOutput writeToFile:tmpEnt atomically:YES encoding:NSUTF8StringEncoding error:nil];
- NSDictionary *ents = [NSDictionary dictionaryWithContentsOfFile:tmpEnt];
- [[NSFileManager defaultManager] removeItemAtPath:tmpEnt error:nil];
- return ents;
+    NSDictionary *ents = [[SignatureAnalyzer sharedAnalyzer] extractEntitlementsAtPath:path];
+    if (ents.count > 0) return ents;
+    return nil;
 }
 
 
@@ -1424,14 +1465,17 @@ extern char **environ;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:[NSString stringWithFormat:@"sign extension (%@)", label ?: @"bundle"] target:executablePath input:@"preserve-entitlements" transactionID:txnID];
  NSDictionary *origEnts = [self extractEntitlementsFromExecutable:executablePath];
  BOOL signedOK = NO;
- NSMutableDictionary *merged = [NSMutableDictionary dictionary];
- [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
- if (origEnts) [merged addEntriesFromDictionary:origEnts];
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"appex_%@.ent", [NSUUID UUID].UUIDString]];
- [merged writeToFile:ep atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
- [fm removeItemAtPath:ep error:nil];
+ NSMutableDictionary *merged = origEnts ? [origEnts mutableCopy] : [NSMutableDictionary dictionary];
+ NSString *ep = nil;
+ if (merged.count > 0) {
+     ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"appex_%@.ent", [NSUUID UUID].UUIDString]];
+     [merged writeToFile:ep atomically:YES];
+     NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
+     signedOK = hasH ? [self runRoot:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf, executablePath] opLog:opLog recordID:rec];
+     [fm removeItemAtPath:ep error:nil];
+ } else {
+     signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-s", executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-s", executablePath] opLog:opLog recordID:rec];
+ }
  if (!signedOK) { signedOK = hasH ? [self runRoot:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", executablePath] opLog:opLog recordID:rec]; }
  // DIAGNOSTICS: log extension signing result
  BOOL hasGTA = merged[@"get-task-allow"] != nil;
@@ -1456,17 +1500,22 @@ extern char **environ;
  origEnts = [self extractEntitlementsFromExecutable:path];
  }
 
- // ALWAYS merge with jailbreak essentials — fixes Flutter/cracked apps
- NSMutableDictionary *merged = [NSMutableDictionary dictionary];
- [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
- if (origEnts) [merged addEntriesFromDictionary:origEnts];
+ // Preserve source entitlements for nested code; otherwise use ldid's clean signing path.
+ NSMutableDictionary *merged = origEnts ? [origEnts mutableCopy] : [NSMutableDictionary dictionary];
 
- NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"bin_%@.ent", [[NSUUID UUID] UUIDString]]];
- [merged writeToFile:ep atomically:YES];
- NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
- : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
+ NSString *ep = nil;
+ BOOL ok = NO;
+ if (merged.count > 0) {
+     ep = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"bin_%@.ent", [[NSUUID UUID] UUIDString]]];
+     [merged writeToFile:ep atomically:YES];
+     NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
+     ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
+               : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+     [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
+ } else {
+     ok = hasH ? [self runRoot:self.ldidPath args:@[@"-s", path] opLog:opLog recordID:rec]
+               : [self runCmd:self.ldidPath args:@[@"-s", path] opLog:opLog recordID:rec];
+ }
 
  if (!ok) {
  // Fallback: blank signing
@@ -1476,10 +1525,13 @@ extern char **environ;
 
  if (!ok) {
  // Last resort: minimal entitlements
- NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"];
- [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES];
+ NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"min_%@.ent", [NSUUID UUID].UUIDString]];
+ NSDictionary *minimal = [EntitlementSet minimalEntitlements];
+ [minimal writeToFile:ep2 atomically:YES];
  NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2];
- [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec];
+ ok = hasH ? [self runRoot:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec]
+           : [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec];
+ [[NSFileManager defaultManager] removeItemAtPath:ep2 error:nil];
  }
 
  // DIAGNOSTICS: log framework/dylib signing result
@@ -1495,9 +1547,18 @@ extern char **environ;
  NSDictionary *origEnts = [self extractEntitlementsFromExecutable:path];
  NSString *source = @"executable";
  if (!origEnts || origEnts.count == 0) { NSString *appBundle = [path stringByDeletingLastPathComponent]; origEnts = [self extractEntitlementsFromAppBundle:appBundle]; if (origEnts && origEnts.count > 0) source = @"app-bundle"; }
- NSMutableDictionary *merged = [NSMutableDictionary dictionary];
- [merged addEntriesFromDictionary:@{@"get-task-allow":@YES,@"platform-application":@YES,@"com.apple.private.security.no-container":@YES,@"com.apple.private.security.no-sandbox":@YES,@"com.apple.private.skip-library-validation":@YES,@"run-unsigned-code":@YES}];
- if (origEnts) [merged addEntriesFromDictionary:origEnts];
+ NSMutableDictionary *merged = origEnts ? [origEnts mutableCopy] : [[EntitlementSet genericJailbreakEntitlements] mutableCopy];
+ if (!origEnts || origEnts.count == 0) {
+     NSDictionary *appInfo = [NSDictionary dictionaryWithContentsOfFile:[[path stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"Info.plist"]];
+     NSString *bundleID = [appInfo[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? appInfo[@"CFBundleIdentifier"] : nil;
+     if (bundleID.length > 0) {
+         NSString *appIdentifier = [NSString stringWithFormat:@"IPAINSTALLERPRO.%@", bundleID];
+         merged[@"application-identifier"] = appIdentifier;
+         merged[@"com.apple.developer.team-identifier"] = @"IPAINSTALLERPRO";
+         merged[@"keychain-access-groups"] = @[appIdentifier, @"com.apple.token"];
+         merged[@"com.apple.private.security.container-required"] = bundleID;
+     }
+ }
  BOOL hasAppID = merged[@"application-identifier"] != nil;
  BOOL hasTeamID = merged[@"com.apple.developer.team-identifier"] != nil || merged[@"team-identifier"] != nil;
  BOOL hasGTA = merged[@"get-task-allow"] != nil;
@@ -1511,28 +1572,20 @@ extern char **environ;
  if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed with merged entitlements (%lu keys)", (unsigned long)merged.count); [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:%@ | hasAppID:%@ | hasTeamID:%@ | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:%@ | result:OK", (unsigned long)merged.count, source, hasAppID?@"YES":@"NO", hasTeamID?@"YES":@"NO", hasGTA?@"YES":@"NO", hasPlatform?@"YES":@"NO", hasNoSandbox?@"YES":@"NO"]; return; }
  ok = hasH ? [self runRoot:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[@"-S", path] opLog:opLog recordID:rec];
  if (ok) { NSLog(@"[IPAInstallerPro] Main exe signed blank (fallback)"); [self diagLog:@"[DIAG] signExe | entitlements:0 | source:blank | hasAppID:NO | hasTeamID:NO | hasGTA:NO | hasPlatform:NO | hasNoSandbox:NO | result:OK"]; return; }
- NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"min.ent"]; [@{@"get-task-allow":@YES, @"platform-application":@YES, @"aps-environment":@"development"} writeToFile:ep2 atomically:YES]; NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2]; [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec]; [self diagLog:@"[DIAG] signExe | entitlements:3 | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:YES | hasPlatform:YES | hasNoSandbox:NO | result:FALLBACK"];
+ NSString *ep2 = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"min_%@.ent", [NSUUID UUID].UUIDString]]; NSDictionary *minimal = [EntitlementSet minimalEntitlements]; [minimal writeToFile:ep2 atomically:YES]; NSString *sf2 = [NSString stringWithFormat:@"-S%@", ep2]; BOOL fallbackOK = hasH ? [self runRoot:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec] : [self runCmd:self.ldidPath args:@[sf2, path] opLog:opLog recordID:rec]; [[NSFileManager defaultManager] removeItemAtPath:ep2 error:nil]; [self diagLog:@"[DIAG] signExe | entitlements:%lu | source:fallback | hasAppID:NO | hasTeamID:NO | hasGTA:%@ | hasPlatform:%@ | hasNoSandbox:NO | result:%@", (unsigned long)minimal.count, minimal[@"get-task-allow"] ? @"YES" : @"NO", minimal[@"platform-application"] ? @"YES" : @"NO", fallbackOK ? @"OK" : @"FAIL"];
 }
 
 - (void)signExeWithExplicitEntitlements:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return;
  NSString *rec = [opLog beginPhase:OperationPhaseSign operation:@"signExe (explicit entitlements retry)" target:path input:@"" transactionID:txnID];
  NSString *ep = [NSTemporaryDirectory() stringByAppendingPathComponent:@"explicit.ent"];
- NSDictionary *ents = @{
- @"get-task-allow": @YES,
- @"platform-application": @YES,
- @"com.apple.private.security.no-container": @YES,
- @"com.apple.private.security.no-sandbox": @YES,
- @"com.apple.private.skip-library-validation": @YES,
- @"run-unsigned-code": @YES
- };
+ NSDictionary *ents = [EntitlementSet genericJailbreakEntitlements];
  [ents writeToFile:ep atomically:YES];
  NSString *sf = [NSString stringWithFormat:@"-S%@", ep];
- if (hasH) {
- [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- } else {
- [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
- }
+ BOOL ok = hasH ? [self runRoot:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec]
+              : [self runCmd:self.ldidPath args:@[sf, path] opLog:opLog recordID:rec];
+ [[NSFileManager defaultManager] removeItemAtPath:ep error:nil];
+ if (!ok) NSLog(@"[IPAInstallerPro] Explicit entitlement signing failed for %@", path);
 }
 
 - (NSArray *)embeddedExecutablePathsAtPath:(NSString *)appPath {

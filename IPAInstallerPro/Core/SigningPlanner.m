@@ -245,23 +245,22 @@
 - (void)decideMainAppStrategy:(SigningTarget *)target {
     target.signingOrder = 4; // Last to sign (depends on everything else)
 
-    if (!target.originalEntitlements) {
-        // No original entitlements found
-        target.strategy = SigningStrategyGeneric;
-        target.strategyReason = @"Main app has no original entitlements — using generic jailbreak set";
-        return;
-    }
-
-    if (target.originalEntitlements.isComplex) {
-        // Has special Apple service entitlements — MUST preserve
+    // Preserve every non-empty source entitlement set. A set that is not in our
+    // small "special" allowlist can still be required by the app at runtime.
+    // Generic policy is reserved for genuinely unsigned binaries with no source
+    // entitlements at all.
+    if (target.originalEntitlements && target.originalEntitlements.entitlementCount > 0) {
         target.strategy = SigningStrategyPreserveOriginal;
-        target.strategyReason = [NSString stringWithFormat:
-            @"Main app has complex entitlements that must be preserved: %@",
-            [target.originalEntitlements.specialEntitlementKeys componentsJoinedByString:@", "]];
+        if (target.originalEntitlements.isComplex) {
+            target.strategyReason = [NSString stringWithFormat:
+                @"Main app has service entitlements that must be preserved: %@",
+                [target.originalEntitlements.specialEntitlementKeys componentsJoinedByString:@", "]];
+        } else {
+            target.strategyReason = @"Main app has source entitlements; preserving the complete set";
+        }
 
-        // Add specific recommendations
         if (target.originalEntitlements.hasPushNotifications) {
-            [self addRecommendationToTarget:target message:@"Push Notifications entitlement preserved — app must be registered with same bundle ID"];
+            [self addRecommendationToTarget:target message:@"Push Notifications entitlement preserved — verify the original bundle identity remains valid"];
         }
         if (target.originalEntitlements.hasGameCenter) {
             [self addRecommendationToTarget:target message:@"Game Center entitlement preserved — verify Apple ID sign-in works"];
@@ -273,9 +272,8 @@
             [self addRecommendationToTarget:target message:@"iCloud entitlement preserved — verify container identifiers match"];
         }
     } else {
-        // Simple app — generic entitlements are sufficient
         target.strategy = SigningStrategyGeneric;
-        target.strategyReason = @"Main app has no special service entitlements — generic jailbreak set sufficient";
+        target.strategyReason = @"Main app has no source entitlements — using narrow generic jailbreak set";
     }
 }
 

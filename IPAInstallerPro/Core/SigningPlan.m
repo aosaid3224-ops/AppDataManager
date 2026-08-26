@@ -23,7 +23,9 @@
 
 - (NSArray<SigningTarget *> *)targetsOrderedForSigning {
     return [self.targets sortedArrayUsingComparator:^NSComparisonResult(SigningTarget *a, SigningTarget *b) {
-        return [@(a.signingOrder) compare:@(b.signingOrder)];
+        NSComparisonResult orderResult = [@(a.signingOrder) compare:@(b.signingOrder)];
+        if (orderResult != NSOrderedSame) return orderResult;
+        return [a.filePath ?: @"" compare:b.filePath ?: @"" options:NSCaseInsensitiveSearch];
     }];
 }
 

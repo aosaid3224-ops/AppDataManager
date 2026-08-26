@@ -99,22 +99,21 @@
 #pragma mark - Pre-built Sets
 
 + (NSDictionary *)genericJailbreakEntitlements {
+    // Keep the generic policy narrow. no-container/no-sandbox change the
+    // application's container semantics and are not safe defaults for a normal
+    // App Store or dumped user application.
     return @{
         @"platform-application": @YES,
         @"get-task-allow": @YES,
-        @"com.apple.private.security.no-container": @YES,
-        @"com.apple.private.security.no-sandbox": @YES,
         @"com.apple.private.skip-library-validation": @YES,
         @"run-unsigned-code": @YES
     };
 }
 
 + (NSDictionary *)minimalEntitlements {
-    return @{
-        @"platform-application": @YES,
-        @"get-task-allow": @YES,
-        @"aps-environment": @"development"
-    };
+    // Nested code does not need application-container entitlements. An empty
+    // set makes signTarget use ldid's no-entitlement signing path.
+    return @{};
 }
 
 + (NSDictionary *)emptyEntitlements {
