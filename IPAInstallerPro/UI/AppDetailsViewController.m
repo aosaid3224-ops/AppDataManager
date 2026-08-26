@@ -1,7 +1,10 @@
 #import "AppDetailsViewController.h"
 #import "Core/InstallationEngine.h"
 #import "Core/IPAExportManager.h"
+#import "Core/IPAExtractor.h"
+#import "Core/ApplicationManager.h"
 #import "Core/Logger.h"
+#import "IPAInstallViewController.h"
 
 @interface AppDetailsViewController ()
 @property (nonatomic, strong) AppInfo *appInfo;
@@ -11,6 +14,7 @@
 @property (nonatomic, strong) UILabel *bundleLabel;
 @property (nonatomic, strong) UIButton *openButton;
 @property (nonatomic, strong) UIButton *exportButton;
+@property (nonatomic, strong) UIButton *cloneButton;
 @property (nonatomic, strong) UIButton *deleteButton;
 @end
 
@@ -108,6 +112,17 @@
     [self.scrollView addSubview:self.exportButton];
     y += 68;
 
+    self.cloneButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.cloneButton.frame = CGRectMake(20, y, w - 40, 52);
+    [self.cloneButton setTitle:@"تكرار التطبيق" forState:UIControlStateNormal];
+    [self.cloneButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.cloneButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    self.cloneButton.backgroundColor = [UIColor colorWithRed:0.34 green:0.52 blue:0.72 alpha:1.0];
+    self.cloneButton.layer.cornerRadius = 14;
+    [self.cloneButton addTarget:self action:@selector(cloneTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.scrollView addSubview:self.cloneButton];
+    y += 68;
+
     if (!self.appInfo.isProtected) {
         self.deleteButton = [UIButton buttonWithType:UIButtonTypeSystem];
         self.deleteButton.frame = CGRectMake(20, y, w - 40, 52);
@@ -171,6 +186,117 @@
         }
         [self presentViewController:share animated:YES completion:nil];
     }];
+}
+
+- (void)cloneTapped:(UIButton *)sender {
+    if (self.appInfo.isSystemApp || self.appInfo.isProtected) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر التكرار"
+            message:@"لا يمكن تكرار تطبيق نظام أو تطبيق محمي." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    if (self.appInfo.bundlePath.length == 0 || self.appInfo.bundleID.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر التكرار"
+            message:@"مسار التطبيق أو معرّف الحزمة غير متاح." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    NSString *appName = self.appInfo.name.length > 0 ? self.appInfo.name : @"التطبيق";
+    NSString *baseID = [self.appInfo.bundleID stringByAppendingString:@".clone"];
+    NSString *candidateID = baseID;
+    NSUInteger suffix = 2;
+    while ([[ApplicationManager sharedManager] appInfoForBundleID:candidateID] != nil) {
+        candidateID = [NSString stringWithFormat:@"%@%lu", baseID, (unsigned long)suffix++];
+    }
+
+    UIAlertController *form = [UIAlertController alertControllerWithTitle:@"تكرار التطبيق"
+        message:@"سيتم إنشاء IPA مستقلة دون تعديل التطبيق الأصلي. قد لا تعمل بعض التطبيقات التي تعتمد على تسجيل الدخول أو App Groups أو الإضافات أو خدمات Apple كما هي بعد التكرار."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [form addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"اسم النسخة";
+        field.text = [NSString stringWithFormat:@"%@ نسخة", appName];
+        field.clearButtonMode = UITextFieldViewModeWhileEditing;
+        field.returnKeyType = UIReturnKeyNext;
+    }];
+    [form addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Bundle ID الجديد";
+        field.text = candidateID;
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        field.autocorrectionType = UITextAutocorrectionTypeNo;
+        field.keyboardType = UIKeyboardTypeASCIICapable;
+        field.returnKeyType = UIReturnKeyDone;
+    }];
+    [form addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    __weak UIAlertController *weakForm = form;
+    [form addAction:[UIAlertAction actionWithTitle:@"إنشاء IPA" style:UIAlertActionStyleDefault handler:^(UIAlertAction *_) {
+        UIAlertController *strongForm = weakForm;
+        NSString *requestedName = [strongForm.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *requestedID = [strongForm.textFields.lastObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSPredicate *validID = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"];
+        if (requestedName.length == 0 || ![validID evaluateWithObject:requestedID] || [requestedID isEqualToString:self.appInfo.bundleID] || [[ApplicationManager sharedManager] appInfoForBundleID:requestedID] != nil) {
+            UIAlertController *invalid = [UIAlertController alertControllerWithTitle:@"بيانات غير صالحة"
+                message:@"استخدم اسمًا غير فارغ وBundle ID بصيغة صحيحة ومختلفًا عن التطبيق الأصلي وغير مستخدم على الجهاز." preferredStyle:UIAlertControllerStyleAlert];
+            [invalid addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:invalid animated:YES completion:nil];
+            return;
+        }
+
+        sender.enabled = NO;
+        [sender setTitle:@"جارٍ إنشاء النسخة…" forState:UIControlStateNormal];
+        [[IPAExportManager sharedManager] cloneApplicationAtPath:self.appInfo.bundlePath
+                                                   suggestedName:requestedName
+                                                 bundleIdentifier:requestedID
+                                                       completion:^(NSURL *ipaURL, NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                sender.enabled = YES;
+                [sender setTitle:@"تكرار التطبيق" forState:UIControlStateNormal];
+                if (!ipaURL || error) {
+                    UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل تكرار التطبيق"
+                        message:error.localizedDescription ?: @"تعذر إنشاء النسخة المكررة" preferredStyle:UIAlertControllerStyleAlert];
+                    [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:failed animated:YES completion:nil];
+                    return;
+                }
+
+                NSString *libraryDirectory = @"/var/mobile/Documents/IPAInstaller";
+                NSFileManager *fm = [NSFileManager defaultManager];
+                NSError *directoryError = nil;
+                [fm createDirectoryAtPath:libraryDirectory withIntermediateDirectories:YES attributes:nil error:&directoryError];
+                NSString *destination = [libraryDirectory stringByAppendingPathComponent:ipaURL.lastPathComponent];
+                NSUInteger collision = 2;
+                while ([fm fileExistsAtPath:destination]) {
+                    NSString *stem = [ipaURL.lastPathComponent stringByDeletingPathExtension];
+                    destination = [libraryDirectory stringByAppendingPathComponent:[[NSString stringWithFormat:@"%@ (%lu)", stem, (unsigned long)collision++] stringByAppendingPathExtension:@"ipa"]];
+                }
+                NSError *copyError = nil;
+                BOOL copied = !directoryError && [fm copyItemAtURL:ipaURL toURL:[NSURL fileURLWithPath:destination] error:&copyError];
+                [fm removeItemAtURL:ipaURL error:nil];
+                if (!copied) {
+                    UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل حفظ النسخة"
+                        message:copyError.localizedDescription ?: @"تعذر حفظ IPA المكررة" preferredStyle:UIAlertControllerStyleAlert];
+                    [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:failed animated:YES completion:nil];
+                    return;
+                }
+
+                IPAExtractedInfo *info = [[IPAExtractor sharedExtractor] extractInfoFromIPA:destination];
+                if (!info) {
+                    UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل قراءة النسخة"
+                        message:@"تم إنشاء IPA لكن تعذر تجهيزها للتثبيت." preferredStyle:UIAlertControllerStyleAlert];
+                    [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:failed animated:YES completion:nil];
+                    return;
+                }
+                IPAInstallViewController *installVC = [[IPAInstallViewController alloc] initWithIPAInfo:info];
+                installVC.modalPresentationStyle = UIModalPresentationFullScreen;
+                [self presentViewController:installVC animated:YES completion:nil];
+            });
+        }];
+    }]];
+    [self presentViewController:form animated:YES completion:nil];
 }
 
 - (void)deleteTapped:(UIButton *)sender {

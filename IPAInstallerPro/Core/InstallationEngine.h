@@ -48,4 +48,7 @@ typedef NS_ENUM(NSInteger, InstallationStage) {
 
 // Prepare transaction ID before installIPA so UI can sync with OperationLog
 - (void)prepareTransactionWithID:(NSString *)txnID;
+
+// Clears only an idle/failed transaction marker. It never interrupts a live install.
+- (BOOL)resetFailedInstallationState;
 @end

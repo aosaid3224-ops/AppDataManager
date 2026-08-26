@@ -442,4 +442,150 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
     });
 }
 
+- (void)cloneApplicationAtPath:(NSString *)bundlePath
+                   suggestedName:(NSString *)suggestedName
+                 bundleIdentifier:(NSString *)bundleIdentifier
+                       completion:(IPAExportCompletion)completion {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSURL *cloneURL = nil;
+        NSError *error = nil;
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *sourceName = suggestedName.length > 0 ? suggestedName : bundlePath.lastPathComponent.stringByDeletingPathExtension;
+        NSString *newID = bundleIdentifier;
+        NSString *workDirectory = nil;
+        @try {
+            if (bundlePath.length == 0 || ![self isDirectoryWithoutSymlinkAtPath:bundlePath]) {
+                error = [self errorWithCode:40 description:@"مسار التطبيق غير صالح للتكرار"];
+            }
+            if (!error && newID.length == 0) {
+                error = [self errorWithCode:41 description:@"Bundle ID الجديد غير صالح"];
+            }
+            NSRegularExpression *idRegex = [NSRegularExpression regularExpressionWithPattern:@"^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$" options:0 error:nil];
+            if (!error && [idRegex numberOfMatchesInString:newID options:0 range:NSMakeRange(0, newID.length)] == 0) {
+                error = [self errorWithCode:42 description:@"Bundle ID الجديد لا يطابق صيغة iOS"];
+            }
+            NSDictionary *sourceInfo = error ? nil : [NSDictionary dictionaryWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"Info.plist"]];
+            NSString *sourceID = [sourceInfo[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? sourceInfo[@"CFBundleIdentifier"] : nil;
+            NSString *sourceExecutable = [sourceInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? sourceInfo[@"CFBundleExecutable"] : nil;
+            if (!error && (sourceID.length == 0 || [sourceID isEqualToString:newID])) {
+                error = [self errorWithCode:43 description:@"Bundle ID التكرار يجب أن يكون مختلفًا عن التطبيق الأصلي"];
+            }
+            if (!error && sourceExecutable.length == 0) {
+                error = [self errorWithCode:44 description:@"Info.plist لا يحتوي executable صالحًا"];
+            }
+
+            if (!error) {
+                dispatch_semaphore_t exportSemaphore = dispatch_semaphore_create(0);
+                __block NSURL *exportedURL = nil;
+                __block NSError *exportError = nil;
+                [self exportApplicationAtPath:bundlePath suggestedName:sourceName completion:^(NSURL *ipaURL, NSError *exportedError) {
+                    exportedURL = ipaURL;
+                    exportError = exportedError;
+                    dispatch_semaphore_signal(exportSemaphore);
+                }];
+                dispatch_semaphore_wait(exportSemaphore, DISPATCH_TIME_FOREVER);
+                if (!exportedURL || exportError) {
+                    error = exportError ?: [self errorWithCode:45 description:@"فشل تجهيز التطبيق قبل التكرار"];
+                } else {
+                    NSString *uuid = [NSUUID UUID].UUIDString;
+                    workDirectory = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"IPAClone-%@", uuid]];
+                    NSString *payloadDirectory = [workDirectory stringByAppendingPathComponent:@"Payload"];
+                    if (![fm createDirectoryAtPath:payloadDirectory withIntermediateDirectories:YES attributes:nil error:&error]) {
+                        if (!error) error = [self errorWithCode:46 description:@"تعذر إنشاء مساحة التكرار"];
+                    }
+                    if (!error && ![self runCommand:self.unzipPath args:@[@"-q", exportedURL.path, @"-d", workDirectory] workingDirectory:nil error:&error]) {
+                        if (!error) error = [self errorWithCode:47 description:@"تعذر فتح IPA المجهز للتكرار"];
+                    }
+                    NSString *cloneApp = nil;
+                    if (!error) {
+                        for (NSString *item in [fm contentsOfDirectoryAtPath:payloadDirectory error:nil]) {
+                            if ([item.pathExtension.lowercaseString isEqualToString:@"app"]) {
+                                cloneApp = [payloadDirectory stringByAppendingPathComponent:item];
+                                break;
+                            }
+                        }
+                        if (cloneApp.length == 0) error = [self errorWithCode:48 description:@"لم يتم العثور على التطبيق داخل Payload"];
+                    }
+
+                    BOOL (^rewriteInfo)(NSString *, NSString *, NSString *) = ^BOOL(NSString *infoPath, NSString *replacementID, NSString *replacementName) {
+                        NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:infoPath];
+                        if (!dict) return NO;
+                        dict[@"CFBundleIdentifier"] = replacementID;
+                        if (replacementName.length > 0) {
+                            dict[@"CFBundleDisplayName"] = replacementName;
+                            dict[@"CFBundleName"] = replacementName;
+                        }
+                        return [dict writeToFile:infoPath atomically:YES];
+                    };
+
+                    if (!error) {
+                        NSString *cloneInfoPath = [cloneApp stringByAppendingPathComponent:@"Info.plist"];
+                        NSString *cloneName = [NSString stringWithFormat:@"%@ نسخة", sourceName.length > 0 ? sourceName : @"التطبيق"];
+                        if (!rewriteInfo(cloneInfoPath, newID, cloneName)) {
+                            error = [self errorWithCode:49 description:@"تعذر تحديث هوية التطبيق المكرر"];
+                        }
+
+                        NSDirectoryEnumerator *enumerator = error ? nil : [fm enumeratorAtPath:cloneApp];
+                        NSString *relative = nil;
+                        while (!error && (relative = [enumerator nextObject])) {
+                            if (![relative.pathExtension.lowercaseString isEqualToString:@"appex"]) continue;
+                            NSString *appexPath = [cloneApp stringByAppendingPathComponent:relative];
+                            NSString *appexInfoPath = [appexPath stringByAppendingPathComponent:@"Info.plist"];
+                            NSDictionary *appexInfo = [NSDictionary dictionaryWithContentsOfFile:appexInfoPath];
+                            NSString *oldAppexID = [appexInfo[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? appexInfo[@"CFBundleIdentifier"] : nil;
+                            NSString *suffix = oldAppexID.length > sourceID.length ? [oldAppexID substringFromIndex:sourceID.length] : @".Extension";
+                            while ([suffix hasPrefix:@"."]) suffix = [suffix substringFromIndex:1];
+                            suffix = [suffix stringByReplacingOccurrencesOfString:@"-" withString:@"_"];
+                            NSString *newAppexID = suffix.length > 0 ? [NSString stringWithFormat:@"%@.%@", newID, suffix] : [NSString stringWithFormat:@"%@.Extension", newID];
+                            NSString *appexName = [appexInfo[@"CFBundleDisplayName"] isKindOfClass:[NSString class]] ? appexInfo[@"CFBundleDisplayName"] : nil;
+                            if (!rewriteInfo(appexInfoPath, newAppexID, appexName)) {
+                                error = [self errorWithCode:50 description:[NSString stringWithFormat:@"تعذر تحديث هوية الامتداد %@", relative.lastPathComponent]];
+                                break;
+                            }
+                            [enumerator skipDescendants];
+                        }
+                    }
+
+                    if (!error && ![self removeCodeSignaturesFromBundle:cloneApp error:&error]) {
+                        if (!error) error = [self errorWithCode:51 description:@"تعذر إزالة التواقيع القديمة من النسخة المكررة"];
+                    }
+                    if (!error) {
+                        NSMutableArray *encrypted = [NSMutableArray array];
+                        NSArray *cloneMachO = [self machOPathsInBundle:cloneApp encrypted:encrypted];
+                        if (encrypted.count > 0 || cloneMachO.count == 0 || ![self normalizeMachOPermissions:cloneMachO error:&error]) {
+                            if (!error) error = [self errorWithCode:52 description:@"تعذر التحقق من ملفات Mach-O في النسخة المكررة"];
+                        }
+                    }
+                    if (!error) {
+                        NSString *safe = [sourceName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+                        safe = [safe stringByReplacingOccurrencesOfString:@"\\" withString:@"-"];
+                        safe = [safe stringByReplacingOccurrencesOfString:@":" withString:@"-"];
+                        safe = [safe stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                        if (safe.length == 0) safe = @"Application";
+                        safe = [safe stringByAppendingString:@" نسخة"];
+                        NSString *outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[safe stringByAppendingPathExtension:@"ipa"]];
+                        NSUInteger collision = 2;
+                        while ([fm fileExistsAtPath:outputPath]) {
+                            NSString *candidate = [NSString stringWithFormat:@"%@ (%lu)", safe, (unsigned long)collision++];
+                            outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[candidate stringByAppendingPathExtension:@"ipa"]];
+                        }
+                        if (![self runCommand:self.zipPath args:@[@"-qry", outputPath, @"Payload"] workingDirectory:workDirectory error:&error]) {
+                            if (!error) error = [self errorWithCode:53 description:@"تعذر إعادة حزم IPA المكررة"];
+                        } else {
+                            cloneURL = [NSURL fileURLWithPath:outputPath];
+                        }
+                    }
+                    [fm removeItemAtURL:exportedURL error:nil];
+                }
+            }
+        } @catch (NSException *exception) {
+            error = [self errorWithCode:54 description:[NSString stringWithFormat:@"حدث خطأ أثناء تكرار التطبيق: %@", exception.reason ?: @"غير معروف"]];
+        }
+        if (workDirectory.length > 0) [fm removeItemAtPath:workDirectory error:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(cloneURL, error);
+        });
+    });
+}
+
 @end

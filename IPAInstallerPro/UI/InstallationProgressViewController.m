@@ -505,8 +505,11 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     }
 
     InstallationEngine *engine = [InstallationEngine sharedEngine];
-    if (engine.activeTransactionID && engine.activeTransactionID.length > 0) {
-        [self showFinalState:NO message:@"\u062a\u062b\u0628\u064a\u062a \u0622\u062e\u0631 \u0642\u064a\u062f \u0627\u0644\u062a\u0642\u062f\u0645"];
+    // Clear only a completed/failed marker. A live installation is never
+    // interrupted and remains protected by the engine lock.
+    [engine resetFailedInstallationState];
+    if (engine.isInstalling) {
+        [self showFinalState:NO message:@"\u062a\u062b\u0628\u064a\u062a \u0622\u062e\u0631 \u0645\u0627 \u0632\u0627\u0644 \u0642\u064a\u062f \u0627\u0644\u062a\u0646\u0641\u064a\u0630"];
         return;
     }
 
@@ -640,6 +643,23 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [stack addArrangedSubview:logBtn];
     self.showLogButton = logBtn;
 
+    if (!success) {
+        UIView *retrySpacer = [[UIView alloc] init];
+        [retrySpacer.heightAnchor constraintEqualToConstant:4].active = YES;
+        [stack addArrangedSubview:retrySpacer];
+
+        UIButton *retryBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        retryBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [retryBtn setTitle:@"إعادة المحاولة" forState:UIControlStateNormal];
+        retryBtn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        retryBtn.backgroundColor = [UIColor colorWithRed:0.16 green:0.42 blue:0.72 alpha:1.0];
+        [retryBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        retryBtn.layer.cornerRadius = 12;
+        [retryBtn addTarget:self action:@selector(retryTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [retryBtn.heightAnchor constraintEqualToConstant:46].active = YES;
+        [stack addArrangedSubview:retryBtn];
+    }
+
     UIView *spacer2 = [[UIView alloc] init];
     [spacer2.heightAnchor constraintEqualToConstant:8].active = YES;
     [stack addArrangedSubview:spacer2];
@@ -708,7 +728,19 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 #pragma mark - Actions
 
+- (void)retryTapped:(UIButton *)sender {
+    InstallationEngine *engine = [InstallationEngine sharedEngine];
+    if (engine.isInstalling) {
+        [self showFinalState:NO message:@"تثبيت آخر ما زال قيد التنفيذ"];
+        return;
+    }
+    [self startInstallation];
+}
+
 - (void)doneTapped:(UIButton *)sender {
+    // Make dismissal idempotent: a failed/completed transaction must not leave
+    // a stale marker that blocks the next installation.
+    [[InstallationEngine sharedEngine] resetFailedInstallationState];
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 

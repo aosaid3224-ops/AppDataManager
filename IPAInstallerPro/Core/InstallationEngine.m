@@ -81,7 +81,29 @@
 - (OperationLog *)operationLog { return _operationLog; }
 
 - (void)prepareTransactionWithID:(NSString *)txnID {
-    self.activeTxnID = txnID;
+    if (txnID.length == 0) return;
+    [self.installLock lock];
+    if (!self.isInstalling) {
+        self.activeTxnID = txnID;
+        self.currentStage = InstallationStagePreparing;
+    }
+    [self.installLock unlock];
+}
+
+- (BOOL)resetFailedInstallationState {
+    [self.installLock lock];
+    if (self.isInstalling) {
+        [self.installLock unlock];
+        return NO;
+    }
+    BOOL hadStaleState = (self.activeTxnID.length > 0 || self.currentStage != InstallationStageIdle);
+    self.activeTxnID = nil;
+    self.currentStage = InstallationStageIdle;
+    [self.installLock unlock];
+    if (hadStaleState) {
+        NSLog(@"[IPAInstallerPro] Cleared stale failed transaction state");
+    }
+    return YES;
 }
 
 - (void)installIPA:(NSString *)ipaPath
@@ -97,75 +119,84 @@
         return;
     }
     self.isInstalling = YES;
+    NSString *transactionID = self.activeTxnID.length > 0 ? [self.activeTxnID copy] : [[NSUUID UUID] UUIDString];
+    self.activeTxnID = transactionID;
     [self.installLock unlock];
+
+    __weak typeof(self) weakSelf = self;
+    __block BOOL didFinalize = NO;
+    NSObject *completionGate = [NSObject new];
+    void (^finalize)(InstallationResult *) = ^(InstallationResult *result) {
+        @synchronized (completionGate) {
+            if (didFinalize) {
+                NSLog(@"[IPAInstallerPro] Ignoring duplicate completion for transaction %@", transactionID);
+                return;
+            }
+            didFinalize = YES;
+        }
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (result && result.success) {
+                strongSelf.currentStage = InstallationStageRegistering;
+                if (progressBlock) progressBlock(strongSelf.currentStage, @"Registering app...", 0.8);
+                strongSelf.currentStage = InstallationStageCompleted;
+                if (progressBlock) progressBlock(strongSelf.currentStage, @"Installation complete!", 1.0);
+                NSLog(@"[IPAInstallerPro] Installation succeeded via %@", result.providerName ?: @"Provider");
+                NSLog(@"[IPAInstallerPro] RuntimeDiagnostics disabled — app will NOT auto-launch");
+            } else {
+                NSString *message = result.message ?: @"Unknown installation error";
+                strongSelf.currentStage = InstallationStageFailed;
+                if (progressBlock) progressBlock(strongSelf.currentStage, message, 1.0);
+                NSLog(@"[IPAInstallerPro] Installation failed for transaction %@: %@", transactionID, message);
+            }
+            [strongSelf finishInstallation];
+            if (completion) completion(result);
+        });
+    };
 
     self.currentStage = InstallationStagePreparing;
     if (progressBlock) progressBlock(self.currentStage, @"Preparing installation...", 0.05);
-
     if (!ipaPath || ipaPath.length == 0) {
-        [self finishInstallation];
-        self.currentStage = InstallationStageFailed;
-        if (progressBlock) progressBlock(self.currentStage, @"IPA path is empty", 1.0);
-        if (completion) completion([InstallationResult failureResult:@"IPA path is empty" provider:@"Engine" transaction:@"" error:nil evidence:nil]);
+        finalize([InstallationResult failureResult:@"IPA path is empty" provider:@"Engine" transaction:transactionID error:nil evidence:nil]);
         return;
     }
 
     NSLog(@"[IPAInstallerPro] Starting installation for %@", [ipaPath lastPathComponent]);
-
     NSArray *available = [self availableProviders];
     if (available.count == 0) {
-        [self finishInstallation];
-        self.currentStage = InstallationStageFailed;
         NSString *err = @"No installation provider available. Ensure ldid, uicache, and unzip are installed.";
-        if (progressBlock) progressBlock(self.currentStage, err, 1.0);
-        if (completion) completion([InstallationResult failureResult:err provider:@"Engine" transaction:@"" error:nil evidence:nil]);
+        finalize([InstallationResult failureResult:err provider:@"Engine" transaction:transactionID error:nil evidence:nil]);
         return;
     }
 
     self.currentStage = InstallationStageValidating;
     if (progressBlock) progressBlock(self.currentStage, @"Validating IPA...", 0.15);
-
     id<InstallationProvider> provider = available.firstObject;
     NSLog(@"[IPAInstallerPro] Using provider: %@", [provider providerName]);
-
-    if (!self.activeTxnID || self.activeTxnID.length == 0) {
-        self.activeTxnID = [[NSUUID UUID] UUIDString];
-    }
-
     self.currentStage = InstallationStageInstalling;
     if (progressBlock) progressBlock(self.currentStage, @"Installing files...", 0.3);
 
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [provider installIPA:ipaPath transactionID:weakSelf.activeTxnID operationLog:weakSelf.operationLog completion:^(InstallationResult *result) {
-            __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * 60 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @synchronized (completionGate) {
+            if (didFinalize) return;
+        }
+        NSError *timeoutError = [NSError errorWithDomain:@"IPAInstallerPro.InstallationEngine" code:408 userInfo:@{NSLocalizedDescriptionKey: @"انتهت مهلة التثبيت؛ أوقف المحرك العملية لتحرير أداة التثبيت."}];
+        NSLog(@"[IPAInstallerPro] Installation watchdog fired for transaction %@", transactionID);
+        finalize([InstallationResult failureResult:timeoutError.localizedDescription provider:provider.providerName ?: @"Provider" transaction:transactionID error:timeoutError evidence:@{ @"watchdog": @YES, @"timeoutSeconds": @600 }]);
+    });
 
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (result && result.success) {
-                    strongSelf.currentStage = InstallationStageRegistering;
-                    if (progressBlock) progressBlock(strongSelf.currentStage, @"Registering app...", 0.8);
-
-                    strongSelf.currentStage = InstallationStageCompleted;
-                    if (progressBlock) progressBlock(strongSelf.currentStage, @"Installation complete!", 1.0);
-                    NSLog(@"[IPAInstallerPro] Installation succeeded via %@", [provider providerName]);
-
-                    // ─── RUNTIME DIAGNOSTICS (DISABLED) ───
-                    // Auto-launch was causing apps to crash before diagnostics report could be emitted.
-                    // RuntimeDiagnostics opens the app via LSApplicationWorkspace which interferes
-                    // with emitDiagnosticsReport timing. Disabled until a non-intrusive alternative is found.
-                    NSLog(@"[IPAInstallerPro] RuntimeDiagnostics disabled — app will NOT auto-launch");
-
-
-                } else {
-                    strongSelf.currentStage = InstallationStageFailed;
-                    if (progressBlock) progressBlock(strongSelf.currentStage, result ? result.message : @"Unknown error", 1.0);
-                    NSLog(@"[IPAInstallerPro] Installation failed via %@: %@", [provider providerName], result ? result.message : @"Unknown error");
-                }
-                [strongSelf finishInstallation];
-                if (completion) completion(result);
-            });
-        }];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        __strong typeof(weakSelf) providerOwner = weakSelf;
+        if (!providerOwner) return;
+        @try {
+            [provider installIPA:ipaPath transactionID:transactionID operationLog:providerOwner.operationLog completion:^(InstallationResult *result) {
+                finalize(result ?: [InstallationResult failureResult:@"لم يُرجع مزود التثبيت نتيجة" provider:provider.providerName ?: @"Provider" transaction:transactionID error:nil evidence:nil]);
+            }];
+        } @catch (NSException *exception) {
+            NSError *exceptionError = [NSError errorWithDomain:@"IPAInstallerPro.InstallationEngine" code:500 userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"استثناء غير متوقع من مزود التثبيت"}];
+            finalize([InstallationResult failureResult:exceptionError.localizedDescription provider:provider.providerName ?: @"Provider" transaction:transactionID error:exceptionError evidence:@{ @"exception": @YES }]);
+        }
     });
 }
 

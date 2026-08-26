@@ -9,6 +9,13 @@ typedef void (^IPAExportCompletion)(NSURL * _Nullable ipaURL, NSError * _Nullabl
 - (void)exportApplicationAtPath:(NSString *)bundlePath
                     suggestedName:(NSString *)suggestedName
                        completion:(IPAExportCompletion)completion;
+
+// Creates a side-by-side clone IPA with an independent bundle identifier.
+// The original installed application is never modified.
+- (void)cloneApplicationAtPath:(NSString *)bundlePath
+                   suggestedName:(NSString *)suggestedName
+                   bundleIdentifier:(NSString *)bundleIdentifier
+                       completion:(IPAExportCompletion)completion;
 @end
 
 NS_ASSUME_NONNULL_END
