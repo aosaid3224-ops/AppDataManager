@@ -39,7 +39,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *chmodPath;
 @property (nonatomic, strong) NSString *chownPath;
 @property (nonatomic, strong) NSString *rmPath;
-@property (nonatomic, strong) NSString *cpPath;
 @property (nonatomic, strong) NSString *unzipPath;
 @property (nonatomic, strong) NSString *whoamiPath;
 @property (nonatomic, strong) NSString *helperPath;
@@ -85,7 +84,6 @@ extern char **environ;
  self.chmodPath = [rm resolvePath:@"/usr/bin/chmod"];
  self.chownPath = [rm resolvePath:@"/usr/sbin/chown"];
  self.rmPath = [rm resolvePath:@"/bin/rm"];
- self.cpPath = [rm resolvePath:@"/bin/cp"];
  self.unzipPath = [rm resolvePath:@"/usr/bin/unzip"];
  self.whoamiPath = [rm resolvePath:@"/usr/bin/whoami"];
  self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
@@ -1103,23 +1101,25 @@ extern char **environ;
  }
   NSString *stagedDest = [destApp stringByAppendingFormat:@".ipa-stage-%@", [NSUUID UUID].UUIDString];
  [fm removeItemAtPath:stagedDest error:nil];
- NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle to isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"cp -R -P / nofollow" transactionID:txnID];
  BOOL copied = NO;
- if (hasH) {
- copied = [self runRoot:self.cpPath args:@[@"-R", @"-P", srcApp, stagedDest] opLog:opLog recordID:rec9];
+ if (hasH && self.helperPath.length > 0) {
+     NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle to isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"root helper --copy-tree (copyfile)" transactionID:txnID];
+     // The root helper owns the copyfile call. This avoids platform-specific
+     // cp recursion behavior that can silently omit framework resources.
+     copied = [self runCmd:self.helperPath args:@[@"--copy-tree", srcApp, stagedDest] opLog:opLog recordID:rec9];
  }
  if (!copied) {
- int rv = copyfile([srcApp UTF8String], [stagedDest UTF8String], NULL, COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
- copied = (rv == 0);
- if (!copied) {
- NSError *e = nil;
- [fm copyItemAtPath:srcApp toPath:stagedDest error:&e];
- copied = (e == nil);
- }
- if (copied && rec9 && opLog) {
- [opLog endPhase:rec9 exitCode:0 rawOutput:@"" rawError:@""
- verification:@"copyfile/NSFileManager fallback success into isolated staging" verified:YES duration:0];
- }
+     NSString *fallbackRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"copyfile fallback into isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"COPYFILE_ALL|COPYFILE_RECURSIVE|COPYFILE_NOFOLLOW_SRC" transactionID:txnID];
+     int rv = copyfile([srcApp UTF8String], [stagedDest UTF8String], NULL, COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
+     copied = (rv == 0);
+     NSString *fallbackError = copied ? @"" : [NSString stringWithFormat:@"copyfile failed: rv=%d errno=%d", rv, errno];
+     if (!copied) {
+         NSError *e = nil;
+         [fm copyItemAtPath:srcApp toPath:stagedDest error:&e];
+         copied = (e == nil);
+         if (!copied && e) fallbackError = e.localizedDescription ?: fallbackError;
+     }
+     [opLog endPhase:fallbackRec exitCode:copied ? 0 : 1 rawOutput:@"" rawError:copied ? @"" : fallbackError verification:copied ? @"copyfile/NSFileManager fallback success into isolated staging" : @"all copy fallbacks failed" verified:copied duration:0 context:@{@"source": srcApp ?: @"", @"destination": stagedDest ?: @"", @"copyfileReturn": @(rv)}];
  }
  if (!copied) {
  [fm removeItemAtPath:stagedDest error:nil];

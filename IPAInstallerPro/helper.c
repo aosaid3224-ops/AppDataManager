@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <string.h>
+#include <copyfile.h>
 
 int main(int argc, char *argv[], char *envp[]) {
     if (argc < 2) {
@@ -42,6 +43,19 @@ int main(int argc, char *argv[], char *envp[]) {
     if (current_euid != 0) {
         fprintf(stderr, "ERROR: Could not acquire root (uid=%d, euid=%d)\n", current_uid, current_euid);
         return 126;
+    }
+
+    // A verified tree-copy primitive for application bundles. This avoids
+    // relying on platform-specific cp recursion behavior for framework
+    // metadata/resources while keeping the operation inside the root helper.
+    if (argc == 4 && strcmp(argv[1], "--copy-tree") == 0) {
+        int copyResult = copyfile(argv[2], argv[3], NULL,
+                                  COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
+        if (copyResult != 0) {
+            fprintf(stderr, "copyfile failed: %s -> %s errno=%d\n", argv[2], argv[3], errno);
+            return 1;
+        }
+        return 0;
     }
 
     // Execute target command with original environment
