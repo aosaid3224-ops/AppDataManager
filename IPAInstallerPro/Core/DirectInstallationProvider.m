@@ -53,6 +53,7 @@ extern char **environ;
 @property (nonatomic, assign) NSUInteger diagDeepCopyTotal;
 @property (nonatomic, assign) NSUInteger diagDeepCopyMissing;
 @property (nonatomic, assign) NSUInteger diagDeepCopySizeMismatch;
+@property (nonatomic, strong) NSString *diagDeepCopyDetail;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
@@ -179,6 +180,7 @@ extern char **environ;
     posix_spawn_file_actions_addclose(&actions, outPipe[1]);
     posix_spawn_file_actions_addclose(&actions, errPipe[1]);
 
+    NSString *spawnRecordID = [opLog beginPhase:OperationPhaseIPAExtract operation:@"process-spawn" target:cmd input:[NSString stringWithFormat:@"operation=%@ args=%@", operation ?: @"", [args componentsJoinedByString:@" "]] transactionID:opLog.activeTransactionID];
     pid_t pid = 0;
     const char *c = cmd.fileSystemRepresentation;
     char **argv = calloc(args.count + 2, sizeof(char *));
@@ -193,9 +195,12 @@ extern char **environ;
     if (spawnStatus != 0) {
         close(outPipe[0]);
         close(errPipe[0]);
+        if (spawnRecordID && opLog) [opLog endPhase:spawnRecordID exitCode:spawnStatus rawOutput:@"" rawError:[NSString stringWithFormat:@"posix_spawn failed: errno=%d", spawnStatus] verification:@"process not spawned" verified:NO duration:0 context:@{@"operation": operation ?: @"", @"pid": @(0), @"spawned": @NO}];
         if (recordID && opLog) [opLog endPhase:recordID exitCode:spawnStatus rawOutput:@"" rawError:[NSString stringWithFormat:@"posix_spawn failed: errno=%d", spawnStatus] verification:@"Command could not be executed" verified:NO duration:0 context:@{@"operation": operation ?: @"", @"pid": @(0), @"spawned": @NO}];
         return NO;
     }
+
+    if (spawnRecordID && opLog) [opLog endPhase:spawnRecordID exitCode:0 rawOutput:@"" rawError:@"" verification:[NSString stringWithFormat:@"spawned pid=%d; stdout/stderr pipes attached; timeout=300s", pid] verified:YES duration:0 context:@{@"operation": operation ?: @"", @"pid": @(pid), @"spawned": @YES, @"timeoutSeconds": @300}];
 
     int outFlags = fcntl(outPipe[0], F_GETFL, 0);
     int errFlags = fcntl(errPipe[0], F_GETFL, 0);
@@ -538,6 +543,7 @@ extern char **environ;
         }
     }
     [detail appendFormat:@"missing=%lu extra=%lu typeMismatch=%lu sizeMismatch=%lu linkMismatch=%lu", (unsigned long)missing, (unsigned long)extra, (unsigned long)typeMismatch, (unsigned long)sizeMismatch, (unsigned long)linkMismatch];
+    self.diagDeepCopyDetail = [detail copy];
 
     NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"lstat topology + symlink + regular-file size" transactionID:txnID];
     [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:detail rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:0];
@@ -1131,7 +1137,7 @@ extern char **environ;
  [fm removeItemAtPath:tmp error:nil];
  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch) }]);
+ if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — %@ — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch, self.diagDeepCopyDetail ?: @"no manifest details"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch), @"manifest": self.diagDeepCopyDetail ?: @"" }]);
  return;
  }
  NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"promote verified staging bundle" target:[NSString stringWithFormat:@"%@ -> %@", stagedDest, destApp] input:@"mv after verified copy" transactionID:txnID];
