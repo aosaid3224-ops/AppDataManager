@@ -432,7 +432,14 @@ extern char **environ;
 
 - (BOOL)backupExistingApp:(NSString *)destApp to:(NSString *)backupPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
- if (![fm fileExistsAtPath:destApp]) return YES; // Nothing to backup
+ if (![fm fileExistsAtPath:destApp]) {
+     // A stale backup must never be restored into a new installation.
+     if ([fm fileExistsAtPath:backupPath]) {
+         BOOL removedStale = [self hasRootHelper] ? [self runRoot:self.rmPath args:@[@"-rf", backupPath] opLog:opLog recordID:nil] : [fm removeItemAtPath:backupPath error:nil];
+         if (!removedStale || [fm fileExistsAtPath:backupPath]) return NO;
+     }
+     return YES;
+ }
 
  NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"backupExisting" target:destApp input:backupPath transactionID:txnID];
 
@@ -960,27 +967,28 @@ extern char **environ;
          return;
      }
  }
- NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle" target:[NSString stringWithFormat:@"%@ -> fresh:%@", srcApp, destApp] input:@"" transactionID:txnID];
+  NSString *stagedDest = [destApp stringByAppendingFormat:@".ipa-stage-%@", [NSUUID UUID].UUIDString];
+ [fm removeItemAtPath:stagedDest error:nil];
+ NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle to isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"cp -R -P / nofollow" transactionID:txnID];
  BOOL copied = NO;
  if (hasH) {
- copied = [self runRoot:self.cpPath args:@[@"-R", srcApp, destApp] opLog:opLog recordID:rec9];
+ copied = [self runRoot:self.cpPath args:@[@"-R", @"-P", srcApp, stagedDest] opLog:opLog recordID:rec9];
  }
  if (!copied) {
- int rv = copyfile([srcApp UTF8String], [destApp UTF8String], NULL, COPYFILE_ALL | COPYFILE_RECURSIVE);
+ int rv = copyfile([srcApp UTF8String], [stagedDest UTF8String], NULL, COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
  copied = (rv == 0);
  if (!copied) {
- NSError *e;
- [fm copyItemAtPath:srcApp toPath:destApp error:&e];
+ NSError *e = nil;
+ [fm copyItemAtPath:srcApp toPath:stagedDest error:&e];
  copied = (e == nil);
  }
  if (copied && rec9 && opLog) {
  [opLog endPhase:rec9 exitCode:0 rawOutput:@"" rawError:@""
- verification:[NSString stringWithFormat:@"copyfile/NSFileManager fallback success"] verified:YES duration:0];
+ verification:@"copyfile/NSFileManager fallback success into isolated staging" verified:YES duration:0];
  }
  }
-
  if (!copied) {
- // ROLLBACK: restore backup
+ [fm removeItemAtPath:stagedDest error:nil];
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
@@ -989,13 +997,12 @@ extern char **environ;
  if (completion) completion([InstallationResult failureResult:@"Copy failed — all methods exhausted, rollback attempted" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
  }
-
- // Deep copy verification is a correctness gate. Continuing after a mismatch
- // can produce an app that registers successfully but crashes when a missing
- // framework/resource is first loaded.
- BOOL deepOk = [self verifyDeepCopy:srcApp dst:destApp opLog:opLog txnID:txnID];
+ // Verify before promotion. The destination remains untouched until the
+ // complete source tree passes topology, symlink and size verification.
+ BOOL deepOk = [self verifyDeepCopy:srcApp dst:stagedDest opLog:opLog txnID:txnID];
  if (!deepOk) {
- NSLog(@"[IPAInstallerPro] Deep copy mismatch — rolling back installation");
+ NSLog(@"[IPAInstallerPro] Deep copy mismatch in isolated staging — rolling back installation");
+ [fm removeItemAtPath:stagedDest error:nil];
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
@@ -1003,6 +1010,18 @@ extern char **environ;
  if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch) }]);
  return;
  }
+ NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"promote verified staging bundle" target:[NSString stringWithFormat:@"%@ -> %@", stagedDest, destApp] input:@"mv after verified copy" transactionID:txnID];
+ BOOL promoted = hasH ? [self runRoot:self.mvPath args:@[stagedDest, destApp] opLog:opLog recordID:promoteRec] : [fm moveItemAtPath:stagedDest toPath:destApp error:nil];
+ if (!promoted || ![fm fileExistsAtPath:destApp]) {
+     [fm removeItemAtPath:stagedDest error:nil];
+     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"Verified bundle promotion failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+     return;
+ }
+
 
  // PHASE 5: PERMISSION
  NSLog(@"[IPAInstallerPro] === PHASE 5: PERMISSION ===");
