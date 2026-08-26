@@ -22,6 +22,7 @@
 #import <mach-o/loader.h>
 #import <mach-o/fat.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -67,6 +68,9 @@ extern char **environ;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
+- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath logicalPath:(NSString *)logicalPath bundleID:(NSString *)bundleID opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID;
+- (BOOL)waitForApplicationRegistration:(NSString *)bundleID;
 @end
 
 @implementation DirectInstallationProvider
@@ -1323,16 +1327,19 @@ extern char **environ;
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
 
- // PHASE 8: UICACHE
- NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
+  // PHASE 8: UICACHE + LAUNCH SERVICES REGISTRATION
+ NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE + LS REGISTRATION ===");
+ // Register the logical rootless path first. The resolved path is only a fallback;
+ // passing both paths unconditionally can create a non-system/jailbreak-only record.
  NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
-
- NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
-
- NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
+ BOOL logicalUICacheOK = [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
+ if (!logicalUICacheOK) {
+     NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved fallback" target:destApp input:@"" transactionID:txnID];
+     [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+ }
+ // uicache can return before Launch Services exposes the app. Request explicit
+ // registration, then verify the actual registry before reporting success.
+ [self registerApplicationAtPath:destApp logicalPath:logicalDest bundleID:bundleID opLog:opLog txnID:txnID];
 
  // PHASE 9: VERIFY
  NSLog(@"[IPAInstallerPro] === PHASE 9: VERIFY ===");
@@ -2047,8 +2054,93 @@ extern char **environ;
     return ready;
 }
 
-#pragma mark - Verification
+#pragma mark - Launch Services Registration
+- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath
+                      logicalPath:(NSString *)logicalPath
+                         bundleID:(NSString *)bundleID
+                            opLog:(OperationLog *)opLog
+                            txnID:(NSString *)txnID {
+    NSString *rec = [opLog beginPhase:OperationPhaseUICache
+                             operation:@"LSApplicationWorkspace registerApplication"
+                                target:resolvedPath ?: @""
+                                 input:logicalPath ?: @""
+                         transactionID:txnID];
+    BOOL accepted = NO;
+    @try {
+        Class LS = objc_getClass("LSApplicationWorkspace");
+        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
+        SEL registerSelector = NSSelectorFromString(@"registerApplication:");
+        if (workspace && [workspace respondsToSelector:registerSelector]) {
+            NSMutableArray<NSString *> *paths = [NSMutableArray array];
+            if (resolvedPath.length > 0) [paths addObject:resolvedPath];
+            if (logicalPath.length > 0 && ![paths containsObject:logicalPath]) [paths addObject:logicalPath];
+            for (NSString *path in paths) {
+                NSURL *url = [NSURL fileURLWithPath:path];
+                NSMethodSignature *signature = [workspace methodSignatureForSelector:registerSelector];
+                if (!signature) continue;
+                NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+                invocation.target = workspace;
+                invocation.selector = registerSelector;
+                [invocation setArgument:&url atIndex:2];
+                [invocation invoke];
+                BOOL result = NO;
+                [invocation getReturnValue:&result];
+                if (result) {
+                    accepted = YES;
+                    break;
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[IPAInstallerPro] registerApplication exception: %@", exception.reason);
+    }
+    [opLog endPhase:rec
+           exitCode:accepted ? 0 : 1
+          rawOutput:@""
+           rawError:accepted ? @"" : @"Launch Services rejected registration request"
+       verification:accepted ? @"Registration request accepted" : @"Registration request not accepted"
+           verified:accepted
+           duration:0];
+    return accepted;
+}
 
+- (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID {
+    if (bundleID.length == 0) return NO;
+    @try {
+        Class LS = objc_getClass("LSApplicationWorkspace");
+        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
+        if (!workspace) return NO;
+        SEL directSelector = NSSelectorFromString(@"applicationForIdentifier:");
+        if ([workspace respondsToSelector:directSelector]) {
+            id application = ((id (*)(id, SEL, id))objc_msgSend)(workspace, directSelector, bundleID);
+            if (application != nil) return YES;
+        }
+        NSArray<NSString *> *selectors = @[@"allInstalledApplications", @"allApplications"];
+        for (NSString *selectorName in selectors) {
+            SEL selector = NSSelectorFromString(selectorName);
+            if (![workspace respondsToSelector:selector]) continue;
+            NSArray *applications = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, selector);
+            for (id application in applications) {
+                if (![application respondsToSelector:@selector(bundleIdentifier)]) continue;
+                NSString *candidate = [application performSelector:@selector(bundleIdentifier)];
+                if ([candidate isEqualToString:bundleID]) return YES;
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[IPAInstallerPro] registration lookup exception: %@", exception.reason);
+    }
+    return NO;
+}
+
+- (BOOL)waitForApplicationRegistration:(NSString *)bundleID {
+    for (NSUInteger attempt = 0; attempt < 8; attempt++) {
+        if ([self isApplicationRegisteredWithBundleID:bundleID]) return YES;
+        usleep(250000);
+    }
+    return NO;
+}
+
+#pragma mark - Verification
 - (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
  BOOL ok = YES;
@@ -2099,21 +2191,18 @@ extern char **environ;
  BOOL embeddedSignaturesOK = [self verifyEmbeddedBundleSignaturesAtPath:appPath opLog:opLog txnID:txnID];
  if (!embeddedSignaturesOK) ok = NO;
 
- // Check if app is registered in LSApplicationWorkspace (best effort, non-blocking)
- Class LS = objc_getClass("LSApplicationWorkspace");
- if (LS) {
- id ws = [LS performSelector:@selector(defaultWorkspace)];
- if ([ws respondsToSelector:@selector(applicationForIdentifier:)]) {
- id a = [ws performSelector:@selector(applicationForIdentifier:) withObject:bid];
- BOOL registered = (a != nil);
- NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"LSApplicationWorkspace check" target:bid input:@"" transactionID:txnID];
- [opLog endPhase:recLS exitCode:0 rawOutput:@"" rawError:@""
- verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"] verified:YES duration:0];
- if (!registered) {
- NSLog(@"[IPAInstallerPro] App not yet registered in LS — uicache may need time");
- }
- }
- }
+ // Launch Services registration is mandatory. A copied bundle that is not in
+ // the system registry is not a complete installation and must be rolled back.
+ BOOL registered = [self waitForApplicationRegistration:bid];
+ NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"Launch Services registration check" target:bid input:@"" transactionID:txnID];
+ [opLog endPhase:recLS
+        exitCode:registered ? 0 : 1
+       rawOutput:@""
+        rawError:registered ? @"" : @"Application is not visible in Launch Services"
+    verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"]
+        verified:registered
+        duration:2.0];
+ if (!registered) ok = NO;
 
  // Dopamine-specific: verify app is in correct rootless path (warning only)
  NSString *expectedPrefix = @"/var/jb/Applications/";
