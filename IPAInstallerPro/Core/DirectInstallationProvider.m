@@ -355,35 +355,66 @@ extern char **environ;
 }
 
 - (BOOL)verifyDeepCopy:(NSString *)src dst:(NSString *)dst opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
- NSFileManager *fm = [NSFileManager defaultManager];
- NSArray *srcItems = [fm subpathsAtPath:src];
- NSArray *dstItems = [fm subpathsAtPath:dst];
- NSMutableString *detail = [NSMutableString string];
- BOOL ok = YES;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSString *> *srcItems = [fm subpathsAtPath:src] ?: @[];
+    NSArray<NSString *> *dstItems = [fm subpathsAtPath:dst] ?: @[];
+    NSSet<NSString *> *srcSet = [NSSet setWithArray:srcItems];
+    NSMutableString *detail = [NSMutableString string];
+    BOOL ok = YES;
+    NSUInteger missing = 0, extra = 0, typeMismatch = 0, sizeMismatch = 0, linkMismatch = 0;
+    NSUInteger detailCount = 0;
 
- if (srcItems.count != dstItems.count) {
- [detail appendFormat:@"countMismatch(src=%lu,dst=%lu) ", (unsigned long)srcItems.count, (unsigned long)dstItems.count];
- ok = NO;
- }
+    if (srcItems.count != dstItems.count) {
+        [detail appendFormat:@"countMismatch(src=%lu,dst=%lu) ", (unsigned long)srcItems.count, (unsigned long)dstItems.count];
+        ok = NO;
+    }
+    for (NSString *sub in srcItems) {
+        NSString *sPath = [src stringByAppendingPathComponent:sub];
+        NSString *dPath = [dst stringByAppendingPathComponent:sub];
+        struct stat sStat = {0}, dStat = {0};
+        if (lstat(sPath.fileSystemRepresentation, &sStat) != 0 || lstat(dPath.fileSystemRepresentation, &dStat) != 0) {
+            missing++;
+            ok = NO;
+            if (detailCount++ < 12) [detail appendFormat:@"missing:%@ ", sub];
+            continue;
+        }
+        BOOL sLink = S_ISLNK(sStat.st_mode), dLink = S_ISLNK(dStat.st_mode);
+        BOOL sDir = S_ISDIR(sStat.st_mode), dDir = S_ISDIR(dStat.st_mode);
+        if (sLink != dLink || sDir != dDir) {
+            typeMismatch++;
+            ok = NO;
+            if (detailCount++ < 12) [detail appendFormat:@"type:%@ ", sub];
+            continue;
+        }
+        if (sLink) {
+            NSString *sDest = [fm destinationOfSymbolicLinkAtPath:sPath error:nil];
+            NSString *dDest = [fm destinationOfSymbolicLinkAtPath:dPath error:nil];
+            if (![sDest isEqualToString:dDest]) {
+                linkMismatch++;
+                ok = NO;
+                if (detailCount++ < 12) [detail appendFormat:@"link:%@(%@!=%@) ", sub, sDest ?: @"nil", dDest ?: @"nil"];
+            }
+        } else if (!sDir && sStat.st_size != dStat.st_size) {
+            sizeMismatch++;
+            ok = NO;
+            if (detailCount++ < 12) [detail appendFormat:@"size:%@(%lld!=%lld) ", sub, (long long)sStat.st_size, (long long)dStat.st_size];
+        }
+    }
+    for (NSString *sub in dstItems) {
+        if (![srcSet containsObject:sub]) {
+            extra++;
+            ok = NO;
+            if (detailCount++ < 12) [detail appendFormat:@"extra:%@ ", sub];
+        }
+    }
+    [detail appendFormat:@"missing=%lu extra=%lu typeMismatch=%lu sizeMismatch=%lu linkMismatch=%lu", (unsigned long)missing, (unsigned long)extra, (unsigned long)typeMismatch, (unsigned long)sizeMismatch, (unsigned long)linkMismatch];
 
- NSUInteger missing = 0, sizeMismatch = 0;
- for (NSString *sub in srcItems) {
- NSString *sPath = [src stringByAppendingPathComponent:sub];
- NSString *dPath = [dst stringByAppendingPathComponent:sub];
- if (![fm fileExistsAtPath:dPath]) { missing++; ok = NO; continue; }
- NSDictionary *sAttr = [fm attributesOfItemAtPath:sPath error:nil];
- NSDictionary *dAttr = [fm attributesOfItemAtPath:dPath error:nil];
- if ([sAttr fileSize] != [dAttr fileSize]) { sizeMismatch++; ok = NO; }
- }
- [detail appendFormat:@"missing=%lu sizeMismatch=%lu", (unsigned long)missing, (unsigned long)sizeMismatch];
-
- NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"" transactionID:txnID];
- [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Copied bundle does not match source"
- verification:detail verified:ok duration:0];
-  self.diagDeepCopyTotal = srcItems.count;
-  self.diagDeepCopyMissing = missing;
-  self.diagDeepCopySizeMismatch = sizeMismatch;
- return ok;
+    NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"lstat topology + symlink + regular-file size" transactionID:txnID];
+    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:@"" rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:0];
+    self.diagDeepCopyTotal = srcItems.count;
+    self.diagDeepCopyMissing = missing + extra;
+    self.diagDeepCopySizeMismatch = sizeMismatch + typeMismatch + linkMismatch;
+    return ok;
 }
 
 - (BOOL)verifySignature:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
@@ -948,7 +979,7 @@ extern char **environ;
  [fm removeItemAtPath:tmp error:nil];
  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Deep copy verification failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch) }]);
  return;
  }
 
