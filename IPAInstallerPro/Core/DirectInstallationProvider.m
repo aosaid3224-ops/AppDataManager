@@ -57,6 +57,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *lastMachOVerificationDetail;
 @property (nonatomic, strong) SigningPlan *activeSigningPlan;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
+@property (nonatomic, strong) NSString *lastVerificationFailureDetail;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
@@ -1355,7 +1356,7 @@ extern char **environ;
   // Emit diagnostics report even on failure
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Final verification failed: %@ — rollback executed", self.lastVerificationFailureDetail ?: @"no detailed evidence"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"verificationFailure": self.lastVerificationFailureDetail ?: @"unknown" }]);
  return;
  }
 
@@ -2144,6 +2145,8 @@ extern char **environ;
 - (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
  BOOL ok = YES;
+ NSMutableArray<NSString *> *verificationFailures = [NSMutableArray array];
+ self.lastVerificationFailureDetail = nil;
  NSString *ep = [appPath stringByAppendingPathComponent:en];
 
  // exe exists + readable + executable
@@ -2155,7 +2158,10 @@ extern char **environ;
  [opLog endPhase:recExe exitCode:(exeExists && exeReadable && exeX_OK) ? 0 : 1 rawOutput:@"" rawError:(exeExists && exeReadable && exeX_OK) ? @"" : [NSString stringWithFormat:@"exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]
  verification:[NSString stringWithFormat:@"exists=%@ readable=%@ xok=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]
  verified:(exeExists && exeReadable && exeX_OK) duration:0];
- if (!exeExists || !exeReadable || !exeX_OK) ok = NO;
+ if (!exeExists || !exeReadable || !exeX_OK) {
+     ok = NO;
+     [verificationFailures addObject:[NSString stringWithFormat:@"main executable: exists=%@ readable=%@ executable=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]];
+ }
 
  // Info.plist
  NSString *ip = [appPath stringByAppendingPathComponent:@"Info.plist"];
@@ -2163,11 +2169,17 @@ extern char **environ;
  NSString *recInfo = [opLog beginPhase:OperationPhaseVerify operation:@"verify Info.plist" target:ip input:@"" transactionID:txnID];
  [opLog endPhase:recInfo exitCode:infoExists ? 0 : 1 rawOutput:@"" rawError:infoExists ? @"" : @"Missing"
  verification:[NSString stringWithFormat:@"exists=%@", infoExists ? @"YES" : @"NO"] verified:infoExists duration:0];
- if (!infoExists) ok = NO;
+ if (!infoExists) {
+     ok = NO;
+     [verificationFailures addObject:@"Info.plist is missing or unreadable"];
+ }
 
  // Verify signature on main executable
  BOOL exeSigned = [self verifySignature:ep opLog:opLog txnID:txnID];
- if (!exeSigned) ok = NO;
+ if (!exeSigned) {
+     ok = NO;
+     [verificationFailures addObject:@"main executable signature check failed"];
+ }
 
  // Frameworks
  NSString *fwp = [appPath stringByAppendingPathComponent:@"Frameworks"];
@@ -2181,7 +2193,10 @@ extern char **environ;
  [opLog endPhase:recFw exitCode:(dylibReadable && dylibX_OK) ? 0 : 1 rawOutput:@"" rawError:(dylibReadable && dylibX_OK) ? @"" : @"Permission denied"
  verification:[NSString stringWithFormat:@"readable=%@ xok=%@", dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]
  verified:(dylibReadable && dylibX_OK) duration:0];
- if (!dylibReadable || !dylibX_OK) ok = NO;
+ if (!dylibReadable || !dylibX_OK) {
+     ok = NO;
+     [verificationFailures addObject:[NSString stringWithFormat:@"embedded library %@: readable=%@ executable=%@", item, dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]];
+ }
  }
  }
  }
@@ -2189,7 +2204,10 @@ extern char **environ;
  // Embedded extensions are separate code bundles. A main executable can pass
  // verification while an unsigned appex/xpc crashes the host at launch.
  BOOL embeddedSignaturesOK = [self verifyEmbeddedBundleSignaturesAtPath:appPath opLog:opLog txnID:txnID];
- if (!embeddedSignaturesOK) ok = NO;
+ if (!embeddedSignaturesOK) {
+     ok = NO;
+     [verificationFailures addObject:@"one or more embedded app extensions failed signature verification"];
+ }
 
  // Launch Services registration is mandatory. A copied bundle that is not in
  // the system registry is not a complete installation and must be rolled back.
@@ -2202,7 +2220,10 @@ extern char **environ;
     verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"]
         verified:registered
         duration:2.0];
- if (!registered) ok = NO;
+ if (!registered) {
+     ok = NO;
+     [verificationFailures addObject:@"application is not visible in Launch Services after registration"];
+ }
 
  // Dopamine-specific: verify app is in correct rootless path (warning only)
  NSString *expectedPrefix = @"/var/jb/Applications/";
@@ -2213,6 +2234,7 @@ extern char **environ;
  NSLog(@"[IPAInstallerPro] WARNING: App not in standard Applications path: %@", appPath);
  }
 
+ if (!ok) self.lastVerificationFailureDetail = [verificationFailures componentsJoinedByString:@"; "];
  return ok;
 }
 
