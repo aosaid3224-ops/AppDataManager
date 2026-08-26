@@ -9,6 +9,7 @@
 #import "RuntimeDiagnostics.h"
 #import "OperationLog.h"
 #import "RootlessManager.h"
+#import "MachOAnalyzer.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <sys/types.h>
@@ -70,6 +71,7 @@
 // ─── RuntimeDiagnostics Implementation ───
 @interface RuntimeDiagnostics ()
 - (NSString *)processSnapshotForPID:(pid_t)pid;
+- (NSString *)launchDependencyReportForBundleID:(NSString *)bundleID;
 - (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum;
 - (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName timeout:(NSTimeInterval)timeout;
 @end
@@ -112,6 +114,9 @@
     [timeline addObject:@"launch_request_started"];
 
     NSLog(@"[RuntimeDiagnostics] Starting diagnosis for %@", bundleID);
+    // Inventory is collected before launch so a fast crash cannot occur while
+    // the diagnostic layer is still scanning the bundle.
+    NSString *launchMap = [self launchDependencyReportForBundleID:bundleID];
 
     // PHASE 1: LAUNCH
     NSString *recLaunch = [opLog beginPhase:OperationPhaseLaunch
@@ -211,6 +216,7 @@
 
     NSDate *monitorStart = [NSDate date];
     NSMutableString *liveTrace = [NSMutableString stringWithFormat:@"[0ms] monitor_started pid=%d\n", result.pid];
+    [liveTrace appendFormat:@"=== Launch Dependency Inventory ===\n%@\n", launchMap ?: @"inventory_unavailable"];
     // The installer is not the parent of the target app, so waitpid may not
     // expose its exit status. Keep that state explicitly unknown instead of
     // misclassifying a disappeared process as a normal exit.
@@ -447,6 +453,61 @@
         NSLog(@"[RuntimeDiagnostics] Launch exception: %@", e.reason);
         return NO;
     }
+}
+
+#pragma mark - Launch Dependency Inventory
+
+- (NSString *)launchDependencyReportForBundleID:(NSString *)bundleID {
+    NSString *appPath = [self findAppPathForBundleID:bundleID];
+    if (appPath.length == 0) return @"app_path=unavailable";
+
+    NSMutableString *report = [NSMutableString stringWithFormat:@"app_path=%@\n", appPath];
+    MachOAnalyzer *analyzer = [MachOAnalyzer sharedAnalyzer];
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:appPath];
+    NSUInteger count = 0;
+    NSUInteger signedCount = 0;
+    NSUInteger failedParseCount = 0;
+    for (NSString *relativePath in enumerator) {
+        if (report.length > 120000) {
+            [report appendString:@"inventory_truncated=YES limit=120000\n"];
+            break;
+        }
+        NSString *path = [appPath stringByAppendingPathComponent:relativePath];
+        BOOL isDirectory = NO;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory] || isDirectory) continue;
+        MachOAnalysisResult *analysis = [analyzer analyzeFileAtPath:path];
+        if (!analysis || analysis.magicName.length == 0 || [analysis.magicName isEqualToString:@"unknown"]) continue;
+        count++;
+        if (analysis.hasCodeSignature) signedCount++;
+        if (analysis.parseStatus == MachOParseFailed) failedParseCount++;
+
+        NSMutableArray *architectures = [NSMutableArray array];
+        for (MachOSlice *slice in analysis.slices) {
+            if (slice.architectureName.length > 0) [architectures addObject:slice.architectureName];
+        }
+        NSMutableArray *dependencies = [NSMutableArray array];
+        for (MachODependency *dependency in analysis.dependencies) {
+            if (dependency.rawInstallName.length > 0) [dependencies addObject:dependency.rawInstallName];
+        }
+        NSMutableArray *rpaths = [NSMutableArray array];
+        for (MachORPath *rpath in analysis.rpaths) {
+            if (rpath.rawPath.length > 0) [rpaths addObject:rpath.rawPath];
+        }
+        [report appendFormat:@"target=%@ magic=%@ type=%@ arch=[%@] codeSignature=%@ offset=%u size=%u parse=%ld deps=[%@] rpaths=[%@] parseError=%@\n",
+         relativePath,
+         analysis.magicName,
+         analysis.machOTypeName ?: @"unknown",
+         [architectures componentsJoinedByString:@","] ,
+         analysis.hasCodeSignature ? @"YES" : @"NO",
+         analysis.codeSignatureOffset,
+         analysis.codeSignatureSize,
+         (long)analysis.parseStatus,
+         [dependencies componentsJoinedByString:@","] ,
+         [rpaths componentsJoinedByString:@","] ,
+         analysis.parseError ?: @"-"];
+    }
+    [report appendFormat:@"inventory_count=%lu signed=%lu parseFailed=%lu\n", (unsigned long)count, (unsigned long)signedCount, (unsigned long)failedParseCount];
+    return report;
 }
 
 #pragma mark - Process Detection
