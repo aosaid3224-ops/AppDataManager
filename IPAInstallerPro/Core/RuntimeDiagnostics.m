@@ -182,7 +182,10 @@
                                transactionID:txnID];
 
     NSDate *monitorStart = [NSDate date];
-    int exitStatus = 0;
+    // The installer is not the parent of the target app, so waitpid may not
+    // expose its exit status. Keep that state explicitly unknown instead of
+    // misclassifying a disappeared process as a normal exit.
+    int exitStatus = -1;
     int signalNum = 0;
     BOOL stillAlive = [self monitorProcess:result.pid duration:self.monitoringWindow exitStatus:&exitStatus signalNum:&signalNum];
     NSTimeInterval monitorDuration = [[NSDate date] timeIntervalSinceDate:monitorStart] * 1000.0;
@@ -229,17 +232,17 @@
             terminationType = [NSString stringWithFormat:@"Crashed by %@ (%d)", [self signalName:signalNum], signalNum];
             crashDetected = YES;
             exitCodeForLog = 2;
+        } else if (exitStatus < 0) {
+            state = @"EXITED_UNOBSERVED";
+            terminationType = @"Process disappeared; exit status/signal unavailable because the app is not a child of the installer";
+            exitCodeForLog = 1;
         } else if (exitStatus == 0) {
             state = @"EXITED_NORMAL";
             terminationType = @"Exited normally (status 0)";
             exitCodeForLog = 1;
-        } else if (exitStatus > 0) {
+        } else {
             state = @"EXITED_WITH_ERROR";
             terminationType = [NSString stringWithFormat:@"Exited with error status %d", exitStatus];
-            exitCodeForLog = 1;
-        } else {
-            state = @"EXITED_NORMAL";
-            terminationType = @"Exited (no crash signal detected)";
             exitCodeForLog = 1;
         }
         
@@ -271,6 +274,11 @@
         // 4a. Crash Reporter (.ips files)
         NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name];
         if (crashPath) {
+            // A fresh crash report is stronger evidence than the unavailable
+            // waitpid status for an unrelated application process.
+            result.crashDetected = YES;
+            result.state = @"CRASHED";
+            result.summary = [NSString stringWithFormat:@"Crash report found after process exit: %@", crashPath.lastPathComponent];
             result.crashReportPath = crashPath;
             NSString *crashContent = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
             if (crashContent) {
@@ -520,6 +528,8 @@
         } else if (signalNum == SIGTRAP) {
             [reason appendString:@"SIGTRAP — breakpoint/trap (debugger or runtime check)."];
         }
+    } else if (exitStatus < 0) {
+        [reason appendString:@"Process disappeared but exit status/signal was not observable because the app is not a child of the installer. "];
     } else if (exitStatus != 0) {
         [reason appendFormat:@"Exited with status %d. ", exitStatus];
         if (exitStatus == 1) {
@@ -746,7 +756,7 @@
 - (NSString *)analyzeExitStatus:(int)exitStatus signalNum:(int)signalNum {
     NSMutableString *analysis = [NSMutableString string];
 
-    [analysis appendFormat:@"Exit status: %d\n", exitStatus];
+    [analysis appendFormat:@"Exit status: %@\n", exitStatus < 0 ? @"unavailable" : [NSString stringWithFormat:@"%d", exitStatus]];
     [analysis appendFormat:@"Signal: %d (%@)\n", signalNum, [self signalName:signalNum]];
 
     if (signalNum == SIGKILL) {

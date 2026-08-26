@@ -9,6 +9,7 @@
 #import "InstallationEngine.h"
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
+#import "RuntimeDiagnostics.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -651,6 +652,23 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [stack addArrangedSubview:logBtn];
     self.showLogButton = logBtn;
 
+    if (success && self.installedBundleID.length > 0) {
+        UIView *runtimeSpacer = [[UIView alloc] init];
+        [runtimeSpacer.heightAnchor constraintEqualToConstant:4].active = YES;
+        [stack addArrangedSubview:runtimeSpacer];
+
+        UIButton *runtimeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        runtimeBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [runtimeBtn setTitle:@"اختبار الإقلاع وتشخيصه" forState:UIControlStateNormal];
+        runtimeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        [runtimeBtn setTitleColor:[UIColor colorWithRed:0.45 green:0.85 blue:0.65 alpha:1.0] forState:UIControlStateNormal];
+        runtimeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+        runtimeBtn.layer.cornerRadius = 8;
+        [runtimeBtn addTarget:self action:@selector(runRuntimeDiagnosticsTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [runtimeBtn.heightAnchor constraintEqualToConstant:36].active = YES;
+        [stack addArrangedSubview:runtimeBtn];
+    }
+
     if (!success) {
         UIView *retrySpacer = [[UIView alloc] init];
         [retrySpacer.heightAnchor constraintEqualToConstant:4].active = YES;
@@ -736,6 +754,31 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 #pragma mark - Actions
 
+- (void)runRuntimeDiagnosticsTapped:(UIButton *)sender {
+    NSString *bundleID = self.installedBundleID;
+    NSString *txnID = self.currentTxnID;
+    if (bundleID.length == 0 || txnID.length == 0) {
+        [self appendLog:@"[RUNTIME] لا يتوفر Bundle ID أو transaction للتشخيص"];
+        [self showRawLog];
+        return;
+    }
+
+    sender.enabled = NO;
+    [sender setTitle:@"جارٍ اختبار الإقلاع…" forState:UIControlStateNormal];
+    [self appendLog:[NSString stringWithFormat:@"[RUNTIME] بدء اختبار الإقلاع لـ %@", bundleID]];
+    RuntimeDiagnostics *diagnostics = [RuntimeDiagnostics sharedDiagnostics];
+    [diagnostics diagnoseAppLaunch:bundleID transactionID:txnID operationLog:[InstallationEngine sharedEngine].operationLog completion:^(RuntimeDiagnosticsResult *runtimeResult) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sender.enabled = YES;
+            [sender setTitle:@"إعادة اختبار الإقلاع" forState:UIControlStateNormal];
+            [self appendLog:@"[RUNTIME] ===== Runtime Diagnostics ====="];
+            [self appendLog:runtimeResult.detailedReport ?: @"لم تُرجع طبقة التشخيص تقريرًا"];
+            [self appendLog:@"[RUNTIME] ===== End Runtime Diagnostics ====="];
+            [self showRawLog];
+        });
+    }];
+}
+
 - (void)retryTapped:(UIButton *)sender {
     InstallationEngine *engine = [InstallationEngine sharedEngine];
     if (engine.isInstalling) {
@@ -749,7 +792,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     // Make dismissal idempotent: a failed/completed transaction must not leave
     // a stale marker that blocks the next installation.
     [[InstallationEngine sharedEngine] resetFailedInstallationState];
-    [self dismissViewControllerAnimated:YES completion:nil];
+    void (^finished)(void) = [self.onFinished copy];
+    [self dismissViewControllerAnimated:YES completion:finished];
 }
 
 
