@@ -55,10 +55,10 @@
 }
 
 - (NSString *)detailDump {
-    return [NSString stringWithFormat:@"Phase: %@\nOperation: %@\nTarget: %@\nInput: %@\nExit: %d\nOutput: %@\nError: %@\nVerification: %@\nVerified: %@\nResult: %@\nDuration: %.3fs",
+    return [NSString stringWithFormat:@"Phase: %@\nOperation: %@\nTarget: %@\nInput: %@\nExit: %d\nOutput: %@\nError: %@\nVerification: %@\nVerified: %@\nResult: %@\nDuration: %.3fs\nContext: %@",
             [self phaseName], self.operation, self.target, self.input, self.exitCode,
             self.rawOutput, self.rawError, self.verification,
-            self.verified ? @"YES" : @"NO", [self resultName], self.duration];
+            self.verified ? @"YES" : @"NO", [self resultName], self.duration, self.context ?: @{}];
 }
 
 - (NSDictionary *)dictionaryRepresentation {

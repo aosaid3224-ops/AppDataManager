@@ -322,8 +322,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     OperationRecord *record = note.object;
     if (!record || ![record.transactionID isEqualToString:self.currentTxnID]) return;
 
-    [self appendLog:[NSString stringWithFormat:@"[BEGIN] %@ | %@ | target:%@",
-                     record.recordID, record.operation, record.target]];
+    [self appendLog:[NSString stringWithFormat:@"[BEGIN] %@ | %@ | target:%@ | input:%@",
+                     record.recordID, record.operation, record.target, record.input ?: @"-"]];
 
     NSInteger uiPhase = [self uiPhaseIndexForOperationPhase:record.phase];
     if (uiPhase < 0) return;
@@ -360,6 +360,14 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [self appendLog:@"═══════════════════════════════════════════════════════════════"];
         [self appendLog:record.rawOutput];
         [self appendLog:@"═══════════════════════════════════════════════════════════════"];
+    }
+    if (record.context.count > 0) {
+        NSArray *keys = [[record.context allKeys] sortedArrayUsingSelector:@selector(compare:)];
+        NSMutableString *contextText = [NSMutableString stringWithString:@"[CONTEXT]"];
+        for (NSString *key in keys) {
+            [contextText appendFormat:@" %@=%@;", key, record.context[key]];
+        }
+        [self appendLog:contextText];
     }
 
     NSInteger uiPhase = [self uiPhaseIndexForOperationPhase:record.phase];

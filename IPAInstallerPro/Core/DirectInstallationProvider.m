@@ -59,6 +59,7 @@ extern char **environ;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
 - (BOOL)verifyPlannedEntitlements:(SigningPlan *)plan opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)waitForProcess:(pid_t)pid status:(int *)status timeout:(NSTimeInterval)timeout;
+- (BOOL)runCmdCapture:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recordID operation:(NSString *)operation;
 - (NSArray<NSString *> *)machOPathsAtPath:(NSString *)rootPath;
 - (BOOL)verifyAllMachOSignedAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
@@ -154,6 +155,135 @@ extern char **environ;
         }
         usleep(100000);
     }
+}
+
+- (BOOL)runCmdCapture:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recordID operation:(NSString *)operation {
+    if (!cmd.length) {
+        if (recordID && opLog) [opLog endPhase:recordID exitCode:1 rawOutput:@"" rawError:@"Command path is empty" verification:@"Invalid command path" verified:NO duration:0 context:@{@"operation": operation ?: @"", @"spawned": @NO}];
+        return NO;
+    }
+    int outPipe[2] = {-1, -1}, errPipe[2] = {-1, -1};
+    if (pipe(outPipe) != 0 || pipe(errPipe) != 0) {
+        if (outPipe[0] >= 0) { close(outPipe[0]); close(outPipe[1]); }
+        if (errPipe[0] >= 0) { close(errPipe[0]); close(errPipe[1]); }
+        if (recordID && opLog) [opLog endPhase:recordID exitCode:errno ?: 1 rawOutput:@"" rawError:[NSString stringWithFormat:@"pipe failed: errno=%d", errno] verification:@"Could not create stdout/stderr pipes" verified:NO duration:0 context:@{@"operation": operation ?: @"", @"spawned": @NO}];
+        return NO;
+    }
+
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, outPipe[0]);
+    posix_spawn_file_actions_addclose(&actions, errPipe[0]);
+    posix_spawn_file_actions_addclose(&actions, outPipe[1]);
+    posix_spawn_file_actions_addclose(&actions, errPipe[1]);
+
+    pid_t pid = 0;
+    const char *c = cmd.fileSystemRepresentation;
+    char **argv = calloc(args.count + 2, sizeof(char *));
+    argv[0] = (char *)c;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] fileSystemRepresentation];
+    int spawnStatus = posix_spawn(&pid, c, &actions, NULL, argv, environ);
+    free(argv);
+    posix_spawn_file_actions_destroy(&actions);
+    close(outPipe[1]);
+    close(errPipe[1]);
+
+    if (spawnStatus != 0) {
+        close(outPipe[0]);
+        close(errPipe[0]);
+        if (recordID && opLog) [opLog endPhase:recordID exitCode:spawnStatus rawOutput:@"" rawError:[NSString stringWithFormat:@"posix_spawn failed: errno=%d", spawnStatus] verification:@"Command could not be executed" verified:NO duration:0 context:@{@"operation": operation ?: @"", @"pid": @(0), @"spawned": @NO}];
+        return NO;
+    }
+
+    int outFlags = fcntl(outPipe[0], F_GETFL, 0);
+    int errFlags = fcntl(errPipe[0], F_GETFL, 0);
+    if (outFlags >= 0) fcntl(outPipe[0], F_SETFL, outFlags | O_NONBLOCK);
+    if (errFlags >= 0) fcntl(errPipe[0], F_SETFL, errFlags | O_NONBLOCK);
+
+    NSMutableData *stdoutData = [NSMutableData data];
+    NSMutableData *stderrData = [NSMutableData data];
+    const NSUInteger maxCapturedBytes = 4 * 1024 * 1024;
+    NSDate *start = [NSDate date];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:300.0];
+    int waitStatus = 0;
+    BOOL reaped = NO, timedOut = NO, waitFailed = NO;
+    char buffer[8192];
+
+    for (;;) {
+        for (int fdIndex = 0; fdIndex < 2; fdIndex++) {
+            int fd = (fdIndex == 0) ? outPipe[0] : errPipe[0];
+            NSMutableData *sink = (fdIndex == 0) ? stdoutData : stderrData;
+            ssize_t n = 0;
+            while ((n = read(fd, buffer, sizeof(buffer))) > 0) {
+                if (sink.length < maxCapturedBytes) {
+                    NSUInteger allowed = MIN((NSUInteger)n, maxCapturedBytes - sink.length);
+                    [sink appendBytes:buffer length:allowed];
+                }
+            }
+        }
+        pid_t waited = waitpid(pid, &waitStatus, WNOHANG);
+        if (waited == pid) {
+            reaped = YES;
+            // Drain output produced before process exit without blocking.
+            for (int fdIndex = 0; fdIndex < 2; fdIndex++) {
+                int fd = (fdIndex == 0) ? outPipe[0] : errPipe[0];
+                NSMutableData *sink = (fdIndex == 0) ? stdoutData : stderrData;
+                ssize_t n = 0;
+                while ((n = read(fd, buffer, sizeof(buffer))) > 0) {
+                    if (sink.length < maxCapturedBytes) {
+                        NSUInteger allowed = MIN((NSUInteger)n, maxCapturedBytes - sink.length);
+                        [sink appendBytes:buffer length:allowed];
+                    }
+                }
+            }
+            break;
+        }
+        if (waited < 0 && errno != EINTR) {
+            waitFailed = YES;
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            reaped = YES;
+            break;
+        }
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            timedOut = YES;
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &waitStatus, 0) < 0 && errno == EINTR) { }
+            reaped = YES;
+            break;
+        }
+        usleep(10000);
+    }
+    close(outPipe[0]);
+    close(errPipe[0]);
+
+    NSString *stdoutText = [[NSString alloc] initWithData:stdoutData encoding:NSUTF8StringEncoding] ?: @"";
+    NSString *stderrText = [[NSString alloc] initWithData:stderrData encoding:NSUTF8StringEncoding] ?: @"";
+    BOOL exited = reaped && WIFEXITED(waitStatus);
+    int exitCode = exited ? WEXITSTATUS(waitStatus) : (timedOut ? 124 : 125);
+    BOOL ok = exited && exitCode == 0 && !timedOut && !waitFailed;
+    NSString *rawError = stderrText;
+    if (timedOut) rawError = [NSString stringWithFormat:@"%@%@", rawError.length ? [rawError stringByAppendingString:@" | "] : @"", @"timeout after 300s; child killed and reaped"];
+    if (waitFailed) rawError = [NSString stringWithFormat:@"%@%@", rawError.length ? [rawError stringByAppendingString:@" | "] : @"", @"waitpid failed; child was killed and reaped"];
+    if (!ok && !rawError.length) rawError = [NSString stringWithFormat:@"command exited with status %d", exitCode];
+    NSTimeInterval duration = -[start timeIntervalSinceNow];
+    NSDictionary *context = @{
+        @"operation": operation ?: @"",
+        @"pid": @(pid),
+        @"command": cmd,
+        @"arguments": args ?: @[],
+        @"timeoutSeconds": @300,
+        @"timedOut": @(timedOut),
+        @"waitFailed": @(waitFailed),
+        @"reaped": @(reaped),
+        @"stdoutBytes": @(stdoutData.length),
+        @"stderrBytes": @(stderrData.length),
+        @"durationSeconds": @(duration)
+    };
+    if (recordID && opLog) [opLog endPhase:recordID exitCode:exitCode rawOutput:stdoutText rawError:rawError verification:[NSString stringWithFormat:@"%@ pid=%d exit=%d reaped=%@ timeout=%@", operation ?: @"command", pid, exitCode, reaped ? @"YES" : @"NO", timedOut ? @"YES" : @"NO"] verified:ok duration:duration context:context];
+    return ok;
 }
 
 #pragma mark - Command Execution with OperationLog
@@ -759,51 +889,45 @@ extern char **environ;
  return;
  }
 
- NSString *rec3 = [opLog beginPhase:OperationPhaseIPAExtract operation:@"unzip" target:ipaPath input:@"" transactionID:txnID];
+ NSString *rec3 = [opLog beginPhase:OperationPhaseIPAExtract operation:@"unzip-primary" target:ipaPath input:[NSString stringWithFormat:@"tmp=%@ payload=%@", tmp, [tmp stringByAppendingPathComponent:@"Payload"]] transactionID:txnID];
  BOOL unzipOk = NO;
  NSString *payload = [tmp stringByAppendingPathComponent:@"Payload"];
 
- // Try unzip with direct path first
- unzipOk = [self runCmd:self.unzipPath args:@[@"-o", ipaPath, @"-d", tmp] opLog:opLog recordID:rec3];
+ // Each extractor attempt gets its own record. A single reused record can
+ // overwrite evidence and leave the UI showing only BEGIN for the first call.
+ unzipOk = [self runCmdCapture:self.unzipPath args:@[@"-o", ipaPath, @"-d", tmp] opLog:opLog recordID:rec3 operation:@"unzip-primary"];
 
- // Fallback: try system unzip if available
  if (!unzipOk || ![fm fileExistsAtPath:payload]) {
-     NSLog(@"[IPAInstallerPro] Primary unzip failed, trying fallback...");
+     NSLog(@"[IPAInstallerPro] Primary unzip failed or Payload is absent; trying system unzip");
      NSString *sysUnzip = @"/usr/bin/unzip";
      if ([fm fileExistsAtPath:sysUnzip] && ![sysUnzip isEqualToString:self.unzipPath]) {
-         unzipOk = [self runCmd:sysUnzip args:@[@"-o", ipaPath, @"-d", tmp] opLog:opLog recordID:rec3];
+         NSString *fallbackRec = [opLog beginPhase:OperationPhaseIPAExtract operation:@"unzip-system-fallback" target:ipaPath input:[NSString stringWithFormat:@"tmp=%@ payloadExists=%@", tmp, [fm fileExistsAtPath:payload] ? @"YES" : @"NO"] transactionID:txnID];
+         unzipOk = [self runCmdCapture:sysUnzip args:@[@"-o", ipaPath, @"-d", tmp] opLog:opLog recordID:fallbackRec operation:@"unzip-system-fallback"];
      }
  }
 
- // Fallback 2: try using tar (some IPAs can be extracted with tar)
  if (!unzipOk || ![fm fileExistsAtPath:payload]) {
-     NSLog(@"[IPAInstallerPro] unzip binary failed, trying tar extraction...");
+     NSLog(@"[IPAInstallerPro] unzip failed or Payload is absent; trying tar extraction");
      NSString *tarPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/tar"];
      if ([fm fileExistsAtPath:tarPath]) {
-         unzipOk = [self runCmd:tarPath args:@[@"-xf", ipaPath, @"-C", tmp] opLog:opLog recordID:rec3];
+         NSString *tarRec = [opLog beginPhase:OperationPhaseIPAExtract operation:@"tar-fallback" target:ipaPath input:[NSString stringWithFormat:@"tmp=%@ payloadExists=%@", tmp, [fm fileExistsAtPath:payload] ? @"YES" : @"NO"] transactionID:txnID];
+         unzipOk = [self runCmdCapture:tarPath args:@[@"-xf", ipaPath, @"-C", tmp] opLog:opLog recordID:tarRec operation:@"tar-fallback"];
      }
  }
 
  BOOL payloadExists = [fm fileExistsAtPath:payload];
- if (!unzipOk && !payloadExists) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Unzip failed (unzipOk=%d payloadExists=%d)", unzipOk, payloadExists);
+ NSUInteger payloadEntryCount = payloadExists ? [fm subpathsAtPath:payload].count : 0;
+ NSString *extractSummary = [NSString stringWithFormat:@"tmp=%@ payload=%@ payloadExists=%@ payloadEntries=%lu unzipOK=%@", tmp, payload, payloadExists ? @"YES" : @"NO", (unsigned long)payloadEntryCount, unzipOk ? @"YES" : @"NO"];
+ NSString *extractAudit = [opLog beginPhase:OperationPhaseIPAExtract operation:@"extraction-postcondition" target:tmp input:extractSummary transactionID:txnID];
+ [opLog endPhase:extractAudit exitCode:(payloadExists && unzipOk) ? 0 : 1 rawOutput:extractSummary rawError:(payloadExists && unzipOk) ? @"" : @"Extractor returned failure or Payload is absent" verification:@"Payload directory and extracted entries must exist" verified:(payloadExists && unzipOk) duration:0 context:@{@"tempDirectory": tmp ?: @"", @"payload": payload ?: @"", @"payloadExists": @(payloadExists), @"payloadEntryCount": @(payloadEntryCount), @"extractorReportedSuccess": @(unzipOk)}];
+ if (!unzipOk || !payloadExists) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Extraction postcondition failed (extractorOK=%d payloadExists=%d)", unzipOk, payloadExists);
  [fm removeItemAtPath:tmp error:nil];
- [opLog endPhase:rec3 exitCode:1 rawOutput:@"" rawError:@"Unzip failed — all methods exhausted" verification:@"unzip failed" verified:NO duration:0];
-  // Emit diagnostics report even on failure
+  // Each extractor attempt already has its own completed record with PID,
+  // stdout, stderr, exit status and timeout state. Do not overwrite it here.
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Unzip failed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
- return;
- }
- // If payload exists but unzip reported failure, it might be partial — check if .app exists
- if (!payloadExists) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Payload directory not found after extraction");
- [fm removeItemAtPath:tmp error:nil];
- [opLog endPhase:rec3 exitCode:1 rawOutput:@"" rawError:@"Payload not found" verification:@"no payload" verified:NO duration:0];
-  // Emit diagnostics report even on failure
-  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
- [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"No Payload in IPA" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"IPA extraction failed — extractorOK:%@ payload:%@", unzipOk ? @"YES" : @"NO", payloadExists ? @"YES" : @"NO"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"extractSummary": extractSummary ?: @"", @"payloadEntryCount": @(payloadEntryCount) }]);
  return;
  }
 
