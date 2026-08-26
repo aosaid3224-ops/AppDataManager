@@ -1058,79 +1058,30 @@ extern char **environ;
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSLog(@"[IPAInstallerPro] === PHASE 4: FILE_COPY ===");
- // A normal iOS-installed application must live in a system application
- // container. RootlessManager.resolvePath(@"/Applications/...") deliberately
- // maps to /var/jb/Applications, which is a jailbreak overlay and is not the
- // same installation model as an app registered by installd/LaunchServices.
- NSArray<NSString *> *systemApplicationBases = @[@"/var/containers/Bundle/Application", @"/var/mobile/Containers/Bundle/Application"];
- NSString *systemApplicationBase = nil;
- for (NSString *candidate in systemApplicationBases) {
-     BOOL isDirectory = NO;
-     if ([fm fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) {
-         systemApplicationBase = candidate;
-         break;
-     }
+  // Staging is deliberately kept inside the per-install temporary directory.
+ // The system application container is owned by installd and is allocated only
+ // after the signed IPA is submitted to LaunchServices.
+ NSString *stagingRoot = [tmp stringByAppendingPathComponent:@"PreparedRoot"];
+ NSString *destApp = [stagingRoot stringByAppendingPathComponent:appFolder ?: @""];
+ NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"prepare isolated staging root" target:destApp input:stagingRoot transactionID:txnID];
+ BOOL stagingReady = [self runRoot:self.mkdirPath args:@[@"-p", stagingRoot] opLog:opLog recordID:rec7];
+ if (!stagingReady) {
+     [opLog endPhase:rec7 exitCode:1 rawOutput:@"" rawError:@"Could not create isolated staging root" verification:@"/var/tmp staging unavailable" verified:NO duration:0];
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"Could not create isolated staging root — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"stagingRoot": stagingRoot ?: @"" }]);
+     return;
  }
- NSString *containerUUID = [[NSUUID UUID].UUIDString lowercaseString];
- NSString *logicalDest = systemApplicationBase.length > 0
-     ? [[systemApplicationBase stringByAppendingPathComponent:containerUUID] stringByAppendingPathComponent:appFolder]
-     : [@"/Applications" stringByAppendingPathComponent:appFolder];
- NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"resolveSystemApplicationContainer" target:logicalDest input:systemApplicationBase ?: @"none" transactionID:txnID];
- NSString *destApp = systemApplicationBase.length > 0 ? logicalDest : nil;
- BOOL destResolved = (destApp != nil && destApp.length > 0);
- NSString *destError = systemApplicationBase.length > 0 ? @"" : @"No system application container found; refusing jailbreak-overlay install";
- [opLog endPhase:rec7 exitCode:destResolved ? 0 : 1 rawOutput:destApp ?: @"" rawError:destResolved ? @"" : destError
- verification:[NSString stringWithFormat:@"resolved=%@ systemBase=%@ container=%@ path=%@", destResolved ? @"YES" : @"NO", systemApplicationBase ?: @"N/A", containerUUID, destApp ?: @"N/A"] verified:destResolved duration:0];
-
- if (!destResolved) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve system application container for: %@", logicalDest);
- [fm removeItemAtPath:tmp error:nil];
-  // Emit diagnostics report even on failure
-  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
- [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:(destError.length > 0 ? destError : @"Could not resolve system application container") provider:[self providerName] transaction:txnID error:nil evidence:@{ @"systemApplicationBase": systemApplicationBase ?: @"", @"requestedPath": logicalDest ?: @"" }]);
- return;
- }
+ [opLog endPhase:rec7 exitCode:0 rawOutput:stagingRoot rawError:@"" verification:@"isolated /var/tmp staging root ready" verified:YES duration:0];
  self.lastInstalledAppPath = destApp;
-
- // Ensure Applications directory exists
- NSString *appsDir = [destApp stringByDeletingLastPathComponent];
- if (![fm fileExistsAtPath:appsDir]) {
- NSString *recMkdir = [opLog beginPhase:OperationPhaseFileCopy operation:@"mkdir -p Applications" target:appsDir input:@"" transactionID:txnID];
- BOOL dirCreated = [self runRoot:self.mkdirPath args:@[@"-p", appsDir] opLog:opLog recordID:recMkdir];
- if (!dirCreated) {
- NSError *mkErr;
- [fm createDirectoryAtPath:appsDir withIntermediateDirectories:YES attributes:nil error:&mkErr];
- }
- }
-
- // BACKUP existing app (rollback support)
+ // There is no existing system app at this newly generated staging path, so
+ // no backup or mutation of /var/containers is performed here.
  NSString *backupPath = [destApp stringByAppendingString:@".backup"];
- if (![self backupExistingApp:destApp to:backupPath opLog:opLog txnID:txnID]) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Backup failed for: %@", destApp);
- [fm removeItemAtPath:tmp error:nil];
-  // Emit diagnostics report even on failure
-  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
- [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Failed to backup existing app" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
- return;
- }
-
- // Copy only into a fresh destination. cp -R merges when the target exists,
- // which can create extra stale files after a previous failed attempt.
- if ([fm fileExistsAtPath:destApp]) {
-     NSString *clearRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"clear destination before copy" target:destApp input:@"rm -rf" transactionID:txnID];
-     BOOL cleared = hasH ? [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:clearRec] : [fm removeItemAtPath:destApp error:nil];
-     if (!cleared || [fm fileExistsAtPath:destApp]) {
-         [opLog endPhase:clearRec exitCode:1 rawOutput:@"" rawError:@"Destination remained before copy" verification:@"destination must be absent" verified:NO duration:0];
-         [fm removeItemAtPath:tmp error:nil];
-         [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
-         [opLog endTransaction:txnID finalResult:OperationResultFailed];
-         if (completion) completion([InstallationResult failureResult:@"Destination was not empty before copy — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
-         return;
-     }
- }
-  NSString *stagedDest = [destApp stringByAppendingFormat:@".ipa-stage-%@", [NSUUID UUID].UUIDString];
+  // The system container is owned and allocated by installd. It is not a
+  // writable staging directory. Prepare the signed bundle under /var/tmp,
+  // then hand the resulting IPA to LaunchServices.
+  NSString *stagedDest = destApp;
  [fm removeItemAtPath:stagedDest error:nil];
  BOOL copied = NO;
  if (hasH && self.helperPath.length > 0) {
@@ -1175,17 +1126,20 @@ extern char **environ;
  if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — %@ — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch, self.diagDeepCopyDetail ?: @"no manifest details"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch), @"manifest": self.diagDeepCopyDetail ?: @"" }]);
  return;
  }
- NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"promote verified staging bundle" target:[NSString stringWithFormat:@"%@ -> %@", stagedDest, destApp] input:@"mv after verified copy" transactionID:txnID];
- BOOL promoted = hasH ? [self runRoot:self.mvPath args:@[stagedDest, destApp] opLog:opLog recordID:promoteRec] : [fm moveItemAtPath:stagedDest toPath:destApp error:nil];
- if (!promoted || ![fm fileExistsAtPath:destApp]) {
+ NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"adopt verified staging bundle" target:stagedDest input:@"staging remains under /var/tmp until system install" transactionID:txnID];
+ BOOL promoted = [fm fileExistsAtPath:stagedDest];
+ [opLog endPhase:promoteRec exitCode:promoted ? 0 : 1 rawOutput:stagedDest ?: @"" rawError:promoted ? @"" : @"Prepared staging bundle is missing" verification:promoted ? @"verified staging adopted for IPA repack" : @"staging bundle unavailable" verified:promoted duration:0];
+ if (!promoted) {
      [fm removeItemAtPath:stagedDest error:nil];
      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
      [fm removeItemAtPath:tmp error:nil];
      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
      [opLog endTransaction:txnID finalResult:OperationResultFailed];
-     if (completion) completion([InstallationResult failureResult:@"Verified bundle promotion failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+     if (completion) completion([InstallationResult failureResult:@"Verified staging bundle is missing — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
      return;
  }
+ destApp = stagedDest;
+ self.lastInstalledAppPath = destApp;
 
 
  // PHASE 5: PERMISSION
