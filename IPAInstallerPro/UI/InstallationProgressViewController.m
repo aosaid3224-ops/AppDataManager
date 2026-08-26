@@ -319,6 +319,14 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
                                              selector:@selector(operationRecordUpdated:)
                                                  name:@"OperationRecordUpdated"
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(runtimeApplicationDidEnterBackground:)
+                                                 name:UIApplicationDidEnterBackgroundNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(runtimeApplicationWillEnterForeground:)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
 }
 
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
@@ -407,6 +415,16 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 }
 
 #pragma mark - UI Setup
+
+- (void)runtimeApplicationDidEnterBackground:(NSNotification *)note {
+    if (!self.runtimeDiagnosticsRunning) return;
+    [self appendLog:@"[RUNTIME] applicationDidEnterBackground — target launch may have moved the installer to background"];
+}
+
+- (void)runtimeApplicationWillEnterForeground:(NSNotification *)note {
+    if (!self.runtimeDiagnosticsRunning) return;
+    [self appendLog:@"[RUNTIME] applicationWillEnterForeground — installer returned while diagnostics were active"];
+}
 
 - (void)setupUI {
     _scrollView = [[UIScrollView alloc] init];

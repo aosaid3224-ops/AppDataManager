@@ -1,6 +1,6 @@
 Package: com.aosaid.ipainstallerpro
 Name: IPA Installer Pro
-Version: 2.1.90
+Version: 2.1.91
 Architecture: iphoneos-arm64
 Description: Standalone IPA installer with proprietary signing — no external tools required
 Maintainer: aosaid <aosaid@proton.me>

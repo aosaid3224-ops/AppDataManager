@@ -17,6 +17,10 @@
 #import <UIKit/UIKit.h>
 #import <sys/wait.h>
 #import <sys/sysctl.h>
+#import <sys/stat.h>
+#import <fcntl.h>
+#import <errno.h>
+#import <unistd.h>
 
 // ─── ProcessInfo Implementation ───
 @implementation ProcessInfo
@@ -36,7 +40,8 @@
     [r appendFormat:@"Process exit: %@\n", self.processExitAt ?: @"N/A"];
     [r appendFormat:@"Launch detection time: %.0f ms\n", self.launchDetectionTimeMs];
     [r appendFormat:@"Process lifetime: %.0f ms\n", self.processLifetimeMs];
-    [r appendFormat:@"Process exit after launch: %.0f ms\n", self.processExitAfterLaunchMs];
+    NSString *exitAfter = self.processExitAfterLaunchMs >= 0 ? [NSString stringWithFormat:@"%.0f ms", self.processExitAfterLaunchMs] : @"N/A (process remained alive)";
+    [r appendFormat:@"Process exit after launch: %@\n", exitAfter];
     [r appendFormat:@"Monitoring window: %.0f ms\n", self.monitoringWindowMs];
     [r appendFormat:@"Failure stage: %@\n", self.failureStage ?: @"N/A"];
     [r appendFormat:@"Evidence: %@\n", self.evidenceSummary ?: @"N/A"];
@@ -64,6 +69,9 @@
 
 // ─── RuntimeDiagnostics Implementation ───
 @interface RuntimeDiagnostics ()
+- (NSString *)processSnapshotForPID:(pid_t)pid;
+- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum;
+- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName timeout:(NSTimeInterval)timeout;
 @end
 
 @implementation RuntimeDiagnostics
@@ -202,12 +210,13 @@
                                transactionID:txnID];
 
     NSDate *monitorStart = [NSDate date];
+    NSMutableString *liveTrace = [NSMutableString stringWithFormat:@"[0ms] monitor_started pid=%d\n", result.pid];
     // The installer is not the parent of the target app, so waitpid may not
     // expose its exit status. Keep that state explicitly unknown instead of
     // misclassifying a disappeared process as a normal exit.
     int exitStatus = -1;
     int signalNum = 0;
-    BOOL stillAlive = [self monitorProcess:result.pid duration:self.monitoringWindow exitStatus:&exitStatus signalNum:&signalNum];
+    BOOL stillAlive = [self monitorProcess:result.pid duration:self.monitoringWindow trace:liveTrace exitStatus:&exitStatus signalNum:&signalNum];
     NSTimeInterval monitorDuration = [[NSDate date] timeIntervalSinceDate:monitorStart] * 1000.0;
 
     if (!stillAlive) {
@@ -294,9 +303,10 @@
                                   transactionID:txnID];
 
         NSMutableString *diagnosticOutput = [NSMutableString string];
+        [diagnosticOutput appendFormat:@"=== Live Process Trace ===\n%@\n\n", liveTrace];
 
         // 4a. Crash Reporter (.ips files)
-        NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name];
+        NSString *crashPath = [self waitForFreshCrashReportForBundleID:bundleID processName:proc.name timeout:3.0];
         [timeline addObject:@"crash_evidence_lookup"];
         if (crashPath) {
             [timeline addObject:@"crash_report_found"];
@@ -367,7 +377,7 @@
         result.terminationReason = @"";
         result.summary = [NSString stringWithFormat:@"Process remained alive for full %.0f ms monitoring window", monitorDuration];
 
-        NSMutableString *aliveEvidence = [NSMutableString stringWithFormat:@"alive_after=%.0fms\nphase=monitoring_window", monitorDuration];
+        NSMutableString *aliveEvidence = [NSMutableString stringWithFormat:@"alive_after=%.0fms\nphase=monitoring_window\n=== Live Process Trace ===\n%@", monitorDuration, liveTrace];
         NSString *aliveUnified = [self getUnifiedLogForBundleID:bundleID processName:proc.name];
         if (aliveUnified.length > 0) {
             [aliveEvidence appendFormat:@"\n=== Relevant Unified Log ===\n%@", aliveUnified];
@@ -521,29 +531,50 @@
 
 #pragma mark - Process Monitoring with Exit Status
 
-- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration exitStatus:(int *)exitStatus signalNum:(int *)signalNum {
+- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum {
     NSDate *start = [NSDate date];
+    NSDate *nextSnapshot = start;
     *exitStatus = -1;
     *signalNum = 0;
 
     while ([[NSDate date] timeIntervalSinceDate:start] < duration) {
+        NSDate *now = [NSDate date];
+        if ([now compare:nextSnapshot] != NSOrderedAscending) {
+            NSTimeInterval elapsed = [now timeIntervalSinceDate:start] * 1000.0;
+            [trace appendFormat:@"[%.0fms] %@\n", elapsed, [self processSnapshotForPID:pid]];
+            nextSnapshot = [now dateByAddingTimeInterval:2.0];
+        }
+
         if (![self isProcessAlive:pid]) {
-            // Process exited - try to get exit status via waitpid with WNOHANG
-            int status;
-            pid_t result = waitpid(pid, &status, WNOHANG);
-            if (result == pid) {
-                if (WIFEXITED(status)) {
-                    *exitStatus = WEXITSTATUS(status);
-                }
-                if (WIFSIGNALED(status)) {
-                    *signalNum = WTERMSIG(status);
-                }
+            // The target is not our child in normal iOS execution. waitpid is
+            // attempted only for completeness; unavailable status stays -1.
+            int status = 0;
+            pid_t waited = waitpid(pid, &status, WNOHANG);
+            if (waited == pid) {
+                if (WIFEXITED(status)) *exitStatus = WEXITSTATUS(status);
+                if (WIFSIGNALED(status)) *signalNum = WTERMSIG(status);
             }
+            NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:start] * 1000.0;
+            [trace appendFormat:@"[%.0fms] process_not_alive exitStatus=%d signal=%d waitpid=%d\n", elapsed, *exitStatus, *signalNum, waited];
             return NO;
         }
         [NSThread sleepForTimeInterval:self.pollInterval];
     }
-    return [self isProcessAlive:pid];
+
+    BOOL alive = [self isProcessAlive:pid];
+    NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:start] * 1000.0;
+    [trace appendFormat:@"[%.0fms] monitor_finished alive=%@\n", elapsed, alive ? @"YES" : @"NO"];
+    return alive;
+}
+
+- (NSString *)processSnapshotForPID:(pid_t)pid {
+    int savedErrno = 0;
+    BOOL alive = (kill(pid, 0) == 0);
+    if (!alive) savedErrno = errno;
+    NSString *ps = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-p", [NSString stringWithFormat:@"%d", pid], @"-o", @"pid=,ppid=,uid=,gid=,stat=,etime=,comm="]];
+    if (!ps) ps = [self runCmdOutput:@"/bin/ps" args:@[@"-p", [NSString stringWithFormat:@"%d", pid], @"-o", @"pid=,ppid=,uid=,gid=,stat=,etime=,comm="]];
+    NSString *compact = [(ps ?: @"ps_unavailable") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return [NSString stringWithFormat:@"pid=%d alive=%@ errno=%d snapshot=%@", pid, alive ? @"YES" : @"NO", savedErrno, compact];
 }
 
 - (BOOL)isProcessAlive:(pid_t)pid {
@@ -621,6 +652,17 @@
 }
 
 #pragma mark - Crash Report Search
+
+- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName timeout:(NSTimeInterval)timeout {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    NSString *path = nil;
+    while (!path && [[NSDate date] compare:deadline] == NSOrderedAscending) {
+        path = [self findCrashReportForBundleID:bundleID processName:processName];
+        if (path) break;
+        [NSThread sleepForTimeInterval:0.25];
+    }
+    return path;
+}
 
 - (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -844,7 +886,7 @@
     int outPipe[2];
     if (pipe(outPipe) != 0) return nil;
 
-    pid_t pid;
+    pid_t pid = 0;
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
@@ -854,8 +896,8 @@
 
     const char *c = [cmd UTF8String];
     char **argv = malloc((args.count + 2) * sizeof(char*));
-    argv[0] = (char*)c;
-    for (NSUInteger i = 0; i < args.count; i++) argv[i+1] = (char*)[args[i] UTF8String];
+    argv[0] = (char *)c;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] UTF8String];
     argv[args.count + 1] = NULL;
 
     extern char **environ;
@@ -866,19 +908,40 @@
 
     if (st != 0) { close(outPipe[0]); return nil; }
 
-    NSMutableString *output = [NSMutableString string];
+    int flags = fcntl(outPipe[0], F_GETFL, 0);
+    if (flags >= 0) fcntl(outPipe[0], F_SETFL, flags | O_NONBLOCK);
+    NSMutableData *data = [NSMutableData data];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    BOOL pipeClosed = NO;
     char buf[4096];
-    ssize_t n;
-    while ((n = read(outPipe[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = '\0';
-        [output appendString:[NSString stringWithUTF8String:buf]];
+
+    while (!pipeClosed) {
+        ssize_t n = read(outPipe[0], buf, sizeof(buf));
+        if (n > 0) {
+            if (data.length < (1024 * 1024)) {
+                NSUInteger remaining = (1024 * 1024) - data.length;
+                [data appendBytes:buf length:MIN((NSUInteger)n, remaining)];
+            }
+            continue;
+        }
+        if (n == 0) {
+            pipeClosed = YES;
+            break;
+        }
+        if (errno != EAGAIN && errno != EINTR) break;
+        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
+            kill(pid, SIGTERM);
+            usleep(100000);
+            kill(pid, SIGKILL);
+            break;
+        }
+        [NSThread sleepForTimeInterval:0.02];
     }
+
     close(outPipe[0]);
-
-    int ws;
-    waitpid(pid, &ws, 0);
-
-    return output;
+    int ws = 0;
+    while (waitpid(pid, &ws, 0) < 0 && errno == EINTR) { }
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
 }
 
 @end
