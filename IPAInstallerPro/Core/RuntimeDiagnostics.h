@@ -42,6 +42,11 @@
 @property (nonatomic, strong) NSString *diagnosticOutput;
 @property (nonatomic, assign) BOOL success;
 @property (nonatomic, strong) NSString *summary;
+// Evidence-based classification; never implies a crash without OS evidence.
+@property (nonatomic, strong) NSString *failureStage;
+@property (nonatomic, strong) NSString *evidenceSummary;
+@property (nonatomic, assign) NSTimeInterval processExitAfterLaunchMs;
+@property (nonatomic, strong) NSArray<NSString *> *phaseTimeline;
 - (NSString *)detailedReport;
 @end
 

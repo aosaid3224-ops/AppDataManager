@@ -36,7 +36,13 @@
     [r appendFormat:@"Process exit: %@\n", self.processExitAt ?: @"N/A"];
     [r appendFormat:@"Launch detection time: %.0f ms\n", self.launchDetectionTimeMs];
     [r appendFormat:@"Process lifetime: %.0f ms\n", self.processLifetimeMs];
+    [r appendFormat:@"Process exit after launch: %.0f ms\n", self.processExitAfterLaunchMs];
     [r appendFormat:@"Monitoring window: %.0f ms\n", self.monitoringWindowMs];
+    [r appendFormat:@"Failure stage: %@\n", self.failureStage ?: @"N/A"];
+    [r appendFormat:@"Evidence: %@\n", self.evidenceSummary ?: @"N/A"];
+    if (self.phaseTimeline.count > 0) {
+        [r appendFormat:@"Phase timeline: %@\n", [self.phaseTimeline componentsJoinedByString:@" -> "]];
+    }
     [r appendFormat:@"\n--- Process ---\n"];
     [r appendFormat:@"Detected: %@\n", self.processDetected ? @"YES" : @"NO"];
     [r appendFormat:@"PID: %d\n", self.pid];
@@ -72,8 +78,8 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _processDetectionTimeout = 5.0;
-        _monitoringWindow = 10.0;
+        _processDetectionTimeout = 8.0;
+        _monitoringWindow = 20.0;
         _pollInterval = 0.5;
     }
     return self;
@@ -92,6 +98,10 @@
     result.state = @"NOT_STARTED";
     result.launchRequestedAt = [NSDate date];
     result.monitoringWindowMs = self.monitoringWindow * 1000.0;
+    result.failureStage = @"not_started";
+    NSMutableArray<NSString *> *timeline = [NSMutableArray array];
+    result.phaseTimeline = timeline;
+    [timeline addObject:@"launch_request_started"];
 
     NSLog(@"[RuntimeDiagnostics] Starting diagnosis for %@", bundleID);
 
@@ -115,6 +125,9 @@
            duration:launchDuration / 1000.0];
 
     if (!launched) {
+        [timeline addObject:@"launch_request_failed"];
+        result.failureStage = @"launch_request";
+        result.evidenceSummary = @"The launch request was rejected before process detection";
         result.success = NO;
         result.state = @"LAUNCH_FAILED";
         result.summary = @"Launch request failed";
@@ -122,6 +135,7 @@
         return;
     }
 
+    [timeline addObject:@"launch_request_dispatched"];
     // PHASE 2: PROCESS DETECTION
     NSString *recDetect = [opLog beginPhase:OperationPhaseLaunch
                                   operation:@"processDetection"
@@ -135,6 +149,8 @@
     result.processDetectedAt = proc ? [NSDate date] : nil;
 
     if (proc) {
+        [timeline addObject:@"process_detected"];
+        result.failureStage = @"process_detection_passed";
         result.processDetected = YES;
         result.pid = proc.pid;
         result.uid = proc.uid;
@@ -156,6 +172,9 @@
 
         NSLog(@"[RuntimeDiagnostics] Process detected: %@", procInfo);
     } else {
+        [timeline addObject:@"process_not_detected"];
+        result.failureStage = @"process_detection";
+        result.evidenceSummary = @"No matching process was observed within the detection window";
         result.processDetected = NO;
         result.state = @"PROCESS_NOT_DETECTED";
         result.success = NO;
@@ -173,6 +192,7 @@
         return;
     }
 
+    [timeline addObject:@"runtime_monitor_started"];
     // PHASE 3: RUNTIME MONITORING
     NSString *recMonitor = [opLog beginPhase:OperationPhaseRuntimeMonitor
                                    operation:@"runtimeMonitor"
@@ -246,6 +266,10 @@
             exitCodeForLog = 1;
         }
         
+        [timeline addObject:@"process_exited"];
+        result.failureStage = @"runtime_monitoring";
+        result.evidenceSummary = crashDetected ? @"Termination signal observed from process monitoring" : (exitStatus < 0 ? @"Process disappeared; exit status was not observable" : @"Process exit observed without a crash signal");
+        result.processExitAfterLaunchMs = result.processDetectedAt ? ([[NSDate date] timeIntervalSinceDate:result.processDetectedAt] * 1000.0) : monitorDuration;
         result.crashDetected = crashDetected;
         result.state = state;
         result.terminationReason = terminationType;
@@ -273,7 +297,11 @@
 
         // 4a. Crash Reporter (.ips files)
         NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name];
+        [timeline addObject:@"crash_evidence_lookup"];
         if (crashPath) {
+            [timeline addObject:@"crash_report_found"];
+            result.failureStage = @"crash_report";
+            result.evidenceSummary = @"A fresh OS crash report matched the launched process";
             // A fresh crash report is stronger evidence than the unavailable
             // waitpid status for an unrelated application process.
             result.crashDetected = YES;
@@ -328,17 +356,31 @@
         NSLog(@"[RuntimeDiagnostics] Crash diagnostics complete. Sources found: %@", hasAnyDiagnostic ? @"YES" : @"NO");
 
     } else {
+        [timeline addObject:@"monitoring_window_completed"];
+        result.failureStage = @"monitoring_window";
+        result.evidenceSummary = @"No process termination or crash report was observed during the monitoring window";
         // Process remained alive for full monitoring window
         result.processRemainedAlive = YES;
         result.processLifetimeMs = monitorDuration;
         result.state = @"RUNNING";
         result.success = YES;
         result.terminationReason = @"";
-        result.summary = [NSString stringWithFormat:@"Process remained alive for full %.0f ms window", monitorDuration];
+        result.summary = [NSString stringWithFormat:@"Process remained alive for full %.0f ms monitoring window", monitorDuration];
+
+        NSMutableString *aliveEvidence = [NSMutableString stringWithFormat:@"alive_after=%.0fms\nphase=monitoring_window", monitorDuration];
+        NSString *aliveUnified = [self getUnifiedLogForBundleID:bundleID processName:proc.name];
+        if (aliveUnified.length > 0) {
+            [aliveEvidence appendFormat:@"\n=== Relevant Unified Log ===\n%@", aliveUnified];
+        }
+        NSString *aliveJetsam = [self findJetsamEventForProcessName:proc.name bundleID:bundleID];
+        if (aliveJetsam.length > 0) {
+            [aliveEvidence appendFormat:@"\n=== Relevant Jetsam Evidence ===\n%@", aliveJetsam];
+        }
+        result.diagnosticOutput = aliveEvidence;
 
         [opLog endPhase:recMonitor
                exitCode:0
-              rawOutput:[NSString stringWithFormat:@"alive_after=%.0fms", monitorDuration]
+              rawOutput:aliveEvidence
                rawError:@""
            verification:[NSString stringWithFormat:@"Process remained alive for full %.0f ms monitoring window", monitorDuration]
                verified:YES
@@ -472,7 +514,7 @@
 
 - (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration exitStatus:(int *)exitStatus signalNum:(int *)signalNum {
     NSDate *start = [NSDate date];
-    *exitStatus = 0;
+    *exitStatus = -1;
     *signalNum = 0;
 
     while ([[NSDate date] timeIntervalSinceDate:start] < duration) {
