@@ -12,6 +12,7 @@
 #import "IPAStructuralResult.h"
 #import "SigningPlanner.h"
 #import "MachORPathRepair.h"
+#import "MachOAnalyzer.h"
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
@@ -61,6 +62,8 @@ extern char **environ;
 - (NSArray<NSString *> *)machOPathsAtPath:(NSString *)rootPath;
 - (BOOL)verifyAllMachOSignedAtPath:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
+- (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
 @end
 
 @implementation DirectInstallationProvider
@@ -1099,6 +1102,18 @@ extern char **environ;
       return;
   }
 
+  NSString *launchReadinessReason = nil;
+  BOOL launchReady = [self verifyLaunchReadinessAtPath:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID reason:&launchReadinessReason];
+  if (!launchReady) {
+      NSLog(@"[IPAInstallerPro] Launch readiness gate failed — rollback: %@", launchReadinessReason ?: @"unknown reason");
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:launchReadinessReason ?: @"Launch readiness verification failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"launchReadiness": @"failed" }]);
+      return;
+  }
+
   NSString *dbgExit = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] EXITING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
@@ -1677,6 +1692,113 @@ extern char **environ;
   [opLog endPhase:exitRec exitCode:0 rawOutput:@"[TRACE] EXIT fixFrameworks" rawError:@"" verification:@"trace" verified:YES duration:0];
 }
 
+
+#pragma mark - Launch Readiness Gate
+
+- (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths {
+    if (!dependency.length) return NO;
+    if ([dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/usr/lib/"] || [dependency hasPrefix:@"/usr/lib/swift/"]) return YES;
+
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    NSString *binaryDir = [binaryPath stringByDeletingLastPathComponent];
+    NSString *leaf = dependency;
+    if ([dependency hasPrefix:@"@rpath/"]) {
+        leaf = [dependency substringFromIndex:[@"@rpath/" length]];
+        for (MachORPath *rpath in rpaths) {
+            NSString *raw = rpath.rawPath;
+            if (!raw.length) continue;
+            NSString *base = raw;
+            if ([base hasPrefix:@"@loader_path"]) base = [binaryDir stringByAppendingPathComponent:[base substringFromIndex:[@"@loader_path" length]]];
+            else if ([base hasPrefix:@"@executable_path"]) base = [appPath stringByAppendingPathComponent:[base substringFromIndex:[@"@executable_path" length]]];
+            [candidates addObject:[[base stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        }
+        // iOS binaries commonly use @rpath for embedded frameworks even when
+        // the load command does not retain an explicit app-local rpath.
+        [candidates addObject:[[appPath stringByAppendingPathComponent:@"Frameworks"] stringByAppendingPathComponent:leaf]];
+        if ([leaf hasPrefix:@"libswift"] && ![leaf containsString:@"/"]) return YES;
+    } else if ([dependency hasPrefix:@"@loader_path/"]) {
+        leaf = [dependency substringFromIndex:[@"@loader_path/" length]];
+        [candidates addObject:[[binaryDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+    } else if ([dependency hasPrefix:@"@executable_path/"]) {
+        leaf = [dependency substringFromIndex:[@"@executable_path/" length]];
+        [candidates addObject:[[appPath stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+    } else if ([dependency hasPrefix:@"/"]) {
+        [candidates addObject:dependency];
+    } else {
+        [candidates addObject:[[binaryDir stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+        [candidates addObject:[[appPath stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *candidate in candidates) {
+        if ([fm fileExistsAtPath:candidate]) return YES;
+    }
+    return NO;
+}
+
+- (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason {
+    // This is a strict static gate. It proves that the installed bundle is
+    // structurally launchable; it cannot prove behavior inside the app process.
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[appPath stringByAppendingPathComponent:@"Info.plist"]];
+    if (![info isKindOfClass:[NSDictionary class]]) [failures addObject:@"Info.plist is unreadable"];
+    if (![info[@"CFBundleIdentifier"] isEqual:bundleID]) [failures addObject:@"CFBundleIdentifier does not match the installation identity"];
+    if (![info[@"CFBundlePackageType"] isEqual:@"APPL"]) [failures addObject:@"CFBundlePackageType is not APPL"];
+    if (!exeName.length || [exeName containsString:@"/"] || [exeName containsString:@".."] || [exeName containsString:@"~"]) [failures addObject:@"invalid CFBundleExecutable name"];
+
+    NSString *mainBinary = [appPath stringByAppendingPathComponent:exeName ?: @""];
+    BOOL mainExists = exeName.length > 0 && [fm fileExistsAtPath:mainBinary] && [fm isReadableFileAtPath:mainBinary] && access(mainBinary.fileSystemRepresentation, X_OK) == 0;
+    if (!mainExists) [failures addObject:@"main executable is missing, unreadable, or not executable"];
+
+    NSArray<NSString *> *machOPaths = [self machOPathsAtPath:appPath];
+    if (![machOPaths containsObject:mainBinary]) [failures addObject:@"main executable is not a recognizable Mach-O"];
+    const uint32_t arm64CPUType = 0x0100000c;
+    for (NSString *binaryPath in machOPaths) {
+        MachOAnalysisResult *analysis = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:binaryPath];
+        if (!analysis || analysis.parseStatus == MachOParseFailed || analysis.slices.count == 0) {
+            [failures addObject:[NSString stringWithFormat:@"Mach-O analysis failed: %@", binaryPath.lastPathComponent]];
+            continue;
+        }
+        BOOL hasArm64 = NO;
+        for (MachOSlice *slice in analysis.slices) if (slice.cputype == arm64CPUType) { hasArm64 = YES; break; }
+        if (!hasArm64) [failures addObject:[NSString stringWithFormat:@"no arm64 slice: %@", binaryPath.lastPathComponent]];
+        for (MachODependency *dep in analysis.dependencies) {
+            if (dep.isWeak) continue;
+            if (![self dependency:dep.rawInstallName resolvesForBinary:binaryPath appPath:appPath rpaths:analysis.rpaths]) {
+                [failures addObject:[NSString stringWithFormat:@"unresolved dependency %@ in %@", dep.rawInstallName ?: @"(empty)", binaryPath.lastPathComponent]];
+            }
+        }
+    }
+    if (machOPaths.count == 0) [failures addObject:@"bundle contains no Mach-O executable"];
+
+    // Every executable-bearing bundle must have a valid identity and executable.
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:appPath];
+    NSString *relative = nil;
+    while ((relative = [enumerator nextObject])) {
+        if (![relative hasSuffix:@"/Info.plist"]) continue;
+        NSString *bundlePath = [[appPath stringByAppendingPathComponent:relative] stringByDeletingLastPathComponent];
+        NSString *lower = bundlePath.lowercaseString;
+        if (![lower hasSuffix:@".app"] && ![lower hasSuffix:@".appex"] && ![lower hasSuffix:@".xpc"] && ![lower hasSuffix:@".framework"]) continue;
+        NSDictionary *bundleInfo = [NSDictionary dictionaryWithContentsOfFile:[appPath stringByAppendingPathComponent:relative]];
+        NSString *bundleExecutable = [bundleInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? bundleInfo[@"CFBundleExecutable"] : nil;
+        NSString *bundleIdentifier = [bundleInfo[@"CFBundleIdentifier"] isKindOfClass:[NSString class]] ? bundleInfo[@"CFBundleIdentifier"] : nil;
+        if (!bundleIdentifier.length || !bundleExecutable.length || [bundleExecutable containsString:@"/"]) {
+            [failures addObject:[NSString stringWithFormat:@"invalid nested bundle metadata: %@", bundlePath.lastPathComponent]];
+            continue;
+        }
+        NSString *nestedExecutable = [bundlePath stringByAppendingPathComponent:bundleExecutable];
+        if ([machOPaths containsObject:nestedExecutable] && (![fm fileExistsAtPath:nestedExecutable] || access(nestedExecutable.fileSystemRepresentation, X_OK) != 0)) {
+            [failures addObject:[NSString stringWithFormat:@"nested executable is not runnable: %@", nestedExecutable.lastPathComponent]];
+        }
+    }
+
+    NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"launch-readiness-gate" target:appPath input:@"static launch contract" transactionID:txnID];
+    NSString *summary = failures.count ? [failures componentsJoinedByString:@"; "] : @"bundle identity, Mach-O, arm64 slices, dependencies, nested metadata and executable permissions passed";
+    BOOL ready = failures.count == 0;
+    [opLog endPhase:recordID exitCode:ready ? 0 : 1 rawOutput:summary rawError:ready ? @"" : @"Launch readiness gate rejected installation" verification:@"strict static launch readiness" verified:ready duration:0];
+    if (!ready && reason) *reason = [NSString stringWithFormat:@"Launch readiness failed: %@", summary];
+    return ready;
+}
 
 #pragma mark - Verification
 
