@@ -9,7 +9,6 @@
 #import "RuntimeDiagnostics.h"
 #import "OperationLog.h"
 #import "RootlessManager.h"
-#import "MachOAnalyzer.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <sys/types.h>
@@ -18,10 +17,6 @@
 #import <UIKit/UIKit.h>
 #import <sys/wait.h>
 #import <sys/sysctl.h>
-#import <sys/stat.h>
-#import <fcntl.h>
-#import <errno.h>
-#import <unistd.h>
 
 // ─── ProcessInfo Implementation ───
 @implementation ProcessInfo
@@ -41,14 +36,7 @@
     [r appendFormat:@"Process exit: %@\n", self.processExitAt ?: @"N/A"];
     [r appendFormat:@"Launch detection time: %.0f ms\n", self.launchDetectionTimeMs];
     [r appendFormat:@"Process lifetime: %.0f ms\n", self.processLifetimeMs];
-    NSString *exitAfter = self.processExitAfterLaunchMs >= 0 ? [NSString stringWithFormat:@"%.0f ms", self.processExitAfterLaunchMs] : @"N/A (process remained alive)";
-    [r appendFormat:@"Process exit after launch: %@\n", exitAfter];
     [r appendFormat:@"Monitoring window: %.0f ms\n", self.monitoringWindowMs];
-    [r appendFormat:@"Failure stage: %@\n", self.failureStage ?: @"N/A"];
-    [r appendFormat:@"Evidence: %@\n", self.evidenceSummary ?: @"N/A"];
-    if (self.phaseTimeline.count > 0) {
-        [r appendFormat:@"Phase timeline: %@\n", [self.phaseTimeline componentsJoinedByString:@" -> "]];
-    }
     [r appendFormat:@"\n--- Process ---\n"];
     [r appendFormat:@"Detected: %@\n", self.processDetected ? @"YES" : @"NO"];
     [r appendFormat:@"PID: %d\n", self.pid];
@@ -59,19 +47,6 @@
     [r appendFormat:@"Crash detected: %@\n", self.crashDetected ? @"YES" : @"NO"];
     [r appendFormat:@"Termination reason: %@\n", self.terminationReason ?: @"N/A"];
     [r appendFormat:@"Crash report path: %@\n", self.crashReportPath ?: @"unavailable"];
-    if (self.crashReportPID > 0) {
-        [r appendFormat:@"Crash report PID: %d\n", self.crashReportPID];
-        [r appendFormat:@"Crash report PID matched launch: %@\n", self.crashReportPIDMatched ? @"YES" : @"NO"];
-    }
-    if (self.crashExceptionType.length > 0 || self.crashSignal.length > 0 || self.crashTerminationIndicator.length > 0 || self.crashFaultingThread.length > 0) {
-        [r appendFormat:@"Crash exception: %@\n", self.crashExceptionType ?: @"N/A"];
-        [r appendFormat:@"Crash signal: %@\n", self.crashSignal ?: @"N/A"];
-        [r appendFormat:@"Termination indicator: %@\n", self.crashTerminationIndicator ?: @"N/A"];
-        [r appendFormat:@"Faulting thread: %@\n", self.crashFaultingThread ?: @"N/A"];
-    }
-    if (self.crashAnalysisSummary.length > 0) {
-        [r appendFormat:@"Crash analysis: %@\n", self.crashAnalysisSummary];
-    }
     if (self.diagnosticOutput && self.diagnosticOutput.length > 0) {
         [r appendFormat:@"\n--- Diagnostic Output ---\n%@\n", self.diagnosticOutput];
     }
@@ -83,11 +58,6 @@
 
 // ─── RuntimeDiagnostics Implementation ───
 @interface RuntimeDiagnostics ()
-- (NSString *)processSnapshotForPID:(pid_t)pid;
-- (NSString *)launchDependencyReportForBundleID:(NSString *)bundleID;
-- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum;
-- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName pid:(pid_t)pid launchedAt:(NSDate *)launchedAt timeout:(NSTimeInterval)timeout;
-- (NSString *)crashReportAnalysisForPath:(NSString *)path expectedPID:(pid_t)pid result:(RuntimeDiagnosticsResult *)result;
 @end
 
 @implementation RuntimeDiagnostics
@@ -102,8 +72,8 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _processDetectionTimeout = 8.0;
-        _monitoringWindow = 20.0;
+        _processDetectionTimeout = 5.0;
+        _monitoringWindow = 10.0;
         _pollInterval = 0.5;
     }
     return self;
@@ -122,15 +92,8 @@
     result.state = @"NOT_STARTED";
     result.launchRequestedAt = [NSDate date];
     result.monitoringWindowMs = self.monitoringWindow * 1000.0;
-    result.failureStage = @"not_started";
-    NSMutableArray<NSString *> *timeline = [NSMutableArray array];
-    result.phaseTimeline = timeline;
-    [timeline addObject:@"launch_request_started"];
 
     NSLog(@"[RuntimeDiagnostics] Starting diagnosis for %@", bundleID);
-    // Inventory is collected before launch so a fast crash cannot occur while
-    // the diagnostic layer is still scanning the bundle.
-    NSString *launchMap = [self launchDependencyReportForBundleID:bundleID];
 
     // PHASE 1: LAUNCH
     NSString *recLaunch = [opLog beginPhase:OperationPhaseLaunch
@@ -152,9 +115,6 @@
            duration:launchDuration / 1000.0];
 
     if (!launched) {
-        [timeline addObject:@"launch_request_failed"];
-        result.failureStage = @"launch_request";
-        result.evidenceSummary = @"The launch request was rejected before process detection";
         result.success = NO;
         result.state = @"LAUNCH_FAILED";
         result.summary = @"Launch request failed";
@@ -162,7 +122,6 @@
         return;
     }
 
-    [timeline addObject:@"launch_request_dispatched"];
     // PHASE 2: PROCESS DETECTION
     NSString *recDetect = [opLog beginPhase:OperationPhaseLaunch
                                   operation:@"processDetection"
@@ -176,8 +135,6 @@
     result.processDetectedAt = proc ? [NSDate date] : nil;
 
     if (proc) {
-        [timeline addObject:@"process_detected"];
-        result.failureStage = @"process_detection_passed";
         result.processDetected = YES;
         result.pid = proc.pid;
         result.uid = proc.uid;
@@ -199,9 +156,6 @@
 
         NSLog(@"[RuntimeDiagnostics] Process detected: %@", procInfo);
     } else {
-        [timeline addObject:@"process_not_detected"];
-        result.failureStage = @"process_detection";
-        result.evidenceSummary = @"No matching process was observed within the detection window";
         result.processDetected = NO;
         result.state = @"PROCESS_NOT_DETECTED";
         result.success = NO;
@@ -219,7 +173,6 @@
         return;
     }
 
-    [timeline addObject:@"runtime_monitor_started"];
     // PHASE 3: RUNTIME MONITORING
     NSString *recMonitor = [opLog beginPhase:OperationPhaseRuntimeMonitor
                                    operation:@"runtimeMonitor"
@@ -229,14 +182,9 @@
                                transactionID:txnID];
 
     NSDate *monitorStart = [NSDate date];
-    NSMutableString *liveTrace = [NSMutableString stringWithFormat:@"[0ms] monitor_started pid=%d\n", result.pid];
-    [liveTrace appendFormat:@"=== Launch Dependency Inventory ===\n%@\n", launchMap ?: @"inventory_unavailable"];
-    // The installer is not the parent of the target app, so waitpid may not
-    // expose its exit status. Keep that state explicitly unknown instead of
-    // misclassifying a disappeared process as a normal exit.
-    int exitStatus = -1;
+    int exitStatus = 0;
     int signalNum = 0;
-    BOOL stillAlive = [self monitorProcess:result.pid duration:self.monitoringWindow trace:liveTrace exitStatus:&exitStatus signalNum:&signalNum];
+    BOOL stillAlive = [self monitorProcess:result.pid duration:self.monitoringWindow exitStatus:&exitStatus signalNum:&signalNum];
     NSTimeInterval monitorDuration = [[NSDate date] timeIntervalSinceDate:monitorStart] * 1000.0;
 
     if (!stillAlive) {
@@ -281,24 +229,20 @@
             terminationType = [NSString stringWithFormat:@"Crashed by %@ (%d)", [self signalName:signalNum], signalNum];
             crashDetected = YES;
             exitCodeForLog = 2;
-        } else if (exitStatus < 0) {
-            state = @"EXITED_UNOBSERVED";
-            terminationType = @"Process disappeared; exit status/signal unavailable because the app is not a child of the installer";
-            exitCodeForLog = 1;
         } else if (exitStatus == 0) {
             state = @"EXITED_NORMAL";
             terminationType = @"Exited normally (status 0)";
             exitCodeForLog = 1;
-        } else {
+        } else if (exitStatus > 0) {
             state = @"EXITED_WITH_ERROR";
             terminationType = [NSString stringWithFormat:@"Exited with error status %d", exitStatus];
             exitCodeForLog = 1;
+        } else {
+            state = @"EXITED_NORMAL";
+            terminationType = @"Exited (no crash signal detected)";
+            exitCodeForLog = 1;
         }
         
-        [timeline addObject:@"process_exited"];
-        result.failureStage = @"runtime_monitoring";
-        result.evidenceSummary = crashDetected ? @"Termination signal observed from process monitoring" : (exitStatus < 0 ? @"Process disappeared; exit status was not observable" : @"Process exit observed without a crash signal");
-        result.processExitAfterLaunchMs = result.processDetectedAt ? ([[NSDate date] timeIntervalSinceDate:result.processDetectedAt] * 1000.0) : monitorDuration;
         result.crashDetected = crashDetected;
         result.state = state;
         result.terminationReason = terminationType;
@@ -323,28 +267,14 @@
                                   transactionID:txnID];
 
         NSMutableString *diagnosticOutput = [NSMutableString string];
-        [diagnosticOutput appendFormat:@"=== Live Process Trace ===\n%@\n\n", liveTrace];
 
         // 4a. Crash Reporter (.ips files)
-        NSString *crashPath = [self waitForFreshCrashReportForBundleID:bundleID processName:proc.name pid:result.pid launchedAt:result.processDetectedAt timeout:3.0];
-        [timeline addObject:@"crash_evidence_lookup"];
+        NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name];
         if (crashPath) {
-            [timeline addObject:@"crash_report_found"];
-            result.failureStage = @"crash_report";
-            result.evidenceSummary = @"A fresh OS crash report matched the launched process";
-            // A fresh crash report is stronger evidence than the unavailable
-            // waitpid status for an unrelated application process.
-            result.crashDetected = YES;
-            result.state = @"CRASHED";
-            result.summary = [NSString stringWithFormat:@"Crash report found after process exit: %@", crashPath.lastPathComponent];
             result.crashReportPath = crashPath;
             NSString *crashContent = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
             if (crashContent) {
                 [diagnosticOutput appendFormat:@"=== Crash Report (%@) ===\n%@\n\n", crashPath, crashContent];
-                NSString *crashAnalysis = [self crashReportAnalysisForPath:crashPath expectedPID:result.pid result:result];
-                if (crashAnalysis.length > 0) {
-                    [diagnosticOutput appendFormat:@"=== Crash Analysis (PID-matched) ===\n%@\n\n", crashAnalysis];
-                }
             }
         }
 
@@ -390,31 +320,17 @@
         NSLog(@"[RuntimeDiagnostics] Crash diagnostics complete. Sources found: %@", hasAnyDiagnostic ? @"YES" : @"NO");
 
     } else {
-        [timeline addObject:@"monitoring_window_completed"];
-        result.failureStage = @"monitoring_window";
-        result.evidenceSummary = @"No process termination or crash report was observed during the monitoring window";
         // Process remained alive for full monitoring window
         result.processRemainedAlive = YES;
         result.processLifetimeMs = monitorDuration;
         result.state = @"RUNNING";
         result.success = YES;
         result.terminationReason = @"";
-        result.summary = [NSString stringWithFormat:@"Process remained alive for full %.0f ms monitoring window", monitorDuration];
-
-        NSMutableString *aliveEvidence = [NSMutableString stringWithFormat:@"alive_after=%.0fms\nphase=monitoring_window\n=== Live Process Trace ===\n%@", monitorDuration, liveTrace];
-        NSString *aliveUnified = [self getUnifiedLogForBundleID:bundleID processName:proc.name];
-        if (aliveUnified.length > 0) {
-            [aliveEvidence appendFormat:@"\n=== Relevant Unified Log ===\n%@", aliveUnified];
-        }
-        NSString *aliveJetsam = [self findJetsamEventForProcessName:proc.name bundleID:bundleID];
-        if (aliveJetsam.length > 0) {
-            [aliveEvidence appendFormat:@"\n=== Relevant Jetsam Evidence ===\n%@", aliveJetsam];
-        }
-        result.diagnosticOutput = aliveEvidence;
+        result.summary = [NSString stringWithFormat:@"Process remained alive for full %.0f ms window", monitorDuration];
 
         [opLog endPhase:recMonitor
                exitCode:0
-              rawOutput:aliveEvidence
+              rawOutput:[NSString stringWithFormat:@"alive_after=%.0fms", monitorDuration]
                rawError:@""
            verification:[NSString stringWithFormat:@"Process remained alive for full %.0f ms monitoring window", monitorDuration]
                verified:YES
@@ -432,15 +348,6 @@
 #pragma mark - Launch
 
 - (BOOL)launchAppWithBundleID:(NSString *)bundleID {
-    // LSApplicationWorkspace/UIKit launch requests must run on the main
-    // thread, while detection, polling, and log collection must not block it.
-    if (![NSThread isMainThread]) {
-        __block BOOL opened = NO;
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            opened = [self launchAppWithBundleID:bundleID];
-        });
-        return opened;
-    }
     @try {
         Class LSClass = objc_getClass([@"LSApplicationWorkspace" UTF8String]);
         if (!LSClass) {
@@ -471,61 +378,6 @@
         NSLog(@"[RuntimeDiagnostics] Launch exception: %@", e.reason);
         return NO;
     }
-}
-
-#pragma mark - Launch Dependency Inventory
-
-- (NSString *)launchDependencyReportForBundleID:(NSString *)bundleID {
-    NSString *appPath = [self findAppPathForBundleID:bundleID];
-    if (appPath.length == 0) return @"app_path=unavailable";
-
-    NSMutableString *report = [NSMutableString stringWithFormat:@"app_path=%@\n", appPath];
-    MachOAnalyzer *analyzer = [MachOAnalyzer sharedAnalyzer];
-    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:appPath];
-    NSUInteger count = 0;
-    NSUInteger signedCount = 0;
-    NSUInteger failedParseCount = 0;
-    for (NSString *relativePath in enumerator) {
-        if (report.length > 120000) {
-            [report appendString:@"inventory_truncated=YES limit=120000\n"];
-            break;
-        }
-        NSString *path = [appPath stringByAppendingPathComponent:relativePath];
-        BOOL isDirectory = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory] || isDirectory) continue;
-        MachOAnalysisResult *analysis = [analyzer analyzeFileAtPath:path];
-        if (!analysis || analysis.magicName.length == 0 || [analysis.magicName isEqualToString:@"unknown"]) continue;
-        count++;
-        if (analysis.hasCodeSignature) signedCount++;
-        if (analysis.parseStatus == MachOParseFailed) failedParseCount++;
-
-        NSMutableArray *architectures = [NSMutableArray array];
-        for (MachOSlice *slice in analysis.slices) {
-            if (slice.architectureName.length > 0) [architectures addObject:slice.architectureName];
-        }
-        NSMutableArray *dependencies = [NSMutableArray array];
-        for (MachODependency *dependency in analysis.dependencies) {
-            if (dependency.rawInstallName.length > 0) [dependencies addObject:dependency.rawInstallName];
-        }
-        NSMutableArray *rpaths = [NSMutableArray array];
-        for (MachORPath *rpath in analysis.rpaths) {
-            if (rpath.rawPath.length > 0) [rpaths addObject:rpath.rawPath];
-        }
-        [report appendFormat:@"target=%@ magic=%@ type=%@ arch=[%@] codeSignature=%@ offset=%u size=%u parse=%ld deps=[%@] rpaths=[%@] parseError=%@\n",
-         relativePath,
-         analysis.magicName,
-         analysis.machOTypeName ?: @"unknown",
-         [architectures componentsJoinedByString:@","] ,
-         analysis.hasCodeSignature ? @"YES" : @"NO",
-         analysis.codeSignatureOffset,
-         analysis.codeSignatureSize,
-         (long)analysis.parseStatus,
-         [dependencies componentsJoinedByString:@","] ,
-         [rpaths componentsJoinedByString:@","] ,
-         analysis.parseError ?: @"-"];
-    }
-    [report appendFormat:@"inventory_count=%lu signed=%lu parseFailed=%lu\n", (unsigned long)count, (unsigned long)signedCount, (unsigned long)failedParseCount];
-    return report;
 }
 
 #pragma mark - Process Detection
@@ -573,99 +425,66 @@
 }
 
 - (ProcessInfo *)findProcessMatchingBundleID:(NSString *)bundleID exeName:(NSString *)exeName {
-    NSString *psOutput = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-eo", @"pid,uid,gid,args"]];
-    if (!psOutput) psOutput = [self runCmdOutput:@"/bin/ps" args:@[@"-eo", @"pid,uid,gid,args"]];
+    NSString *psOutput = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
+    if (!psOutput) psOutput = [self runCmdOutput:@"/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
     if (!psOutput) return nil;
 
-    NSString *expectedExecutable = exeName.lastPathComponent ?: exeName;
-    NSString *appPath = [self findAppPathForBundleID:bundleID];
-    NSString *expectedAppName = [[appPath.lastPathComponent stringByDeletingPathExtension] copy];
     NSArray *lines = [psOutput componentsSeparatedByString:@"\n"];
     for (NSString *line in lines) {
-        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (trimmed.length == 0) continue;
         NSArray *parts = [trimmed componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         NSMutableArray *cleanParts = [NSMutableArray array];
-        for (NSString *p in parts) if (p.length > 0) [cleanParts addObject:p];
-        if (cleanParts.count < 4) continue;
-
-        pid_t pid = [cleanParts[0] intValue];
-        if (pid <= 0 || ![self isProcessAlive:pid]) continue;
-        NSString *uidStr = cleanParts[1];
-        NSString *gidStr = cleanParts[2];
-        NSString *command = [[cleanParts subarrayWithRange:NSMakeRange(3, cleanParts.count - 3)] componentsJoinedByString:@" "];
-        NSString *commandExecutable = command.lastPathComponent;
-
-        // A bundle may contain extensions whose executable names happen to
-        // include the app executable name. They are not the app's process.
-        BOOL nestedProcess = [command containsString:@"/PlugIns/"] ||
-                             [command containsString:@".appex/"] ||
-                             [command containsString:@".framework/"] ||
-                             [command containsString:@".xpc/"] ||
-                             [command containsString:@"/Frameworks/"];
-        BOOL executableMatches = [commandExecutable isEqualToString:expectedExecutable];
-        BOOL appPathMatches = expectedAppName.length == 0 ||
-                              [command containsString:[NSString stringWithFormat:@"/%@.app/", expectedAppName]];
-        if (nestedProcess || !executableMatches || !appPathMatches) continue;
-
-        ProcessInfo *info = [[ProcessInfo alloc] init];
-        info.pid = pid;
-        info.uid = [uidStr intValue];
-        info.gid = [gidStr intValue];
-        info.name = command;
-        info.executablePath = commandExecutable;
-        info.startTime = [NSDate date];
-        return info;
+        for (NSString *p in parts) {
+            if (p.length > 0) [cleanParts addObject:p];
+        }
+        if (cleanParts.count >= 4) {
+            NSString *pidStr = cleanParts[0];
+            NSString *uidStr = cleanParts[1];
+            NSString *gidStr = cleanParts[2];
+            NSString *comm = cleanParts[3];
+            if ([comm isEqualToString:exeName] || [comm isEqualToString:bundleID] || [comm containsString:exeName]) {
+                pid_t pid = [pidStr intValue];
+                if (pid > 0 && [self isProcessAlive:pid]) {
+                    ProcessInfo *info = [[ProcessInfo alloc] init];
+                    info.pid = pid;
+                    info.uid = [uidStr intValue];
+                    info.gid = [gidStr intValue];
+                    info.name = comm;
+                    info.startTime = [NSDate date];
+                    return info;
+                }
+            }
+        }
     }
     return nil;
 }
 
 #pragma mark - Process Monitoring with Exit Status
 
-- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum {
+- (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration exitStatus:(int *)exitStatus signalNum:(int *)signalNum {
     NSDate *start = [NSDate date];
-    NSDate *nextSnapshot = start;
-    *exitStatus = -1;
+    *exitStatus = 0;
     *signalNum = 0;
 
     while ([[NSDate date] timeIntervalSinceDate:start] < duration) {
-        NSDate *now = [NSDate date];
-        if ([now compare:nextSnapshot] != NSOrderedAscending) {
-            NSTimeInterval elapsed = [now timeIntervalSinceDate:start] * 1000.0;
-            [trace appendFormat:@"[%.0fms] %@\n", elapsed, [self processSnapshotForPID:pid]];
-            nextSnapshot = [now dateByAddingTimeInterval:2.0];
-        }
-
         if (![self isProcessAlive:pid]) {
-            // The target is not our child in normal iOS execution. waitpid is
-            // attempted only for completeness; unavailable status stays -1.
-            int status = 0;
-            pid_t waited = waitpid(pid, &status, WNOHANG);
-            if (waited == pid) {
-                if (WIFEXITED(status)) *exitStatus = WEXITSTATUS(status);
-                if (WIFSIGNALED(status)) *signalNum = WTERMSIG(status);
+            // Process exited - try to get exit status via waitpid with WNOHANG
+            int status;
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if (result == pid) {
+                if (WIFEXITED(status)) {
+                    *exitStatus = WEXITSTATUS(status);
+                }
+                if (WIFSIGNALED(status)) {
+                    *signalNum = WTERMSIG(status);
+                }
             }
-            NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:start] * 1000.0;
-            [trace appendFormat:@"[%.0fms] process_not_alive exitStatus=%d signal=%d waitpid=%d\n", elapsed, *exitStatus, *signalNum, waited];
             return NO;
         }
         [NSThread sleepForTimeInterval:self.pollInterval];
     }
-
-    BOOL alive = [self isProcessAlive:pid];
-    NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:start] * 1000.0;
-    [trace appendFormat:@"[%.0fms] monitor_finished alive=%@\n", elapsed, alive ? @"YES" : @"NO"];
-    return alive;
-}
-
-- (NSString *)processSnapshotForPID:(pid_t)pid {
-    int savedErrno = 0;
-    BOOL alive = (kill(pid, 0) == 0);
-    if (!alive) savedErrno = errno;
-    NSString *ps = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-p", [NSString stringWithFormat:@"%d", pid], @"-o", @"pid=,ppid=,uid=,gid=,stat=,etime=,comm="]];
-    if (!ps) ps = [self runCmdOutput:@"/bin/ps" args:@[@"-p", [NSString stringWithFormat:@"%d", pid], @"-o", @"pid=,ppid=,uid=,gid=,stat=,etime=,comm="]];
-    NSString *compact = [(ps ?: @"ps_unavailable") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    return [NSString stringWithFormat:@"pid=%d alive=%@ errno=%d snapshot=%@", pid, alive ? @"YES" : @"NO", savedErrno, compact];
+    return [self isProcessAlive:pid];
 }
 
 - (BOOL)isProcessAlive:(pid_t)pid {
@@ -701,8 +520,6 @@
         } else if (signalNum == SIGTRAP) {
             [reason appendString:@"SIGTRAP — breakpoint/trap (debugger or runtime check)."];
         }
-    } else if (exitStatus < 0) {
-        [reason appendString:@"Process disappeared but exit status/signal was not observable because the app is not a child of the installer. "];
     } else if (exitStatus != 0) {
         [reason appendFormat:@"Exited with status %d. ", exitStatus];
         if (exitStatus == 1) {
@@ -744,47 +561,6 @@
 
 #pragma mark - Crash Report Search
 
-- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName pid:(pid_t)pid launchedAt:(NSDate *)launchedAt timeout:(NSTimeInterval)timeout {
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *searchPaths = @[
-        @"/var/mobile/Library/Logs/CrashReporter",
-        @"/var/mobile/Library/Logs/CrashReporter/DiagnosticLogs"
-    ];
-    while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
-        NSString *bestPath = nil;
-        NSDate *bestDate = nil;
-        for (NSString *basePath in searchPaths) {
-            NSArray *items = [fm contentsOfDirectoryAtPath:basePath error:nil];
-            for (NSString *item in items) {
-                if (!([item hasSuffix:@".ips"] || [item hasSuffix:@".crash"])) continue;
-                NSString *fullPath = [basePath stringByAppendingPathComponent:item];
-                NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
-                NSDate *modDate = attrs[NSFileModificationDate];
-                if (!modDate || (launchedAt && [modDate timeIntervalSinceDate:launchedAt] < -2.0)) continue;
-                if ([[NSDate date] timeIntervalSinceDate:modDate] > 120.0) continue;
-                NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:nil];
-                if (content.length == 0) continue;
-                if (bundleID.length > 0 && ![content containsString:bundleID]) continue;
-                if (processName.length > 0 && ![content containsString:processName]) continue;
-                NSRange jsonStart = [content rangeOfString:@"{"];
-                if (jsonStart.location == NSNotFound) continue;
-                NSData *jsonData = [[content substringFromIndex:jsonStart.location] dataUsingEncoding:NSUTF8StringEncoding];
-                NSDictionary *report = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-                NSNumber *reportPID = report[@"pid"];
-                if (pid > 0 && (![reportPID isKindOfClass:[NSNumber class]] || reportPID.intValue != pid)) continue;
-                if (!bestDate || [modDate compare:bestDate] == NSOrderedDescending) {
-                    bestDate = modDate;
-                    bestPath = fullPath;
-                }
-            }
-        }
-        if (bestPath) return bestPath;
-        [NSThread sleepForTimeInterval:0.25];
-    }
-    return nil;
-}
-
 - (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName {
     NSFileManager *fm = [NSFileManager defaultManager];
 
@@ -824,98 +600,6 @@
     }
 
     return latestPath;
-}
-
-- (NSString *)crashReportAnalysisForPath:(NSString *)path expectedPID:(pid_t)pid result:(RuntimeDiagnosticsResult *)result {
-    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (content.length == 0) return @"REPORT_PARSE_FAILED: empty crash report";
-    NSRange jsonStart = [content rangeOfString:@"{"];
-    if (jsonStart.location == NSNotFound) return @"REPORT_PARSE_FAILED: JSON object not found";
-    NSData *jsonData = [[content substringFromIndex:jsonStart.location] dataUsingEncoding:NSUTF8StringEncoding];
-    NSDictionary *report = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-    if (![report isKindOfClass:[NSDictionary class]]) return @"REPORT_PARSE_FAILED: invalid JSON";
-
-    NSNumber *reportPID = report[@"pid"];
-    result.crashReportPID = reportPID.intValue;
-    result.crashReportPIDMatched = (pid <= 0 || reportPID.intValue == pid);
-    NSDictionary *exception = report[@"exception"];
-    NSDictionary *termination = report[@"termination"];
-    NSDictionary *asi = report[@"asi"];
-    result.crashExceptionType = [exception[@"type"] isKindOfClass:[NSString class]] ? exception[@"type"] : @"N/A";
-    result.crashSignal = [exception[@"signal"] isKindOfClass:[NSString class]] ? exception[@"signal"] : @"N/A";
-    result.crashTerminationIndicator = [termination[@"indicator"] isKindOfClass:[NSString class]] ? termination[@"indicator"] : @"N/A";
-
-    NSMutableString *summary = [NSMutableString string];
-    NSString *byProc = [termination[@"byProc"] isKindOfClass:[NSString class]] ? termination[@"byProc"] : @"N/A";
-    [summary appendFormat:@"pid=%d matched=%@ exception=%@ signal=%@ termination=%@ byProc=%@",
-     result.crashReportPID,
-     result.crashReportPIDMatched ? @"YES" : @"NO",
-     result.crashExceptionType,
-     result.crashSignal,
-     result.crashTerminationIndicator,
-     byProc];
-    if ([asi isKindOfClass:[NSDictionary class]] && asi.count > 0) {
-        NSMutableArray *asiParts = [NSMutableArray array];
-        for (NSString *key in asi) {
-            id value = asi[key];
-            if ([value isKindOfClass:[NSArray class]]) value = [value componentsJoinedByString:@"; "];
-            [asiParts addObject:[NSString stringWithFormat:@"%@=%@", key, value]];
-        }
-        [summary appendFormat:@" asi={%@}", [asiParts componentsJoinedByString:@" | "]];
-    }
-
-    NSArray *images = report[@"usedImages"] ?: report[@"binaryImages"];
-    NSMutableDictionary<NSNumber *, NSString *> *imageNames = [NSMutableDictionary dictionary];
-    NSMutableArray *loadedAppComponents = [NSMutableArray array];
-    if ([images isKindOfClass:[NSArray class]]) {
-        for (NSUInteger i = 0; i < images.count; i++) {
-            NSDictionary *image = images[i];
-            if (![image isKindOfClass:[NSDictionary class]]) continue;
-            NSString *name = [image[@"name"] isKindOfClass:[NSString class]] ? image[@"name"] : @"unknown";
-            imageNames[@(i)] = name;
-            NSString *imagePath = [image[@"path"] isKindOfClass:[NSString class]] ? image[@"path"] : @"";
-            BOOL appOwned = [imagePath containsString:@".app/"];
-            BOOL dynamicComponent = [name.pathExtension.lowercaseString isEqualToString:@"dylib"] || [imagePath containsString:@"/Frameworks/"];
-            if (appOwned && dynamicComponent && loadedAppComponents.count < 80) {
-                [loadedAppComponents addObject:[NSString stringWithFormat:@"%@ [%@]", name, imagePath]];
-            }
-        }
-    }
-
-    NSArray *backtrace = report[@"lastExceptionBacktrace"];
-    NSMutableArray *topFrames = [NSMutableArray array];
-    if ([backtrace isKindOfClass:[NSArray class]]) {
-        for (NSDictionary *frame in [backtrace subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)16, backtrace.count))]) {
-            NSNumber *imageIndex = frame[@"imageIndex"];
-            NSString *symbol = [frame[@"symbol"] isKindOfClass:[NSString class]] ? frame[@"symbol"] : @"<no-symbol>";
-            NSNumber *offset = frame[@"imageOffset"];
-            NSString *imageName = imageNames[imageIndex] ?: @"unknown-image";
-            [topFrames addObject:[NSString stringWithFormat:@"%@ +%@ [%@ index=%@]", symbol, offset ?: @0, imageName, imageIndex ?: @"?"]];
-        }
-    }
-    if (topFrames.count > 0) [summary appendFormat:@" topFrames={%@}", [topFrames componentsJoinedByString:@" | "]];
-
-    NSArray *threads = report[@"threads"];
-    NSMutableArray *triggeredThreads = [NSMutableArray array];
-    if ([threads isKindOfClass:[NSArray class]]) {
-        for (NSDictionary *thread in threads) {
-            if (![thread[@"triggered"] boolValue]) continue;
-            NSString *queue = [thread[@"queue"] isKindOfClass:[NSString class]] ? thread[@"queue"] : @"unknown-queue";
-            NSNumber *threadID = thread[@"id"];
-            [triggeredThreads addObject:[NSString stringWithFormat:@"id=%@ queue=%@", threadID ?: @"?", queue]];
-        }
-    }
-    result.crashFaultingThread = triggeredThreads.count > 0 ? [triggeredThreads componentsJoinedByString:@"; "] : @"not-marked-in-report";
-    if (triggeredThreads.count > 0) [summary appendFormat:@" faultingThread={%@}", result.crashFaultingThread];
-
-    if (loadedAppComponents.count > 0) {
-        [summary appendFormat:@" loadedAppComponents=%lu", (unsigned long)loadedAppComponents.count];
-        NSMutableString *componentDetail = [NSMutableString stringWithString:@"\n=== Loaded App Components ===\n"];
-        for (NSString *component in loadedAppComponents) [componentDetail appendFormat:@"%@\n", component];
-        [summary appendString:componentDetail];
-    }
-    result.crashAnalysisSummary = summary;
-    return summary;
 }
 
 #pragma mark - Jetsam Event Search
@@ -1062,7 +746,7 @@
 - (NSString *)analyzeExitStatus:(int)exitStatus signalNum:(int)signalNum {
     NSMutableString *analysis = [NSMutableString string];
 
-    [analysis appendFormat:@"Exit status: %@\n", exitStatus < 0 ? @"unavailable" : [NSString stringWithFormat:@"%d", exitStatus]];
+    [analysis appendFormat:@"Exit status: %d\n", exitStatus];
     [analysis appendFormat:@"Signal: %d (%@)\n", signalNum, [self signalName:signalNum]];
 
     if (signalNum == SIGKILL) {
@@ -1099,7 +783,7 @@
     int outPipe[2];
     if (pipe(outPipe) != 0) return nil;
 
-    pid_t pid = 0;
+    pid_t pid;
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
@@ -1109,8 +793,8 @@
 
     const char *c = [cmd UTF8String];
     char **argv = malloc((args.count + 2) * sizeof(char*));
-    argv[0] = (char *)c;
-    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] UTF8String];
+    argv[0] = (char*)c;
+    for (NSUInteger i = 0; i < args.count; i++) argv[i+1] = (char*)[args[i] UTF8String];
     argv[args.count + 1] = NULL;
 
     extern char **environ;
@@ -1121,40 +805,19 @@
 
     if (st != 0) { close(outPipe[0]); return nil; }
 
-    int flags = fcntl(outPipe[0], F_GETFL, 0);
-    if (flags >= 0) fcntl(outPipe[0], F_SETFL, flags | O_NONBLOCK);
-    NSMutableData *data = [NSMutableData data];
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-    BOOL pipeClosed = NO;
+    NSMutableString *output = [NSMutableString string];
     char buf[4096];
-
-    while (!pipeClosed) {
-        ssize_t n = read(outPipe[0], buf, sizeof(buf));
-        if (n > 0) {
-            if (data.length < (1024 * 1024)) {
-                NSUInteger remaining = (1024 * 1024) - data.length;
-                [data appendBytes:buf length:MIN((NSUInteger)n, remaining)];
-            }
-            continue;
-        }
-        if (n == 0) {
-            pipeClosed = YES;
-            break;
-        }
-        if (errno != EAGAIN && errno != EINTR) break;
-        if ([[NSDate date] compare:deadline] != NSOrderedAscending) {
-            kill(pid, SIGTERM);
-            usleep(100000);
-            kill(pid, SIGKILL);
-            break;
-        }
-        [NSThread sleepForTimeInterval:0.02];
+    ssize_t n;
+    while ((n = read(outPipe[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        [output appendString:[NSString stringWithUTF8String:buf]];
     }
-
     close(outPipe[0]);
-    int ws = 0;
-    while (waitpid(pid, &ws, 0) < 0 && errno == EINTR) { }
-    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+
+    int ws;
+    waitpid(pid, &ws, 0);
+
+    return output;
 }
 
 @end

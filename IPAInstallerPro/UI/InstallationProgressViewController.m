@@ -9,7 +9,6 @@
 #import "InstallationEngine.h"
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
-#import "RuntimeDiagnostics.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -193,9 +192,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UIButton *showLogButton;
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIView *logContainer;
-@property (nonatomic, assign) BOOL runtimeDiagnosticsRunning;
-@property (nonatomic, assign) BOOL isViewVisible;
-@property (nonatomic, assign) UIBackgroundTaskIdentifier runtimeBackgroundTask;
 
 
 @end
@@ -204,8 +200,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.isViewVisible = YES;
-    self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     _rawLog = [NSMutableString string];
@@ -214,23 +208,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [self startInstallation];
 }
 
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
-    self.isViewVisible = YES;
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    self.isViewVisible = NO;
-    self.logContainer.hidden = YES;
-}
-
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    if (self.runtimeBackgroundTask != UIBackgroundTaskInvalid) {
-        [[UIApplication sharedApplication] endBackgroundTask:self.runtimeBackgroundTask];
-        self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
-    }
 }
 
 #pragma mark - Raw Log
@@ -318,14 +297,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(operationRecordUpdated:)
                                                  name:@"OperationRecordUpdated"
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(runtimeApplicationDidEnterBackground:)
-                                                 name:UIApplicationDidEnterBackgroundNotification
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(runtimeApplicationWillEnterForeground:)
-                                                 name:UIApplicationWillEnterForegroundNotification
                                                object:nil];
 }
 
@@ -415,16 +386,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 }
 
 #pragma mark - UI Setup
-
-- (void)runtimeApplicationDidEnterBackground:(NSNotification *)note {
-    if (!self.runtimeDiagnosticsRunning) return;
-    [self appendLog:@"[RUNTIME] applicationDidEnterBackground — target launch may have moved the installer to background"];
-}
-
-- (void)runtimeApplicationWillEnterForeground:(NSNotification *)note {
-    if (!self.runtimeDiagnosticsRunning) return;
-    [self appendLog:@"[RUNTIME] applicationWillEnterForeground — installer returned while diagnostics were active"];
-}
 
 - (void)setupUI {
     _scrollView = [[UIScrollView alloc] init];
@@ -690,23 +651,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [stack addArrangedSubview:logBtn];
     self.showLogButton = logBtn;
 
-    if (success && self.installedBundleID.length > 0) {
-        UIView *runtimeSpacer = [[UIView alloc] init];
-        [runtimeSpacer.heightAnchor constraintEqualToConstant:4].active = YES;
-        [stack addArrangedSubview:runtimeSpacer];
-
-        UIButton *runtimeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        runtimeBtn.translatesAutoresizingMaskIntoConstraints = NO;
-        [runtimeBtn setTitle:@"اختبار الإقلاع وتشخيصه" forState:UIControlStateNormal];
-        runtimeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
-        [runtimeBtn setTitleColor:[UIColor colorWithRed:0.45 green:0.85 blue:0.65 alpha:1.0] forState:UIControlStateNormal];
-        runtimeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
-        runtimeBtn.layer.cornerRadius = 8;
-        [runtimeBtn addTarget:self action:@selector(runRuntimeDiagnosticsTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [runtimeBtn.heightAnchor constraintEqualToConstant:36].active = YES;
-        [stack addArrangedSubview:runtimeBtn];
-    }
-
     if (!success) {
         UIView *retrySpacer = [[UIView alloc] init];
         [retrySpacer.heightAnchor constraintEqualToConstant:4].active = YES;
@@ -792,59 +736,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 #pragma mark - Actions
 
-- (void)runRuntimeDiagnosticsTapped:(UIButton *)sender {
-    NSString *bundleID = self.installedBundleID;
-    NSString *txnID = self.currentTxnID;
-    if (bundleID.length == 0 || txnID.length == 0) {
-        [self appendLog:@"[RUNTIME] لا يتوفر Bundle ID أو transaction للتشخيص"];
-        [self showRawLog];
-        return;
-    }
-
-    if (self.runtimeDiagnosticsRunning) return;
-    self.runtimeDiagnosticsRunning = YES;
-    sender.enabled = NO;
-    [sender setTitle:@"جارٍ اختبار الإقلاع…" forState:UIControlStateNormal];
-    [self appendLog:[NSString stringWithFormat:@"[RUNTIME] بدء اختبار الإقلاع لـ %@", bundleID]];
-
-    __block UIBackgroundTaskIdentifier backgroundTask = UIBackgroundTaskInvalid;
-    backgroundTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"IPAInstallerPro.RuntimeDiagnostics" expirationHandler:^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (backgroundTask != UIBackgroundTaskInvalid) {
-                [[UIApplication sharedApplication] endBackgroundTask:backgroundTask];
-                backgroundTask = UIBackgroundTaskInvalid;
-            }
-        });
-    }];
-    self.runtimeBackgroundTask = backgroundTask;
-
-    RuntimeDiagnostics *diagnostics = [RuntimeDiagnostics sharedDiagnostics];
-    OperationLog *operationLog = [InstallationEngine sharedEngine].operationLog;
-    // diagnoseAppLaunch performs polling and log collection. Never run it on
-    // the main thread: the app being launched sends this controller to the
-    // background, and blocking the main queue causes a freeze on return.
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        [diagnostics diagnoseAppLaunch:bundleID transactionID:txnID operationLog:operationLog completion:^(RuntimeDiagnosticsResult *runtimeResult) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (backgroundTask != UIBackgroundTaskInvalid) {
-                    [[UIApplication sharedApplication] endBackgroundTask:backgroundTask];
-                    backgroundTask = UIBackgroundTaskInvalid;
-                }
-                self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
-                self.runtimeDiagnosticsRunning = NO;
-                sender.enabled = YES;
-                [sender setTitle:@"إعادة اختبار الإقلاع" forState:UIControlStateNormal];
-                [self appendLog:@"[RUNTIME] ===== Runtime Diagnostics ====="];
-                [self appendLog:runtimeResult.detailedReport ?: @"لم تُرجع طبقة التشخيص تقريرًا"];
-                [self appendLog:@"[RUNTIME] ===== End Runtime Diagnostics ====="];
-                if (self.isViewVisible && !self.isBeingDismissed && !self.navigationController.isBeingDismissed) {
-                    [self showRawLog];
-                }
-            });
-        }];
-    });
-}
-
 - (void)retryTapped:(UIButton *)sender {
     InstallationEngine *engine = [InstallationEngine sharedEngine];
     if (engine.isInstalling) {
@@ -858,8 +749,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     // Make dismissal idempotent: a failed/completed transaction must not leave
     // a stale marker that blocks the next installation.
     [[InstallationEngine sharedEngine] resetFailedInstallationState];
-    void (^finished)(void) = [self.onFinished copy];
-    [self dismissViewControllerAnimated:YES completion:finished];
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 

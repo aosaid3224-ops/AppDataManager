@@ -195,20 +195,6 @@
     progressVC.ipaName = self.ipaInfo.displayName ?: self.ipaInfo.name;
     progressVC.ipaPath = self.ipaInfo.filePath;
     progressVC.modalPresentationStyle = UIModalPresentationFullScreen;
-    __weak typeof(self) weakSelf = self;
-    progressVC.onFinished = ^{
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            // Normal library flow pushes IPAInstallViewController; cloned-app
-            // flow presents it modally. Handle both without terminating the app.
-            if (strongSelf.navigationController) {
-                [strongSelf.navigationController popViewControllerAnimated:YES];
-            } else if (strongSelf.presentingViewController) {
-                [strongSelf dismissViewControllerAnimated:YES completion:nil];
-            }
-        });
-    };
     [self presentViewController:progressVC animated:YES completion:nil];
 }
 

@@ -40,9 +40,7 @@
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // Refresh after returning from an install so the next transaction starts
-    // from a current library state without requiring an app restart.
-    if (!self.isLoading) [self loadIPAFiles];
+    // Don't reload here to avoid lag — use pull-to-refresh instead
 }
 
 - (void)setupNavigationBar {
