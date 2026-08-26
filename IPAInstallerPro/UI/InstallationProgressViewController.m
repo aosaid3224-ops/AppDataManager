@@ -193,6 +193,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UIButton *showLogButton;
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIView *logContainer;
+@property (nonatomic, assign) BOOL runtimeDiagnosticsRunning;
+@property (nonatomic, assign) BOOL isViewVisible;
+@property (nonatomic, assign) UIBackgroundTaskIdentifier runtimeBackgroundTask;
 
 
 @end
@@ -201,6 +204,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.isViewVisible = YES;
+    self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     _rawLog = [NSMutableString string];
@@ -209,8 +214,23 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [self startInstallation];
 }
 
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    self.isViewVisible = YES;
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    self.isViewVisible = NO;
+    self.logContainer.hidden = YES;
+}
+
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (self.runtimeBackgroundTask != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:self.runtimeBackgroundTask];
+        self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
+    }
 }
 
 #pragma mark - Raw Log
@@ -763,20 +783,48 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         return;
     }
 
+    if (self.runtimeDiagnosticsRunning) return;
+    self.runtimeDiagnosticsRunning = YES;
     sender.enabled = NO;
     [sender setTitle:@"جارٍ اختبار الإقلاع…" forState:UIControlStateNormal];
     [self appendLog:[NSString stringWithFormat:@"[RUNTIME] بدء اختبار الإقلاع لـ %@", bundleID]];
-    RuntimeDiagnostics *diagnostics = [RuntimeDiagnostics sharedDiagnostics];
-    [diagnostics diagnoseAppLaunch:bundleID transactionID:txnID operationLog:[InstallationEngine sharedEngine].operationLog completion:^(RuntimeDiagnosticsResult *runtimeResult) {
+
+    __block UIBackgroundTaskIdentifier backgroundTask = UIBackgroundTaskInvalid;
+    backgroundTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"IPAInstallerPro.RuntimeDiagnostics" expirationHandler:^{
         dispatch_async(dispatch_get_main_queue(), ^{
-            sender.enabled = YES;
-            [sender setTitle:@"إعادة اختبار الإقلاع" forState:UIControlStateNormal];
-            [self appendLog:@"[RUNTIME] ===== Runtime Diagnostics ====="];
-            [self appendLog:runtimeResult.detailedReport ?: @"لم تُرجع طبقة التشخيص تقريرًا"];
-            [self appendLog:@"[RUNTIME] ===== End Runtime Diagnostics ====="];
-            [self showRawLog];
+            if (backgroundTask != UIBackgroundTaskInvalid) {
+                [[UIApplication sharedApplication] endBackgroundTask:backgroundTask];
+                backgroundTask = UIBackgroundTaskInvalid;
+            }
         });
     }];
+    self.runtimeBackgroundTask = backgroundTask;
+
+    RuntimeDiagnostics *diagnostics = [RuntimeDiagnostics sharedDiagnostics];
+    OperationLog *operationLog = [InstallationEngine sharedEngine].operationLog;
+    // diagnoseAppLaunch performs polling and log collection. Never run it on
+    // the main thread: the app being launched sends this controller to the
+    // background, and blocking the main queue causes a freeze on return.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        [diagnostics diagnoseAppLaunch:bundleID transactionID:txnID operationLog:operationLog completion:^(RuntimeDiagnosticsResult *runtimeResult) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (backgroundTask != UIBackgroundTaskInvalid) {
+                    [[UIApplication sharedApplication] endBackgroundTask:backgroundTask];
+                    backgroundTask = UIBackgroundTaskInvalid;
+                }
+                self.runtimeBackgroundTask = UIBackgroundTaskInvalid;
+                self.runtimeDiagnosticsRunning = NO;
+                sender.enabled = YES;
+                [sender setTitle:@"إعادة اختبار الإقلاع" forState:UIControlStateNormal];
+                [self appendLog:@"[RUNTIME] ===== Runtime Diagnostics ====="];
+                [self appendLog:runtimeResult.detailedReport ?: @"لم تُرجع طبقة التشخيص تقريرًا"];
+                [self appendLog:@"[RUNTIME] ===== End Runtime Diagnostics ====="];
+                if (self.isViewVisible && !self.isBeingDismissed && !self.navigationController.isBeingDismissed) {
+                    [self showRawLog];
+                }
+            });
+        }];
+    });
 }
 
 - (void)retryTapped:(UIButton *)sender {

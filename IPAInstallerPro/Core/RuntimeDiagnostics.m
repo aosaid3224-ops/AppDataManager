@@ -398,6 +398,15 @@
 #pragma mark - Launch
 
 - (BOOL)launchAppWithBundleID:(NSString *)bundleID {
+    // LSApplicationWorkspace/UIKit launch requests must run on the main
+    // thread, while detection, polling, and log collection must not block it.
+    if (![NSThread isMainThread]) {
+        __block BOOL opened = NO;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            opened = [self launchAppWithBundleID:bundleID];
+        });
+        return opened;
+    }
     @try {
         Class LSClass = objc_getClass([@"LSApplicationWorkspace" UTF8String]);
         if (!LSClass) {
