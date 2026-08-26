@@ -47,6 +47,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
 @property (nonatomic, strong) NSString *zipPath;
+@property (nonatomic, strong) NSString *systemInstallerPath;
 @property (nonatomic, strong) NSMutableString *diagnosticsLog;
 @property (nonatomic, assign) NSUInteger diagFrameworksSigned;
 @property (nonatomic, assign) NSUInteger diagDylibsSigned;
@@ -103,6 +104,7 @@ extern char **environ;
  self.mvPath = [rm resolvePath:@"/bin/mv"];
  self.statPath = [rm resolvePath:@"/usr/bin/stat"];
  self.zipPath = [rm resolvePath:@"/usr/bin/zip"];
+ self.systemInstallerPath = [rm resolvePath:@"/usr/bin/ipainstallerpro_systeminstall"];
  [self findWorkingHelper];
  }
  return self;
@@ -2123,24 +2125,15 @@ extern char **environ;
         failure = @"could not stage prepared app for system installation";
     } else if (![self runRoot:self.helperPath args:@[@"--zip-tree", zipPath, preparedRoot, installIPA] opLog:opLog recordID:nil]) {
         failure = @"could not create signed IPA for system installation";
+    } else if (!self.systemInstallerPath.length || ![fm fileExistsAtPath:self.systemInstallerPath]) {
+        failure = @"system installer helper unavailable";
     } else {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        SEL selector = NSSelectorFromString(@"installApplication:withOptions:error:");
-        if (!workspace || ![workspace respondsToSelector:selector]) {
-            failure = @"LSApplicationWorkspace installApplication API unavailable";
-        } else {
-            NSURL *url = [NSURL fileURLWithPath:installIPA];
-            NSDictionary *options = bundleID.length > 0 ? @{ @"CFBundleIdentifier": bundleID } : @{};
-            NSError *installError = nil;
-            @try {
-                BOOL (*installFn)(id, SEL, NSURL *, NSDictionary *, NSError **) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **))objc_msgSend;
-                ok = installFn(workspace, selector, url, options, &installError);
-            } @catch (NSException *exception) {
-                failure = [NSString stringWithFormat:@"installApplication exception: %@", exception.reason ?: @"unknown"];
-            }
-            if (!ok && failure.length == 0) failure = installError.localizedDescription ?: @"system installer rejected IPA";
-        }
+        // LSApplicationWorkspace is invoked by a dedicated root-side tool, not
+        // from the sandboxed UI process. This matches the privilege boundary
+        // used by appinst and preserves stdout/stderr in OperationLog.
+        NSString *systemRec = [opLog beginPhase:OperationPhaseUICache operation:@"root system installer" target:installIPA input:self.systemInstallerPath transactionID:txnID];
+        ok = [self runRoot:self.helperPath args:@[self.systemInstallerPath, installIPA] opLog:opLog recordID:systemRec];
+        if (!ok) failure = @"root system installer rejected IPA; inspect system installer stdout/stderr in Raw Log";
     }
     [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:ok ? @"system install request accepted" : @"" rawError:ok ? @"" : failure verification:ok ? @"system installation accepted" : failure verified:ok duration:0 context:@{ @"ipa": installIPA ?: @"", @"appPath": appPath ?: @"" }];
     return ok;

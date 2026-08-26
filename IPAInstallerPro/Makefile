@@ -15,11 +15,16 @@ IPAInstallerPro_CODESIGN_FLAGS = -Sentitlements.plist
 
 include $(THEOS_MAKE_PATH)/application.mk
 
-TOOL_NAME = ipainstallerpro_helper
+TOOL_NAME = ipainstallerpro_helper ipainstallerpro_systeminstall
 
 ipainstallerpro_helper_FILES = helper.c
 ipainstallerpro_helper_CFLAGS = -fobjc-arc
 ipainstallerpro_helper_CODESIGN_FLAGS = -Sentitlements.plist
 ipainstallerpro_helper_INSTALL_PATH = /usr/bin
+
+ipainstallerpro_systeminstall_FILES = systeminstaller.m
+ipainstallerpro_systeminstall_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+ipainstallerpro_systeminstall_CODESIGN_FLAGS = -Sentitlements.plist
+ipainstallerpro_systeminstall_INSTALL_PATH = /usr/bin
 
 include $(THEOS_MAKE_PATH)/tool.mk
