@@ -46,6 +46,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mkdirPath;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
+@property (nonatomic, strong) NSString *zipPath;
 @property (nonatomic, strong) NSMutableString *diagnosticsLog;
 @property (nonatomic, assign) NSUInteger diagFrameworksSigned;
 @property (nonatomic, assign) NSUInteger diagDylibsSigned;
@@ -69,7 +70,14 @@ extern char **environ;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
-- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath logicalPath:(NSString *)logicalPath bundleID:(NSString *)bundleID opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath
+                      logicalPath:(NSString *)logicalPath
+                         bundleID:(NSString *)bundleID
+                            opLog:(OperationLog *)opLog
+                            txnID:(NSString *)txnID;
+- (BOOL)installPreparedBundleIntoSystem:(NSString *)appPath appFolder:(NSString *)appFolder bundleID:(NSString *)bundleID temporaryRoot:(NSString *)tmp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID;
+- (BOOL)uninstallRegisteredApplicationForBundleID:(NSString *)bundleID;
 - (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID;
 - (BOOL)waitForApplicationRegistration:(NSString *)bundleID;
 @end
@@ -94,6 +102,7 @@ extern char **environ;
  self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
  self.mvPath = [rm resolvePath:@"/bin/mv"];
  self.statPath = [rm resolvePath:@"/usr/bin/stat"];
+ self.zipPath = [rm resolvePath:@"/usr/bin/zip"];
  [self findWorkingHelper];
  }
  return self;
@@ -1049,20 +1058,37 @@ extern char **environ;
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSLog(@"[IPAInstallerPro] === PHASE 4: FILE_COPY ===");
- NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
- NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"resolvePath" target:logicalDest input:logicalDest transactionID:txnID];
- NSString *destApp = [[RootlessManager sharedManager] resolvePath:logicalDest];
+ // A normal iOS-installed application must live in a system application
+ // container. RootlessManager.resolvePath(@"/Applications/...") deliberately
+ // maps to /var/jb/Applications, which is a jailbreak overlay and is not the
+ // same installation model as an app registered by installd/LaunchServices.
+ NSArray<NSString *> *systemApplicationBases = @[@"/var/containers/Bundle/Application", @"/var/mobile/Containers/Bundle/Application"];
+ NSString *systemApplicationBase = nil;
+ for (NSString *candidate in systemApplicationBases) {
+     BOOL isDirectory = NO;
+     if ([fm fileExistsAtPath:candidate isDirectory:&isDirectory] && isDirectory) {
+         systemApplicationBase = candidate;
+         break;
+     }
+ }
+ NSString *containerUUID = [[NSUUID UUID].UUIDString lowercaseString];
+ NSString *logicalDest = systemApplicationBase.length > 0
+     ? [[systemApplicationBase stringByAppendingPathComponent:containerUUID] stringByAppendingPathComponent:appFolder]
+     : [@"/Applications" stringByAppendingPathComponent:appFolder];
+ NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"resolveSystemApplicationContainer" target:logicalDest input:systemApplicationBase ?: @"none" transactionID:txnID];
+ NSString *destApp = systemApplicationBase.length > 0 ? logicalDest : nil;
  BOOL destResolved = (destApp != nil && destApp.length > 0);
- [opLog endPhase:rec7 exitCode:destResolved ? 0 : 1 rawOutput:destApp ?: @"" rawError:destResolved ? @"" : @"RootlessManager failed"
- verification:[NSString stringWithFormat:@"resolved=%@ path=%@", destResolved ? @"YES" : @"NO", destApp ?: @"N/A"] verified:destResolved duration:0];
+ NSString *destError = systemApplicationBase.length > 0 ? @"" : @"No system application container found; refusing jailbreak-overlay install";
+ [opLog endPhase:rec7 exitCode:destResolved ? 0 : 1 rawOutput:destApp ?: @"" rawError:destResolved ? @"" : destError
+ verification:[NSString stringWithFormat:@"resolved=%@ systemBase=%@ container=%@ path=%@", destResolved ? @"YES" : @"NO", systemApplicationBase ?: @"N/A", containerUUID, destApp ?: @"N/A"] verified:destResolved duration:0];
 
  if (!destResolved) {
- NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve destination for: %@", logicalDest);
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve system application container for: %@", logicalDest);
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Could not resolve destination" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ if (completion) completion([InstallationResult failureResult:(destError.length > 0 ? destError : @"Could not resolve system application container") provider:[self providerName] transaction:txnID error:nil evidence:@{ @"systemApplicationBase": systemApplicationBase ?: @"", @"requestedPath": logicalDest ?: @"" }]);
  return;
  }
  self.lastInstalledAppPath = destApp;
@@ -1328,29 +1354,43 @@ extern char **environ;
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
 
-  // PHASE 8: UICACHE + LAUNCH SERVICES REGISTRATION
- NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE + LS REGISTRATION ===");
- // Register the logical rootless path first. The resolved path is only a fallback;
- // passing both paths unconditionally can create a non-system/jailbreak-only record.
- NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
- BOOL logicalUICacheOK = [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
- if (!logicalUICacheOK) {
-     NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved fallback" target:destApp input:@"" transactionID:txnID];
-     [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+    // PHASE 8: SYSTEM INSTALLATION
+ NSLog(@"[IPAInstallerPro] === PHASE 8: SYSTEM INSTALLATION ===");
+ // A bundle under /var/jb is only a jailbreak-overlay copy. Submit the
+ // prepared, signed IPA to LaunchServices so installd allocates the normal
+ // user-application container and registers it as a system-visible app.
+ BOOL systemInstallOK = [self installPreparedBundleIntoSystem:destApp appFolder:appFolder bundleID:bundleID temporaryRoot:tmp opLog:opLog txnID:txnID];
+ if (!systemInstallOK) {
+     NSLog(@"[IPAInstallerPro] System installation request failed — rollback");
+     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"System installation request failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"systemInstall": @NO }]);
+     return;
  }
- // uicache can return before Launch Services exposes the app. Request explicit
- // registration, then verify the actual registry before reporting success.
- [self registerApplicationAtPath:destApp logicalPath:logicalDest bundleID:bundleID opLog:opLog txnID:txnID];
-
- // PHASE 9: VERIFY
+ BOOL registered = [self waitForApplicationRegistration:bundleID];
+ NSString *registeredAppPath = [self registeredApplicationPathForBundleID:bundleID];
+ if (!registered || !registeredAppPath.length) {
+     NSLog(@"[IPAInstallerPro] System installer accepted request but LaunchServices returned no path — rollback");
+     [self uninstallRegisteredApplicationForBundleID:bundleID];
+     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"System installer accepted the IPA but Launch Services returned no system application path — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"registered": @(registered), @"registeredPath": registeredAppPath ?: @"" }]);
+     return;
+ }
+ // PHASE 9: VERIFY the actual system-installed bundle, not the prepared copy.
  NSLog(@"[IPAInstallerPro] === PHASE 9: VERIFY ===");
- NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
- BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
+ NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:registeredAppPath input:bundleID transactionID:txnID];
+ BOOL finalOk = [self verifyInstallation:registeredAppPath bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
  [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
  verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
 
  if (!finalOk) {
- // ROLLBACK
+ // ROLLBACK both the system registration and the prepared staging copy.
+ [self uninstallRegisteredApplicationForBundleID:bundleID];
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
@@ -1360,7 +1400,11 @@ extern char **environ;
  return;
  }
 
- // SUCCESS — cleanup backup and temp
+ // SUCCESS — the system container is authoritative. Remove the prepared
+ // duplicate so the user sees only the normally installed application.
+ if (![registeredAppPath isEqualToString:destApp]) {
+     [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:nil];
+ }
  [self cleanupBackup:backupPath opLog:opLog txnID:txnID];
 
  // PHASE 10: CLEANUP
@@ -2103,6 +2147,105 @@ extern char **environ;
            verified:accepted
            duration:0];
     return accepted;
+}
+
+- (BOOL)installPreparedBundleIntoSystem:(NSString *)appPath appFolder:(NSString *)appFolder bundleID:(NSString *)bundleID temporaryRoot:(NSString *)tmp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSString *rec = [opLog beginPhase:OperationPhaseUICache operation:@"LSApplicationWorkspace installApplication" target:appPath input:@"system container install" transactionID:txnID];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *zipPath = self.zipPath;
+    NSString *preparedRoot = [tmp stringByAppendingPathComponent:@"SystemInstallRoot"];
+    NSString *preparedPayload = [preparedRoot stringByAppendingPathComponent:@"Payload"];
+    NSString *preparedApp = [preparedPayload stringByAppendingPathComponent:appFolder ?: @""];
+    NSString *installIPA = [tmp stringByAppendingPathComponent:@"system-install.ipa"];
+    BOOL ok = NO;
+    NSString *failure = @"";
+    if (!zipPath.length || ![fm fileExistsAtPath:zipPath]) {
+        failure = @"zip executable unavailable";
+    } else if (!appFolder.length || ![fm fileExistsAtPath:appPath]) {
+        failure = @"prepared app bundle is missing";
+    } else if (![self runRoot:self.mkdirPath args:@[@"-p", preparedPayload] opLog:opLog recordID:nil]) {
+        failure = @"could not create system-install Payload staging directory";
+    } else if (![self runRoot:self.helperPath args:@[@"--copy-tree", appPath, preparedApp] opLog:opLog recordID:nil]) {
+        failure = @"could not stage prepared app for system installation";
+    } else if (![self runRoot:self.helperPath args:@[@"--zip-tree", zipPath, preparedRoot, installIPA] opLog:opLog recordID:nil]) {
+        failure = @"could not create signed IPA for system installation";
+    } else {
+        Class LS = objc_getClass("LSApplicationWorkspace");
+        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
+        SEL selector = NSSelectorFromString(@"installApplication:withOptions:error:");
+        if (!workspace || ![workspace respondsToSelector:selector]) {
+            failure = @"LSApplicationWorkspace installApplication API unavailable";
+        } else {
+            NSURL *url = [NSURL fileURLWithPath:installIPA];
+            NSDictionary *options = bundleID.length > 0 ? @{ @"CFBundleIdentifier": bundleID } : @{};
+            NSError *installError = nil;
+            @try {
+                BOOL (*installFn)(id, SEL, NSURL *, NSDictionary *, NSError **) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **))objc_msgSend;
+                ok = installFn(workspace, selector, url, options, &installError);
+            } @catch (NSException *exception) {
+                failure = [NSString stringWithFormat:@"installApplication exception: %@", exception.reason ?: @"unknown"];
+            }
+            if (!ok && failure.length == 0) failure = installError.localizedDescription ?: @"system installer rejected IPA";
+        }
+    }
+    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:ok ? @"system install request accepted" : @"" rawError:ok ? @"" : failure verification:ok ? @"system installation accepted" : failure verified:ok duration:0 context:@{ @"ipa": installIPA ?: @"", @"appPath": appPath ?: @"" }];
+    return ok;
+}
+
+- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID {
+    if (bundleID.length == 0) return nil;
+    @try {
+        Class LS = objc_getClass("LSApplicationWorkspace");
+        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
+        if (!workspace) return nil;
+        SEL directSelector = NSSelectorFromString(@"applicationForIdentifier:");
+        if ([workspace respondsToSelector:directSelector]) {
+            id application = ((id (*)(id, SEL, id))objc_msgSend)(workspace, directSelector, bundleID);
+            if (application && [application respondsToSelector:@selector(bundleURL)]) {
+                NSURL *url = [application performSelector:@selector(bundleURL)];
+                if (url.path.length > 0) return url.path;
+            }
+        }
+        for (NSString *selectorName in @[@"allInstalledApplications", @"allApplications"]) {
+            SEL selector = NSSelectorFromString(selectorName);
+            if (![workspace respondsToSelector:selector]) continue;
+            NSArray *applications = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, selector);
+            for (id application in applications) {
+                if (![application respondsToSelector:@selector(bundleIdentifier)]) continue;
+                NSString *candidate = [application performSelector:@selector(bundleIdentifier)];
+                if (![candidate isEqualToString:bundleID]) continue;
+                if ([application respondsToSelector:@selector(bundleURL)]) {
+                    NSURL *url = [application performSelector:@selector(bundleURL)];
+                    if (url.path.length > 0) return url.path;
+                }
+            }
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[IPAInstallerPro] registered path lookup exception: %@", exception.reason);
+    }
+    return nil;
+}
+
+- (BOOL)uninstallRegisteredApplicationForBundleID:(NSString *)bundleID {
+    if (bundleID.length == 0) return NO;
+    @try {
+        Class LS = objc_getClass("LSApplicationWorkspace");
+        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
+        if (!workspace) return NO;
+        SEL selector = NSSelectorFromString(@"uninstallApplication:withOptions:");
+        if ([workspace respondsToSelector:selector]) {
+            BOOL (*uninstallFn)(id, SEL, NSString *, NSDictionary *) = (BOOL (*)(id, SEL, NSString *, NSDictionary *))objc_msgSend;
+            return uninstallFn(workspace, selector, bundleID, @{});
+        }
+        selector = NSSelectorFromString(@"uninstallApplication:");
+        if ([workspace respondsToSelector:selector]) {
+            BOOL (*uninstallFn)(id, SEL, NSString *) = (BOOL (*)(id, SEL, NSString *))objc_msgSend;
+            return uninstallFn(workspace, selector, bundleID);
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"[IPAInstallerPro] registered uninstall exception: %@", exception.reason);
+    }
+    return NO;
 }
 
 - (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID {

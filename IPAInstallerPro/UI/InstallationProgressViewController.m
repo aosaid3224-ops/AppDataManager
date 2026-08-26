@@ -376,11 +376,11 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (record.result == OperationResultSuccess ||
-            record.result == OperationResultPartial ||
-            record.result == OperationResultSkipped) {
+        BOOL isFinalVerifyRecord = (record.phase == OperationPhaseVerify && [record.operation isEqualToString:@"final verify"]);
+        BOOL isNonTerminalVerifyRecord = (record.phase == OperationPhaseVerify && !isFinalVerifyRecord);
+        if (record.result == OperationResultSuccess && !isNonTerminalVerifyRecord) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateSuccess animated:YES];
-        } else if (record.result == OperationResultFailed) {
+        } else if (record.result == OperationResultFailed || record.result == OperationResultPartial) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateFailed animated:YES];
             self.failedPhaseIndex = uiPhase;
             self.currentPhaseIndex = uiPhase;

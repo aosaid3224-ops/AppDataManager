@@ -58,6 +58,22 @@ int main(int argc, char *argv[], char *envp[]) {
         return 0;
     }
 
+    // Repackage a prepared Payload tree into an IPA for the system installer.
+    // Usage: helper --zip-tree <zip-path> <work-directory> <output-ipa>
+    if (argc == 5 && strcmp(argv[1], "--zip-tree") == 0) {
+        const char *zipPath = argv[2];
+        const char *workDirectory = argv[3];
+        const char *outputIPA = argv[4];
+        if (chdir(workDirectory) != 0) {
+            fprintf(stderr, "chdir failed for %s: errno=%d\n", workDirectory, errno);
+            return 1;
+        }
+        char *zipArgv[] = {(char *)zipPath, (char *)"-qry", (char *)outputIPA, (char *)"Payload", NULL};
+        execve(zipPath, zipArgv, envp);
+        fprintf(stderr, "execve failed for zip %s: errno=%d\n", zipPath, errno);
+        return 1;
+    }
+
     // Execute target command with original environment
     execve(argv[1], &argv[1], envp);
 
