@@ -494,37 +494,49 @@
 }
 
 - (ProcessInfo *)findProcessMatchingBundleID:(NSString *)bundleID exeName:(NSString *)exeName {
-    NSString *psOutput = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
-    if (!psOutput) psOutput = [self runCmdOutput:@"/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
+    NSString *psOutput = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-eo", @"pid,uid,gid,args"]];
+    if (!psOutput) psOutput = [self runCmdOutput:@"/bin/ps" args:@[@"-eo", @"pid,uid,gid,args"]];
     if (!psOutput) return nil;
 
+    NSString *expectedExecutable = exeName.lastPathComponent ?: exeName;
+    NSString *appPath = [self findAppPathForBundleID:bundleID];
+    NSString *expectedAppName = [[appPath.lastPathComponent stringByDeletingPathExtension] copy];
     NSArray *lines = [psOutput componentsSeparatedByString:@"\n"];
     for (NSString *line in lines) {
-        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (trimmed.length == 0) continue;
         NSArray *parts = [trimmed componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         NSMutableArray *cleanParts = [NSMutableArray array];
-        for (NSString *p in parts) {
-            if (p.length > 0) [cleanParts addObject:p];
-        }
-        if (cleanParts.count >= 4) {
-            NSString *pidStr = cleanParts[0];
-            NSString *uidStr = cleanParts[1];
-            NSString *gidStr = cleanParts[2];
-            NSString *comm = cleanParts[3];
-            if ([comm isEqualToString:exeName] || [comm isEqualToString:bundleID] || [comm containsString:exeName]) {
-                pid_t pid = [pidStr intValue];
-                if (pid > 0 && [self isProcessAlive:pid]) {
-                    ProcessInfo *info = [[ProcessInfo alloc] init];
-                    info.pid = pid;
-                    info.uid = [uidStr intValue];
-                    info.gid = [gidStr intValue];
-                    info.name = comm;
-                    info.startTime = [NSDate date];
-                    return info;
-                }
-            }
-        }
+        for (NSString *p in parts) if (p.length > 0) [cleanParts addObject:p];
+        if (cleanParts.count < 4) continue;
+
+        pid_t pid = [cleanParts[0] intValue];
+        if (pid <= 0 || ![self isProcessAlive:pid]) continue;
+        NSString *uidStr = cleanParts[1];
+        NSString *gidStr = cleanParts[2];
+        NSString *command = [[cleanParts subarrayWithRange:NSMakeRange(3, cleanParts.count - 3)] componentsJoinedByString:@" "];
+        NSString *commandExecutable = command.lastPathComponent;
+
+        // A bundle may contain extensions whose executable names happen to
+        // include the app executable name. They are not the app's process.
+        BOOL nestedProcess = [command containsString:@"/PlugIns/"] ||
+                             [command containsString:@".appex/"] ||
+                             [command containsString:@".framework/"] ||
+                             [command containsString:@".xpc/"] ||
+                             [command containsString:@"/Frameworks/"];
+        BOOL executableMatches = [commandExecutable isEqualToString:expectedExecutable];
+        BOOL appPathMatches = expectedAppName.length == 0 ||
+                              [command containsString:[NSString stringWithFormat:@"/%@.app/", expectedAppName]];
+        if (nestedProcess || !executableMatches || !appPathMatches) continue;
+
+        ProcessInfo *info = [[ProcessInfo alloc] init];
+        info.pid = pid;
+        info.uid = [uidStr intValue];
+        info.gid = [gidStr intValue];
+        info.name = command;
+        info.executablePath = commandExecutable;
+        info.startTime = [NSDate date];
+        return info;
     }
     return nil;
 }
