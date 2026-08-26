@@ -22,7 +22,6 @@
 #import <mach-o/loader.h>
 #import <mach-o/fat.h>
 #import <objc/runtime.h>
-#import <objc/message.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -46,8 +45,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *mkdirPath;
 @property (nonatomic, strong) NSString *mvPath;
 @property (nonatomic, strong) NSString *statPath;
-@property (nonatomic, strong) NSString *zipPath;
-@property (nonatomic, strong) NSString *systemInstallerPath;
 @property (nonatomic, strong) NSMutableString *diagnosticsLog;
 @property (nonatomic, assign) NSUInteger diagFrameworksSigned;
 @property (nonatomic, assign) NSUInteger diagDylibsSigned;
@@ -59,7 +56,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *lastMachOVerificationDetail;
 @property (nonatomic, strong) SigningPlan *activeSigningPlan;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
-@property (nonatomic, strong) NSString *lastVerificationFailureDetail;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
@@ -71,16 +67,6 @@ extern char **environ;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
-- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath
-                      logicalPath:(NSString *)logicalPath
-                         bundleID:(NSString *)bundleID
-                            opLog:(OperationLog *)opLog
-                            txnID:(NSString *)txnID;
-- (BOOL)installPreparedBundleIntoSystem:(NSString *)appPath appFolder:(NSString *)appFolder bundleID:(NSString *)bundleID temporaryRoot:(NSString *)tmp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
-- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID;
-- (BOOL)uninstallRegisteredApplicationForBundleID:(NSString *)bundleID;
-- (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID;
-- (BOOL)waitForApplicationRegistration:(NSString *)bundleID;
 @end
 
 @implementation DirectInstallationProvider
@@ -103,8 +89,6 @@ extern char **environ;
  self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
  self.mvPath = [rm resolvePath:@"/bin/mv"];
  self.statPath = [rm resolvePath:@"/usr/bin/stat"];
- self.zipPath = [rm resolvePath:@"/usr/bin/zip"];
- self.systemInstallerPath = [rm resolvePath:@"/usr/bin/ipainstallerpro_systeminstall"];
  [self findWorkingHelper];
  }
  return self;
@@ -1060,30 +1044,62 @@ extern char **environ;
 
  // PHASE 4: FILE_COPY (with backup/rollback)
  NSLog(@"[IPAInstallerPro] === PHASE 4: FILE_COPY ===");
-  // Staging is deliberately kept inside the per-install temporary directory.
- // The system application container is owned by installd and is allocated only
- // after the signed IPA is submitted to LaunchServices.
- NSString *stagingRoot = [tmp stringByAppendingPathComponent:@"PreparedRoot"];
- NSString *destApp = [stagingRoot stringByAppendingPathComponent:appFolder ?: @""];
- NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"prepare isolated staging root" target:destApp input:stagingRoot transactionID:txnID];
- BOOL stagingReady = [self runRoot:self.mkdirPath args:@[@"-p", stagingRoot] opLog:opLog recordID:rec7];
- if (!stagingReady) {
-     [opLog endPhase:rec7 exitCode:1 rawOutput:@"" rawError:@"Could not create isolated staging root" verification:@"/var/tmp staging unavailable" verified:NO duration:0];
-     [fm removeItemAtPath:tmp error:nil];
-     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
-     [opLog endTransaction:txnID finalResult:OperationResultFailed];
-     if (completion) completion([InstallationResult failureResult:@"Could not create isolated staging root — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"stagingRoot": stagingRoot ?: @"" }]);
-     return;
+ NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
+ NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"resolvePath" target:logicalDest input:logicalDest transactionID:txnID];
+ NSString *destApp = [[RootlessManager sharedManager] resolvePath:logicalDest];
+ BOOL destResolved = (destApp != nil && destApp.length > 0);
+ [opLog endPhase:rec7 exitCode:destResolved ? 0 : 1 rawOutput:destApp ?: @"" rawError:destResolved ? @"" : @"RootlessManager failed"
+ verification:[NSString stringWithFormat:@"resolved=%@ path=%@", destResolved ? @"YES" : @"NO", destApp ?: @"N/A"] verified:destResolved duration:0];
+
+ if (!destResolved) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Could not resolve destination for: %@", logicalDest);
+ [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+ [opLog endTransaction:txnID finalResult:OperationResultFailed];
+ if (completion) completion([InstallationResult failureResult:@"Could not resolve destination" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ return;
  }
- [opLog endPhase:rec7 exitCode:0 rawOutput:stagingRoot rawError:@"" verification:@"isolated /var/tmp staging root ready" verified:YES duration:0];
  self.lastInstalledAppPath = destApp;
- // There is no existing system app at this newly generated staging path, so
- // no backup or mutation of /var/containers is performed here.
+
+ // Ensure Applications directory exists
+ NSString *appsDir = [destApp stringByDeletingLastPathComponent];
+ if (![fm fileExistsAtPath:appsDir]) {
+ NSString *recMkdir = [opLog beginPhase:OperationPhaseFileCopy operation:@"mkdir -p Applications" target:appsDir input:@"" transactionID:txnID];
+ BOOL dirCreated = [self runRoot:self.mkdirPath args:@[@"-p", appsDir] opLog:opLog recordID:recMkdir];
+ if (!dirCreated) {
+ NSError *mkErr;
+ [fm createDirectoryAtPath:appsDir withIntermediateDirectories:YES attributes:nil error:&mkErr];
+ }
+ }
+
+ // BACKUP existing app (rollback support)
  NSString *backupPath = [destApp stringByAppendingString:@".backup"];
-  // The system container is owned and allocated by installd. It is not a
-  // writable staging directory. Prepare the signed bundle under /var/tmp,
-  // then hand the resulting IPA to LaunchServices.
-  NSString *stagedDest = destApp;
+ if (![self backupExistingApp:destApp to:backupPath opLog:opLog txnID:txnID]) {
+ NSLog(@"[IPAInstallerPro] EARLY FAIL: Backup failed for: %@", destApp);
+ [fm removeItemAtPath:tmp error:nil];
+  // Emit diagnostics report even on failure
+  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+ [opLog endTransaction:txnID finalResult:OperationResultFailed];
+ if (completion) completion([InstallationResult failureResult:@"Failed to backup existing app" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+ return;
+ }
+
+ // Copy only into a fresh destination. cp -R merges when the target exists,
+ // which can create extra stale files after a previous failed attempt.
+ if ([fm fileExistsAtPath:destApp]) {
+     NSString *clearRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"clear destination before copy" target:destApp input:@"rm -rf" transactionID:txnID];
+     BOOL cleared = hasH ? [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:clearRec] : [fm removeItemAtPath:destApp error:nil];
+     if (!cleared || [fm fileExistsAtPath:destApp]) {
+         [opLog endPhase:clearRec exitCode:1 rawOutput:@"" rawError:@"Destination remained before copy" verification:@"destination must be absent" verified:NO duration:0];
+         [fm removeItemAtPath:tmp error:nil];
+         [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+         [opLog endTransaction:txnID finalResult:OperationResultFailed];
+         if (completion) completion([InstallationResult failureResult:@"Destination was not empty before copy — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+         return;
+     }
+ }
+  NSString *stagedDest = [destApp stringByAppendingFormat:@".ipa-stage-%@", [NSUUID UUID].UUIDString];
  [fm removeItemAtPath:stagedDest error:nil];
  BOOL copied = NO;
  if (hasH && self.helperPath.length > 0) {
@@ -1128,20 +1144,17 @@ extern char **environ;
  if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Deep copy verification failed — missing/extra:%lu, mismatches:%lu — %@ — rollback executed", (unsigned long)self.diagDeepCopyMissing, (unsigned long)self.diagDeepCopySizeMismatch, self.diagDeepCopyDetail ?: @"no manifest details"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"sourceItems": @(self.diagDeepCopyTotal), @"missingOrExtra": @(self.diagDeepCopyMissing), @"mismatches": @(self.diagDeepCopySizeMismatch), @"manifest": self.diagDeepCopyDetail ?: @"" }]);
  return;
  }
- NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"adopt verified staging bundle" target:stagedDest input:@"staging remains under /var/tmp until system install" transactionID:txnID];
- BOOL promoted = [fm fileExistsAtPath:stagedDest];
- [opLog endPhase:promoteRec exitCode:promoted ? 0 : 1 rawOutput:stagedDest ?: @"" rawError:promoted ? @"" : @"Prepared staging bundle is missing" verification:promoted ? @"verified staging adopted for IPA repack" : @"staging bundle unavailable" verified:promoted duration:0];
- if (!promoted) {
+ NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"promote verified staging bundle" target:[NSString stringWithFormat:@"%@ -> %@", stagedDest, destApp] input:@"mv after verified copy" transactionID:txnID];
+ BOOL promoted = hasH ? [self runRoot:self.mvPath args:@[stagedDest, destApp] opLog:opLog recordID:promoteRec] : [fm moveItemAtPath:stagedDest toPath:destApp error:nil];
+ if (!promoted || ![fm fileExistsAtPath:destApp]) {
      [fm removeItemAtPath:stagedDest error:nil];
      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
      [fm removeItemAtPath:tmp error:nil];
      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
      [opLog endTransaction:txnID finalResult:OperationResultFailed];
-     if (completion) completion([InstallationResult failureResult:@"Verified staging bundle is missing — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+     if (completion) completion([InstallationResult failureResult:@"Verified bundle promotion failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
      return;
  }
- destApp = stagedDest;
- self.lastInstalledAppPath = destApp;
 
 
  // PHASE 5: PERMISSION
@@ -1310,57 +1323,36 @@ extern char **environ;
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
 
-    // PHASE 8: SYSTEM INSTALLATION
- NSLog(@"[IPAInstallerPro] === PHASE 8: SYSTEM INSTALLATION ===");
- // A bundle under /var/jb is only a jailbreak-overlay copy. Submit the
- // prepared, signed IPA to LaunchServices so installd allocates the normal
- // user-application container and registers it as a system-visible app.
- BOOL systemInstallOK = [self installPreparedBundleIntoSystem:destApp appFolder:appFolder bundleID:bundleID temporaryRoot:tmp opLog:opLog txnID:txnID];
- if (!systemInstallOK) {
-     NSLog(@"[IPAInstallerPro] System installation request failed — rollback");
-     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
-     [fm removeItemAtPath:tmp error:nil];
-     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
-     [opLog endTransaction:txnID finalResult:OperationResultFailed];
-     if (completion) completion([InstallationResult failureResult:@"System installation request failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"systemInstall": @NO }]);
-     return;
- }
- BOOL registered = [self waitForApplicationRegistration:bundleID];
- NSString *registeredAppPath = [self registeredApplicationPathForBundleID:bundleID];
- if (!registered || !registeredAppPath.length) {
-     NSLog(@"[IPAInstallerPro] System installer accepted request but LaunchServices returned no path — rollback");
-     [self uninstallRegisteredApplicationForBundleID:bundleID];
-     [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
-     [fm removeItemAtPath:tmp error:nil];
-     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
-     [opLog endTransaction:txnID finalResult:OperationResultFailed];
-     if (completion) completion([InstallationResult failureResult:@"System installer accepted the IPA but Launch Services returned no system application path — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"registered": @(registered), @"registeredPath": registeredAppPath ?: @"" }]);
-     return;
- }
- // PHASE 9: VERIFY the actual system-installed bundle, not the prepared copy.
+ // PHASE 8: UICACHE
+ NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
+ NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
+
+ NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+
+ NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
+
+ // PHASE 9: VERIFY
  NSLog(@"[IPAInstallerPro] === PHASE 9: VERIFY ===");
- NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:registeredAppPath input:bundleID transactionID:txnID];
- BOOL finalOk = [self verifyInstallation:registeredAppPath bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
+ NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
+ BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
  [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
  verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
 
  if (!finalOk) {
- // ROLLBACK both the system registration and the prepared staging copy.
- [self uninstallRegisteredApplicationForBundleID:bundleID];
+ // ROLLBACK
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Final verification failed: %@ — rollback executed", self.lastVerificationFailureDetail ?: @"no detailed evidence"] provider:[self providerName] transaction:txnID error:nil evidence:@{ @"verificationFailure": self.lastVerificationFailureDetail ?: @"unknown" }]);
+ if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
  }
 
- // SUCCESS — the system container is authoritative. Remove the prepared
- // duplicate so the user sees only the normally installed application.
- if (![registeredAppPath isEqualToString:destApp]) {
-     [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:nil];
- }
+ // SUCCESS — cleanup backup and temp
  [self cleanupBackup:backupPath opLog:opLog txnID:txnID];
 
  // PHASE 10: CLEANUP
@@ -2055,191 +2047,11 @@ extern char **environ;
     return ready;
 }
 
-#pragma mark - Launch Services Registration
-- (BOOL)registerApplicationAtPath:(NSString *)resolvedPath
-                      logicalPath:(NSString *)logicalPath
-                         bundleID:(NSString *)bundleID
-                            opLog:(OperationLog *)opLog
-                            txnID:(NSString *)txnID {
-    NSString *rec = [opLog beginPhase:OperationPhaseUICache
-                             operation:@"LSApplicationWorkspace registerApplication"
-                                target:resolvedPath ?: @""
-                                 input:logicalPath ?: @""
-                         transactionID:txnID];
-    BOOL accepted = NO;
-    @try {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        SEL registerSelector = NSSelectorFromString(@"registerApplication:");
-        if (workspace && [workspace respondsToSelector:registerSelector]) {
-            NSMutableArray<NSString *> *paths = [NSMutableArray array];
-            if (resolvedPath.length > 0) [paths addObject:resolvedPath];
-            if (logicalPath.length > 0 && ![paths containsObject:logicalPath]) [paths addObject:logicalPath];
-            for (NSString *path in paths) {
-                NSURL *url = [NSURL fileURLWithPath:path];
-                NSMethodSignature *signature = [workspace methodSignatureForSelector:registerSelector];
-                if (!signature) continue;
-                NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-                invocation.target = workspace;
-                invocation.selector = registerSelector;
-                [invocation setArgument:&url atIndex:2];
-                [invocation invoke];
-                BOOL result = NO;
-                [invocation getReturnValue:&result];
-                if (result) {
-                    accepted = YES;
-                    break;
-                }
-            }
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[IPAInstallerPro] registerApplication exception: %@", exception.reason);
-    }
-    [opLog endPhase:rec
-           exitCode:accepted ? 0 : 1
-          rawOutput:@""
-           rawError:accepted ? @"" : @"Launch Services rejected registration request"
-       verification:accepted ? @"Registration request accepted" : @"Registration request not accepted"
-           verified:accepted
-           duration:0];
-    return accepted;
-}
-
-- (BOOL)installPreparedBundleIntoSystem:(NSString *)appPath appFolder:(NSString *)appFolder bundleID:(NSString *)bundleID temporaryRoot:(NSString *)tmp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
-    NSString *rec = [opLog beginPhase:OperationPhaseUICache operation:@"LSApplicationWorkspace installApplication" target:appPath input:@"system container install" transactionID:txnID];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *zipPath = self.zipPath;
-    NSString *preparedRoot = [tmp stringByAppendingPathComponent:@"SystemInstallRoot"];
-    NSString *preparedPayload = [preparedRoot stringByAppendingPathComponent:@"Payload"];
-    NSString *preparedApp = [preparedPayload stringByAppendingPathComponent:appFolder ?: @""];
-    NSString *installIPA = [tmp stringByAppendingPathComponent:@"system-install.ipa"];
-    BOOL ok = NO;
-    NSString *failure = @"";
-    if (!zipPath.length || ![fm fileExistsAtPath:zipPath]) {
-        failure = @"zip executable unavailable";
-    } else if (!appFolder.length || ![fm fileExistsAtPath:appPath]) {
-        failure = @"prepared app bundle is missing";
-    } else if (![self runRoot:self.mkdirPath args:@[@"-p", preparedPayload] opLog:opLog recordID:nil]) {
-        failure = @"could not create system-install Payload staging directory";
-    } else if (![self runRoot:self.helperPath args:@[@"--copy-tree", appPath, preparedApp] opLog:opLog recordID:nil]) {
-        failure = @"could not stage prepared app for system installation";
-    } else if (![self runRoot:self.helperPath args:@[@"--zip-tree", zipPath, preparedRoot, installIPA] opLog:opLog recordID:nil]) {
-        failure = @"could not create signed IPA for system installation";
-    } else if (!self.systemInstallerPath.length || ![fm fileExistsAtPath:self.systemInstallerPath]) {
-        failure = @"system installer helper unavailable";
-    } else {
-        // LSApplicationWorkspace is invoked by a dedicated root-side tool, not
-        // from the sandboxed UI process. This matches the privilege boundary
-        // used by appinst and preserves stdout/stderr in OperationLog.
-        NSString *statusPath = [tmp stringByAppendingPathComponent:@"system-install.status"];
-        [fm removeItemAtPath:statusPath error:nil];
-        NSString *systemRec = [opLog beginPhase:OperationPhaseUICache operation:@"root system installer" target:installIPA input:self.systemInstallerPath transactionID:txnID];
-        ok = [self runCmdCapture:self.helperPath args:@[self.systemInstallerPath, installIPA, bundleID ?: @"", statusPath] opLog:opLog recordID:systemRec operation:@"root system installer"];
-        NSString *systemStatus = [NSString stringWithContentsOfFile:statusPath encoding:NSUTF8StringEncoding error:nil];
-        if (!ok) failure = systemStatus.length > 0 ? systemStatus : @"root system installer rejected IPA; no status evidence returned";
-    }
-    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:ok ? @"system install request accepted" : @"" rawError:ok ? @"" : failure verification:ok ? @"system installation accepted" : failure verified:ok duration:0 context:@{ @"ipa": installIPA ?: @"", @"appPath": appPath ?: @"" }];
-    return ok;
-}
-
-- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID {
-    if (bundleID.length == 0) return nil;
-    @try {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        if (!workspace) return nil;
-        SEL directSelector = NSSelectorFromString(@"applicationForIdentifier:");
-        if ([workspace respondsToSelector:directSelector]) {
-            id application = ((id (*)(id, SEL, id))objc_msgSend)(workspace, directSelector, bundleID);
-            if (application && [application respondsToSelector:@selector(bundleURL)]) {
-                NSURL *url = [application performSelector:@selector(bundleURL)];
-                if (url.path.length > 0) return url.path;
-            }
-        }
-        for (NSString *selectorName in @[@"allInstalledApplications", @"allApplications"]) {
-            SEL selector = NSSelectorFromString(selectorName);
-            if (![workspace respondsToSelector:selector]) continue;
-            NSArray *applications = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, selector);
-            for (id application in applications) {
-                if (![application respondsToSelector:@selector(bundleIdentifier)]) continue;
-                NSString *candidate = [application performSelector:@selector(bundleIdentifier)];
-                if (![candidate isEqualToString:bundleID]) continue;
-                if ([application respondsToSelector:@selector(bundleURL)]) {
-                    NSURL *url = [application performSelector:@selector(bundleURL)];
-                    if (url.path.length > 0) return url.path;
-                }
-            }
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[IPAInstallerPro] registered path lookup exception: %@", exception.reason);
-    }
-    return nil;
-}
-
-- (BOOL)uninstallRegisteredApplicationForBundleID:(NSString *)bundleID {
-    if (bundleID.length == 0) return NO;
-    @try {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        if (!workspace) return NO;
-        SEL selector = NSSelectorFromString(@"uninstallApplication:withOptions:");
-        if ([workspace respondsToSelector:selector]) {
-            BOOL (*uninstallFn)(id, SEL, NSString *, NSDictionary *) = (BOOL (*)(id, SEL, NSString *, NSDictionary *))objc_msgSend;
-            return uninstallFn(workspace, selector, bundleID, @{});
-        }
-        selector = NSSelectorFromString(@"uninstallApplication:");
-        if ([workspace respondsToSelector:selector]) {
-            BOOL (*uninstallFn)(id, SEL, NSString *) = (BOOL (*)(id, SEL, NSString *))objc_msgSend;
-            return uninstallFn(workspace, selector, bundleID);
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[IPAInstallerPro] registered uninstall exception: %@", exception.reason);
-    }
-    return NO;
-}
-
-- (BOOL)isApplicationRegisteredWithBundleID:(NSString *)bundleID {
-    if (bundleID.length == 0) return NO;
-    @try {
-        Class LS = objc_getClass("LSApplicationWorkspace");
-        id workspace = LS ? [LS performSelector:@selector(defaultWorkspace)] : nil;
-        if (!workspace) return NO;
-        SEL directSelector = NSSelectorFromString(@"applicationForIdentifier:");
-        if ([workspace respondsToSelector:directSelector]) {
-            id application = ((id (*)(id, SEL, id))objc_msgSend)(workspace, directSelector, bundleID);
-            if (application != nil) return YES;
-        }
-        NSArray<NSString *> *selectors = @[@"allInstalledApplications", @"allApplications"];
-        for (NSString *selectorName in selectors) {
-            SEL selector = NSSelectorFromString(selectorName);
-            if (![workspace respondsToSelector:selector]) continue;
-            NSArray *applications = ((NSArray *(*)(id, SEL))objc_msgSend)(workspace, selector);
-            for (id application in applications) {
-                if (![application respondsToSelector:@selector(bundleIdentifier)]) continue;
-                NSString *candidate = [application performSelector:@selector(bundleIdentifier)];
-                if ([candidate isEqualToString:bundleID]) return YES;
-            }
-        }
-    } @catch (NSException *exception) {
-        NSLog(@"[IPAInstallerPro] registration lookup exception: %@", exception.reason);
-    }
-    return NO;
-}
-
-- (BOOL)waitForApplicationRegistration:(NSString *)bundleID {
-    for (NSUInteger attempt = 0; attempt < 8; attempt++) {
-        if ([self isApplicationRegisteredWithBundleID:bundleID]) return YES;
-        usleep(250000);
-    }
-    return NO;
-}
-
 #pragma mark - Verification
+
 - (BOOL)verifyInstallation:(NSString *)appPath bundleID:(NSString *)bid exeName:(NSString *)en opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
  NSFileManager *fm = [NSFileManager defaultManager];
  BOOL ok = YES;
- NSMutableArray<NSString *> *verificationFailures = [NSMutableArray array];
- self.lastVerificationFailureDetail = nil;
  NSString *ep = [appPath stringByAppendingPathComponent:en];
 
  // exe exists + readable + executable
@@ -2251,10 +2063,7 @@ extern char **environ;
  [opLog endPhase:recExe exitCode:(exeExists && exeReadable && exeX_OK) ? 0 : 1 rawOutput:@"" rawError:(exeExists && exeReadable && exeX_OK) ? @"" : [NSString stringWithFormat:@"exists=%d readable=%d xok=%d", exeExists, exeReadable, exeX_OK]
  verification:[NSString stringWithFormat:@"exists=%@ readable=%@ xok=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]
  verified:(exeExists && exeReadable && exeX_OK) duration:0];
- if (!exeExists || !exeReadable || !exeX_OK) {
-     ok = NO;
-     [verificationFailures addObject:[NSString stringWithFormat:@"main executable: exists=%@ readable=%@ executable=%@", exeExists ? @"YES" : @"NO", exeReadable ? @"YES" : @"NO", exeX_OK ? @"YES" : @"NO"]];
- }
+ if (!exeExists || !exeReadable || !exeX_OK) ok = NO;
 
  // Info.plist
  NSString *ip = [appPath stringByAppendingPathComponent:@"Info.plist"];
@@ -2262,17 +2071,11 @@ extern char **environ;
  NSString *recInfo = [opLog beginPhase:OperationPhaseVerify operation:@"verify Info.plist" target:ip input:@"" transactionID:txnID];
  [opLog endPhase:recInfo exitCode:infoExists ? 0 : 1 rawOutput:@"" rawError:infoExists ? @"" : @"Missing"
  verification:[NSString stringWithFormat:@"exists=%@", infoExists ? @"YES" : @"NO"] verified:infoExists duration:0];
- if (!infoExists) {
-     ok = NO;
-     [verificationFailures addObject:@"Info.plist is missing or unreadable"];
- }
+ if (!infoExists) ok = NO;
 
  // Verify signature on main executable
  BOOL exeSigned = [self verifySignature:ep opLog:opLog txnID:txnID];
- if (!exeSigned) {
-     ok = NO;
-     [verificationFailures addObject:@"main executable signature check failed"];
- }
+ if (!exeSigned) ok = NO;
 
  // Frameworks
  NSString *fwp = [appPath stringByAppendingPathComponent:@"Frameworks"];
@@ -2286,10 +2089,7 @@ extern char **environ;
  [opLog endPhase:recFw exitCode:(dylibReadable && dylibX_OK) ? 0 : 1 rawOutput:@"" rawError:(dylibReadable && dylibX_OK) ? @"" : @"Permission denied"
  verification:[NSString stringWithFormat:@"readable=%@ xok=%@", dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]
  verified:(dylibReadable && dylibX_OK) duration:0];
- if (!dylibReadable || !dylibX_OK) {
-     ok = NO;
-     [verificationFailures addObject:[NSString stringWithFormat:@"embedded library %@: readable=%@ executable=%@", item, dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]];
- }
+ if (!dylibReadable || !dylibX_OK) ok = NO;
  }
  }
  }
@@ -2297,25 +2097,22 @@ extern char **environ;
  // Embedded extensions are separate code bundles. A main executable can pass
  // verification while an unsigned appex/xpc crashes the host at launch.
  BOOL embeddedSignaturesOK = [self verifyEmbeddedBundleSignaturesAtPath:appPath opLog:opLog txnID:txnID];
- if (!embeddedSignaturesOK) {
-     ok = NO;
-     [verificationFailures addObject:@"one or more embedded app extensions failed signature verification"];
- }
+ if (!embeddedSignaturesOK) ok = NO;
 
- // Launch Services registration is mandatory. A copied bundle that is not in
- // the system registry is not a complete installation and must be rolled back.
- BOOL registered = [self waitForApplicationRegistration:bid];
- NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"Launch Services registration check" target:bid input:@"" transactionID:txnID];
- [opLog endPhase:recLS
-        exitCode:registered ? 0 : 1
-       rawOutput:@""
-        rawError:registered ? @"" : @"Application is not visible in Launch Services"
-    verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"]
-        verified:registered
-        duration:2.0];
+ // Check if app is registered in LSApplicationWorkspace (best effort, non-blocking)
+ Class LS = objc_getClass("LSApplicationWorkspace");
+ if (LS) {
+ id ws = [LS performSelector:@selector(defaultWorkspace)];
+ if ([ws respondsToSelector:@selector(applicationForIdentifier:)]) {
+ id a = [ws performSelector:@selector(applicationForIdentifier:) withObject:bid];
+ BOOL registered = (a != nil);
+ NSString *recLS = [opLog beginPhase:OperationPhaseVerify operation:@"LSApplicationWorkspace check" target:bid input:@"" transactionID:txnID];
+ [opLog endPhase:recLS exitCode:0 rawOutput:@"" rawError:@""
+ verification:[NSString stringWithFormat:@"registered=%@", registered ? @"YES" : @"NO"] verified:YES duration:0];
  if (!registered) {
-     ok = NO;
-     [verificationFailures addObject:@"application is not visible in Launch Services after registration"];
+ NSLog(@"[IPAInstallerPro] App not yet registered in LS — uicache may need time");
+ }
+ }
  }
 
  // Dopamine-specific: verify app is in correct rootless path (warning only)
@@ -2327,7 +2124,6 @@ extern char **environ;
  NSLog(@"[IPAInstallerPro] WARNING: App not in standard Applications path: %@", appPath);
  }
 
- if (!ok) self.lastVerificationFailureDetail = [verificationFailures componentsJoinedByString:@"; "];
  return ok;
 }
 

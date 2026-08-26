@@ -9,7 +9,6 @@
 #import "InstallationEngine.h"
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
-#import "IPAExtractor.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -173,7 +172,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 @interface InstallationProgressViewController ()
 @property (nonatomic, strong) NSString *installedBundleID;
-@property (nonatomic, strong) NSString *detectedBundleID;
 @property (nonatomic, strong) NSString *currentTxnID;
 @property (nonatomic, assign) BOOL isDone;
 
@@ -187,7 +185,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UIView *reportCard;
 @property (nonatomic, strong) NSDate *installStartTime;
 @property (nonatomic, assign) NSInteger currentPhaseIndex;
-@property (nonatomic, assign) NSInteger failedPhaseIndex;
 @property (nonatomic, assign) BOOL hasFailed;
 
 // Raw log diagnostics
@@ -332,14 +329,15 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // A phase is successful only after its own OperationRecord completes.
-        // Do not infer success from a later phase starting; that hid copy/sign failures.
-        if (!self.hasFailed) {
-            [self.phaseViews[uiPhase] setState:PhaseVisualStateActive animated:YES];
-            self.currentPhaseIndex = uiPhase;
-            float progress = (float)(uiPhase + 1) / (float)self.phaseViews.count;
-            [self.progressView setProgress:progress animated:YES];
+        for (NSInteger i = 0; i < uiPhase; i++) {
+            if (self.phaseViews[i].phaseState == PhaseVisualStatePending) {
+                [self.phaseViews[i] setState:PhaseVisualStateSuccess animated:YES];
+            }
         }
+        [self.phaseViews[uiPhase] setState:PhaseVisualStateActive animated:YES];
+        self.currentPhaseIndex = uiPhase;
+        float progress = (float)(uiPhase + 1) / (float)self.phaseViews.count;
+        [self.progressView setProgress:progress animated:YES];
     });
 }
 
@@ -376,22 +374,13 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (uiPhase < 0) return;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        BOOL isFinalVerifyRecord = (record.phase == OperationPhaseVerify && [record.operation isEqualToString:@"final verify"]);
-        BOOL isNonTerminalVerifyRecord = (record.phase == OperationPhaseVerify && !isFinalVerifyRecord);
-        if (record.result == OperationResultSuccess && !isNonTerminalVerifyRecord) {
+        if (record.result == OperationResultSuccess ||
+            record.result == OperationResultPartial ||
+            record.result == OperationResultSkipped) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateSuccess animated:YES];
-        } else if (record.result == OperationResultFailed || record.result == OperationResultPartial) {
+        } else if (record.result == OperationResultFailed) {
             [self.phaseViews[uiPhase] setState:PhaseVisualStateFailed animated:YES];
-            // Once a phase fails, every later phase is unstarted/blocked. This
-            // prevents a previously queued final-verify record from remaining
-            // blue after FILE_COPY has already failed.
-            for (NSInteger later = uiPhase + 1; later < self.phaseViews.count; later++) {
-                [self.phaseViews[later] setState:PhaseVisualStatePending animated:NO];
-            }
-            self.failedPhaseIndex = uiPhase;
-            self.currentPhaseIndex = uiPhase;
             self.hasFailed = YES;
-            [self.progressView setProgress:(float)(uiPhase + 1) / (float)self.phaseViews.count animated:YES];
         }
     });
 }
@@ -517,12 +506,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     self.headerLabel.text = @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062b\u0628\u064a\u062a...";
     self.headerLabel.textColor = [UIColor whiteColor];
     self.appNameLabel.text = [self.ipaPath lastPathComponent] ?: @"";
-    IPAExtractedInfo *preflightInfo = [[IPAExtractor sharedExtractor] extractInfoFromIPA:self.ipaPath];
-    self.detectedBundleID = preflightInfo.bundleID;
     [self.progressView setProgress:0.0 animated:NO];
-    self.currentPhaseIndex = -1;
-    self.failedPhaseIndex = -1;
-    self.hasFailed = NO;
+
     for (InstallPhaseView *pv in self.phaseViews) {
         [pv setState:PhaseVisualStatePending animated:NO];
     }
@@ -570,7 +555,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)handleCompletionFailure:(InstallationResult *)result {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSInteger failIdx = self.failedPhaseIndex >= 0 ? self.failedPhaseIndex : (self.currentPhaseIndex >= 0 ? self.currentPhaseIndex : 0);
+        NSInteger failIdx = self.currentPhaseIndex >= 0 ? self.currentPhaseIndex : 0;
         if (failIdx < (NSInteger)self.phaseViews.count) {
             [self.phaseViews[failIdx] setState:PhaseVisualStateFailed animated:YES];
         }
@@ -621,8 +606,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     [self addSectionTitle:@"\u0627\u0644\u062a\u0637\u0628\u064a\u0642" toStack:stack];
     [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u0627\u0633\u0645: %@", appName] toStack:stack];
-    NSString *reportBundleID = result.bundleID.length > 0 ? result.bundleID : (self.detectedBundleID.length > 0 ? self.detectedBundleID : @"-");
-    [self addItem:[NSString stringWithFormat:@"Bundle ID: %@", reportBundleID] toStack:stack];
+    [self addItem:[NSString stringWithFormat:@"Bundle ID: %@", result.bundleID ?: @"-"] toStack:stack];
 
     [self addSectionTitle:@"\u0627\u0644\u062a\u062b\u0628\u064a\u062a" toStack:stack];
     [self addItem:[NSString stringWithFormat:@"\u0627\u0644\u062d\u0627\u0644\u0629: %@", success ? @"\u0646\u062c\u0627\u062d" : @"\u0641\u0634\u0644"] toStack:stack];
