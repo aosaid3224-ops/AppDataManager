@@ -59,6 +59,19 @@
     [r appendFormat:@"Crash detected: %@\n", self.crashDetected ? @"YES" : @"NO"];
     [r appendFormat:@"Termination reason: %@\n", self.terminationReason ?: @"N/A"];
     [r appendFormat:@"Crash report path: %@\n", self.crashReportPath ?: @"unavailable"];
+    if (self.crashReportPID > 0) {
+        [r appendFormat:@"Crash report PID: %d\n", self.crashReportPID];
+        [r appendFormat:@"Crash report PID matched launch: %@\n", self.crashReportPIDMatched ? @"YES" : @"NO"];
+    }
+    if (self.crashExceptionType.length > 0 || self.crashSignal.length > 0 || self.crashTerminationIndicator.length > 0 || self.crashFaultingThread.length > 0) {
+        [r appendFormat:@"Crash exception: %@\n", self.crashExceptionType ?: @"N/A"];
+        [r appendFormat:@"Crash signal: %@\n", self.crashSignal ?: @"N/A"];
+        [r appendFormat:@"Termination indicator: %@\n", self.crashTerminationIndicator ?: @"N/A"];
+        [r appendFormat:@"Faulting thread: %@\n", self.crashFaultingThread ?: @"N/A"];
+    }
+    if (self.crashAnalysisSummary.length > 0) {
+        [r appendFormat:@"Crash analysis: %@\n", self.crashAnalysisSummary];
+    }
     if (self.diagnosticOutput && self.diagnosticOutput.length > 0) {
         [r appendFormat:@"\n--- Diagnostic Output ---\n%@\n", self.diagnosticOutput];
     }
@@ -73,7 +86,8 @@
 - (NSString *)processSnapshotForPID:(pid_t)pid;
 - (NSString *)launchDependencyReportForBundleID:(NSString *)bundleID;
 - (BOOL)monitorProcess:(pid_t)pid duration:(NSTimeInterval)duration trace:(NSMutableString *)trace exitStatus:(int *)exitStatus signalNum:(int *)signalNum;
-- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName timeout:(NSTimeInterval)timeout;
+- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName pid:(pid_t)pid launchedAt:(NSDate *)launchedAt timeout:(NSTimeInterval)timeout;
+- (NSString *)crashReportAnalysisForPath:(NSString *)path expectedPID:(pid_t)pid result:(RuntimeDiagnosticsResult *)result;
 @end
 
 @implementation RuntimeDiagnostics
@@ -312,7 +326,7 @@
         [diagnosticOutput appendFormat:@"=== Live Process Trace ===\n%@\n\n", liveTrace];
 
         // 4a. Crash Reporter (.ips files)
-        NSString *crashPath = [self waitForFreshCrashReportForBundleID:bundleID processName:proc.name timeout:3.0];
+        NSString *crashPath = [self waitForFreshCrashReportForBundleID:bundleID processName:proc.name pid:result.pid launchedAt:result.processDetectedAt timeout:3.0];
         [timeline addObject:@"crash_evidence_lookup"];
         if (crashPath) {
             [timeline addObject:@"crash_report_found"];
@@ -327,6 +341,10 @@
             NSString *crashContent = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
             if (crashContent) {
                 [diagnosticOutput appendFormat:@"=== Crash Report (%@) ===\n%@\n\n", crashPath, crashContent];
+                NSString *crashAnalysis = [self crashReportAnalysisForPath:crashPath expectedPID:result.pid result:result];
+                if (crashAnalysis.length > 0) {
+                    [diagnosticOutput appendFormat:@"=== Crash Analysis (PID-matched) ===\n%@\n\n", crashAnalysis];
+                }
             }
         }
 
@@ -726,15 +744,45 @@
 
 #pragma mark - Crash Report Search
 
-- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName timeout:(NSTimeInterval)timeout {
+- (NSString *)waitForFreshCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName pid:(pid_t)pid launchedAt:(NSDate *)launchedAt timeout:(NSTimeInterval)timeout {
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
-    NSString *path = nil;
-    while (!path && [[NSDate date] compare:deadline] == NSOrderedAscending) {
-        path = [self findCrashReportForBundleID:bundleID processName:processName];
-        if (path) break;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *searchPaths = @[
+        @"/var/mobile/Library/Logs/CrashReporter",
+        @"/var/mobile/Library/Logs/CrashReporter/DiagnosticLogs"
+    ];
+    while ([[NSDate date] compare:deadline] == NSOrderedAscending) {
+        NSString *bestPath = nil;
+        NSDate *bestDate = nil;
+        for (NSString *basePath in searchPaths) {
+            NSArray *items = [fm contentsOfDirectoryAtPath:basePath error:nil];
+            for (NSString *item in items) {
+                if (!([item hasSuffix:@".ips"] || [item hasSuffix:@".crash"])) continue;
+                NSString *fullPath = [basePath stringByAppendingPathComponent:item];
+                NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+                NSDate *modDate = attrs[NSFileModificationDate];
+                if (!modDate || (launchedAt && [modDate timeIntervalSinceDate:launchedAt] < -2.0)) continue;
+                if ([[NSDate date] timeIntervalSinceDate:modDate] > 120.0) continue;
+                NSString *content = [NSString stringWithContentsOfFile:fullPath encoding:NSUTF8StringEncoding error:nil];
+                if (content.length == 0) continue;
+                if (bundleID.length > 0 && ![content containsString:bundleID]) continue;
+                if (processName.length > 0 && ![content containsString:processName]) continue;
+                NSRange jsonStart = [content rangeOfString:@"{"];
+                if (jsonStart.location == NSNotFound) continue;
+                NSData *jsonData = [[content substringFromIndex:jsonStart.location] dataUsingEncoding:NSUTF8StringEncoding];
+                NSDictionary *report = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+                NSNumber *reportPID = report[@"pid"];
+                if (pid > 0 && (![reportPID isKindOfClass:[NSNumber class]] || reportPID.intValue != pid)) continue;
+                if (!bestDate || [modDate compare:bestDate] == NSOrderedDescending) {
+                    bestDate = modDate;
+                    bestPath = fullPath;
+                }
+            }
+        }
+        if (bestPath) return bestPath;
         [NSThread sleepForTimeInterval:0.25];
     }
-    return path;
+    return nil;
 }
 
 - (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName {
@@ -776,6 +824,98 @@
     }
 
     return latestPath;
+}
+
+- (NSString *)crashReportAnalysisForPath:(NSString *)path expectedPID:(pid_t)pid result:(RuntimeDiagnosticsResult *)result {
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (content.length == 0) return @"REPORT_PARSE_FAILED: empty crash report";
+    NSRange jsonStart = [content rangeOfString:@"{"];
+    if (jsonStart.location == NSNotFound) return @"REPORT_PARSE_FAILED: JSON object not found";
+    NSData *jsonData = [[content substringFromIndex:jsonStart.location] dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *report = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+    if (![report isKindOfClass:[NSDictionary class]]) return @"REPORT_PARSE_FAILED: invalid JSON";
+
+    NSNumber *reportPID = report[@"pid"];
+    result.crashReportPID = reportPID.intValue;
+    result.crashReportPIDMatched = (pid <= 0 || reportPID.intValue == pid);
+    NSDictionary *exception = report[@"exception"];
+    NSDictionary *termination = report[@"termination"];
+    NSDictionary *asi = report[@"asi"];
+    result.crashExceptionType = [exception[@"type"] isKindOfClass:[NSString class]] ? exception[@"type"] : @"N/A";
+    result.crashSignal = [exception[@"signal"] isKindOfClass:[NSString class]] ? exception[@"signal"] : @"N/A";
+    result.crashTerminationIndicator = [termination[@"indicator"] isKindOfClass:[NSString class]] ? termination[@"indicator"] : @"N/A";
+
+    NSMutableString *summary = [NSMutableString string];
+    NSString *byProc = [termination[@"byProc"] isKindOfClass:[NSString class]] ? termination[@"byProc"] : @"N/A";
+    [summary appendFormat:@"pid=%d matched=%@ exception=%@ signal=%@ termination=%@ byProc=%@",
+     result.crashReportPID,
+     result.crashReportPIDMatched ? @"YES" : @"NO",
+     result.crashExceptionType,
+     result.crashSignal,
+     result.crashTerminationIndicator,
+     byProc];
+    if ([asi isKindOfClass:[NSDictionary class]] && asi.count > 0) {
+        NSMutableArray *asiParts = [NSMutableArray array];
+        for (NSString *key in asi) {
+            id value = asi[key];
+            if ([value isKindOfClass:[NSArray class]]) value = [value componentsJoinedByString:@"; "];
+            [asiParts addObject:[NSString stringWithFormat:@"%@=%@", key, value]];
+        }
+        [summary appendFormat:@" asi={%@}", [asiParts componentsJoinedByString:@" | "]];
+    }
+
+    NSArray *images = report[@"usedImages"] ?: report[@"binaryImages"];
+    NSMutableDictionary<NSNumber *, NSString *> *imageNames = [NSMutableDictionary dictionary];
+    NSMutableArray *loadedAppComponents = [NSMutableArray array];
+    if ([images isKindOfClass:[NSArray class]]) {
+        for (NSUInteger i = 0; i < images.count; i++) {
+            NSDictionary *image = images[i];
+            if (![image isKindOfClass:[NSDictionary class]]) continue;
+            NSString *name = [image[@"name"] isKindOfClass:[NSString class]] ? image[@"name"] : @"unknown";
+            imageNames[@(i)] = name;
+            NSString *imagePath = [image[@"path"] isKindOfClass:[NSString class]] ? image[@"path"] : @"";
+            BOOL appOwned = [imagePath containsString:@".app/"];
+            BOOL dynamicComponent = [name.pathExtension.lowercaseString isEqualToString:@"dylib"] || [imagePath containsString:@"/Frameworks/"];
+            if (appOwned && dynamicComponent && loadedAppComponents.count < 80) {
+                [loadedAppComponents addObject:[NSString stringWithFormat:@"%@ [%@]", name, imagePath]];
+            }
+        }
+    }
+
+    NSArray *backtrace = report[@"lastExceptionBacktrace"];
+    NSMutableArray *topFrames = [NSMutableArray array];
+    if ([backtrace isKindOfClass:[NSArray class]]) {
+        for (NSDictionary *frame in [backtrace subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)16, backtrace.count))]) {
+            NSNumber *imageIndex = frame[@"imageIndex"];
+            NSString *symbol = [frame[@"symbol"] isKindOfClass:[NSString class]] ? frame[@"symbol"] : @"<no-symbol>";
+            NSNumber *offset = frame[@"imageOffset"];
+            NSString *imageName = imageNames[imageIndex] ?: @"unknown-image";
+            [topFrames addObject:[NSString stringWithFormat:@"%@ +%@ [%@ index=%@]", symbol, offset ?: @0, imageName, imageIndex ?: @"?"]];
+        }
+    }
+    if (topFrames.count > 0) [summary appendFormat:@" topFrames={%@}", [topFrames componentsJoinedByString:@" | "]];
+
+    NSArray *threads = report[@"threads"];
+    NSMutableArray *triggeredThreads = [NSMutableArray array];
+    if ([threads isKindOfClass:[NSArray class]]) {
+        for (NSDictionary *thread in threads) {
+            if (![thread[@"triggered"] boolValue]) continue;
+            NSString *queue = [thread[@"queue"] isKindOfClass:[NSString class]] ? thread[@"queue"] : @"unknown-queue";
+            NSNumber *threadID = thread[@"id"];
+            [triggeredThreads addObject:[NSString stringWithFormat:@"id=%@ queue=%@", threadID ?: @"?", queue]];
+        }
+    }
+    result.crashFaultingThread = triggeredThreads.count > 0 ? [triggeredThreads componentsJoinedByString:@"; "] : @"not-marked-in-report";
+    if (triggeredThreads.count > 0) [summary appendFormat:@" faultingThread={%@}", result.crashFaultingThread];
+
+    if (loadedAppComponents.count > 0) {
+        [summary appendFormat:@" loadedAppComponents=%lu", (unsigned long)loadedAppComponents.count];
+        NSMutableString *componentDetail = [NSMutableString stringWithString:@"\n=== Loaded App Components ===\n"];
+        for (NSString *component in loadedAppComponents) [componentDetail appendFormat:@"%@\n", component];
+        [summary appendString:componentDetail];
+    }
+    result.crashAnalysisSummary = summary;
+    return summary;
 }
 
 #pragma mark - Jetsam Event Search

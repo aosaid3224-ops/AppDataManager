@@ -47,6 +47,13 @@
 @property (nonatomic, strong) NSString *evidenceSummary;
 @property (nonatomic, assign) NSTimeInterval processExitAfterLaunchMs;
 @property (nonatomic, strong) NSArray<NSString *> *phaseTimeline;
+@property (nonatomic, strong) NSString *crashAnalysisSummary;
+@property (nonatomic, assign) pid_t crashReportPID;
+@property (nonatomic, assign) BOOL crashReportPIDMatched;
+@property (nonatomic, strong) NSString *crashExceptionType;
+@property (nonatomic, strong) NSString *crashSignal;
+@property (nonatomic, strong) NSString *crashTerminationIndicator;
+@property (nonatomic, strong) NSString *crashFaultingThread;
 - (NSString *)detailedReport;
 @end
 
