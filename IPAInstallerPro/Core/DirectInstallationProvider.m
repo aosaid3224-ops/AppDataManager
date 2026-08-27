@@ -68,7 +68,7 @@ extern char **environ;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
-- (NSUInteger)cleanupStaleStageDirectoriesAtApplicationsPath:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (NSUInteger)cleanupStaleStageDirectoriesAtRoot:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -354,10 +354,11 @@ extern char **environ;
     return ok;
 }
 
-- (NSUInteger)cleanupStaleStageDirectoriesAtApplicationsPath:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+- (NSUInteger)cleanupStaleStageDirectoriesAtRoot:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *root = applicationsPath.stringByStandardizingPath;
-    if (root.length == 0 || ![root.lastPathComponent isEqualToString:@"Applications"] || ![fm fileExistsAtPath:root]) return 0;
+    BOOL allowedRoot = [root.lastPathComponent isEqualToString:@"Applications"] || [root.lastPathComponent isEqualToString:@"IPAInstallerPro-Staging"];
+    if (root.length == 0 || !allowedRoot || ![fm fileExistsAtPath:root]) return 0;
 
     NSString *recordID = [opLog beginPhase:OperationPhaseCleanup operation:@"cleanup-stale-ipa-stage" target:root input:@"only *.app.ipa-stage-* older than 5 minutes" transactionID:txnID];
     NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-300.0];
@@ -894,7 +895,7 @@ extern char **environ;
  // Remove only old, uniquely named staging directories left by an interrupted transaction.
  // This is intentionally age-bounded so an active installation is never touched.
  NSString *resolvedApplicationsPath = [[RootlessManager sharedManager] resolvePath:@"/Applications"];
- [self cleanupStaleStageDirectoriesAtApplicationsPath:resolvedApplicationsPath hasHelper:hasH opLog:opLog txnID:txnID];
+ [self cleanupStaleStageDirectoriesAtRoot:resolvedApplicationsPath hasHelper:hasH opLog:opLog txnID:txnID];
 
  // PHASE 0: SAFETY CHECKS
  if (![self validateIPAPathSafety:ipaPath opLog:opLog txnID:txnID]) {
@@ -1160,9 +1161,27 @@ extern char **environ;
          return;
      }
  }
-  NSString *stagedDest = [destApp stringByAppendingFormat:@".ipa-stage-%@", [NSUUID UUID].UUIDString];
- [fm removeItemAtPath:stagedDest error:nil];
- BOOL copied = NO;
+  NSString *stagingRoot = [[RootlessManager sharedManager] resolvePath:@"/var/tmp/IPAInstallerPro-Staging"];
+  NSString *stageRootRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"prepare private staging root" target:stagingRoot input:@"mkdir -p outside Applications" transactionID:txnID];
+  BOOL stagingRootReady = [fm fileExistsAtPath:stagingRoot];
+  if (!stagingRootReady) {
+      stagingRootReady = hasH ? [self runRoot:self.mkdirPath args:@[@"-p", stagingRoot] opLog:opLog recordID:stageRootRec] : [fm createDirectoryAtPath:stagingRoot withIntermediateDirectories:YES attributes:nil error:nil];
+      if (!hasH && stageRootRec) {
+          [opLog endPhase:stageRootRec exitCode:stagingRootReady ? 0 : 1 rawOutput:@"" rawError:stagingRootReady ? @"" : @"Unable to create private staging root" verification:@"staging root exists outside Applications" verified:stagingRootReady duration:0];
+      }
+  } else if (stageRootRec) {
+      [opLog endPhase:stageRootRec exitCode:0 rawOutput:@"already exists" rawError:@"" verification:@"staging root exists outside Applications" verified:YES duration:0];
+  }
+  if (!stagingRootReady) {
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Private staging root could not be created" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"stagingRoot": stagingRoot ?: @"" }]);
+      return;
+  }
+  [self cleanupStaleStageDirectoriesAtRoot:stagingRoot hasHelper:hasH opLog:opLog txnID:txnID];
+  NSString *stagedDest = [stagingRoot stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.ipa-stage-%@", appFolder, [NSUUID UUID].UUIDString]];
+  BOOL copied = NO;
  if (hasH && self.helperPath.length > 0) {
      NSString *rec9 = [opLog beginPhase:OperationPhaseFileCopy operation:@"copy app bundle to isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"root helper --copy-tree (copyfile)" transactionID:txnID];
      // The root helper owns the copyfile call. This avoids platform-specific

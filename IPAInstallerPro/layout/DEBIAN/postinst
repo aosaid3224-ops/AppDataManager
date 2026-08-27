@@ -17,6 +17,8 @@ INSTALLED_PATH=""
 STAGE_ROOTS=(
     "/var/jb/Applications"
     "/Applications"
+    "/var/jb/var/tmp/IPAInstallerPro-Staging"
+    "/var/tmp/IPAInstallerPro-Staging"
 )
 for stage_root in "${STAGE_ROOTS[@]}"; do
     for stage_path in "$stage_root"/*.app.ipa-stage-*; do
