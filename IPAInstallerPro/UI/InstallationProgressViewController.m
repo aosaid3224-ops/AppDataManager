@@ -9,8 +9,7 @@
 #import "InstallationEngine.h"
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
-#import "ForensicInstallationObserver.h"
-#import "ForensicTypes.h"
+#import "LiveOperationStream.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -197,7 +196,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 // Passive forensic stream: observes the same transaction without starting a
 // second install, signing pass, or registration pass.
-@property (nonatomic, strong) ForensicInstallationObserver *forensicObserver;
+@property (nonatomic, strong) LiveOperationStream *liveStream;
+@property (nonatomic, assign) NSUInteger lastRenderedLiveSequence;
 @property (nonatomic, strong) UIView *liveOutputCard;
 @property (nonatomic, strong) UILabel *liveStateLabel;
 @property (nonatomic, strong) UITextView *liveOutputView;
@@ -218,7 +218,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [self.forensicObserver finishObservation];
+    [self.liveStream close];
 }
 
 #pragma mark - Raw Log
@@ -307,10 +307,6 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
                                              selector:@selector(operationRecordUpdated:)
                                                  name:@"OperationRecordUpdated"
                                                object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(forensicEventUpdated:)
-                                                 name:@"ForensicEventUpdated"
-                                               object:nil];
 }
 
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
@@ -354,29 +350,34 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     });
 }
 
-- (void)forensicEventUpdated:(NSNotification *)note {
-    ForensicEvent *event = note.object;
-    if (!event || ![event.transactionID isEqualToString:self.currentTxnID]) return;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!self.liveOutputView || !self.liveStateLabel) return;
-        NSString *state = ForensicInstallStateName(event.stateAfter);
-        NSString *result = ForensicEventResultName(event.result);
-        NSString *line = [NSString stringWithFormat:@"[%@] %@ | %@ | target:%@ | path:%@ | pid:%d uid:%ld gid:%ld | exit:%d | result:%@",
-                           state, event.phase ?: @"FORENSIC", event.operation ?: @"", event.target ?: @"-",
-                           event.resolvedPath.length ? event.resolvedPath : @"-", event.pid,
-                           (long)event.uid, (long)event.gid, event.exitStatus, result];
-        NSMutableString *block = [NSMutableString stringWithString:line];
-        if (event.failureReason.length > 0) [block appendFormat:@"\nسبب الفشل: %@", event.failureReason];
-        if (event.stdoutText.length > 0) [block appendFormat:@"\nstdout: %@", event.stdoutText];
-        if (event.stderrText.length > 0) [block appendFormat:@"\nstderr: %@", event.stderrText];
-        NSString *existing = self.liveOutputView.text ?: @"";
-        NSString *updated = existing.length > 500000 ? [existing substringFromIndex:existing.length - 500000] : existing;
-        self.liveOutputView.text = updated.length ? [updated stringByAppendingFormat:@"\n%@\n", block] : [block stringByAppendingString:@"\n"];
-        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@", state, result];
-        UIColor *color = event.result == ForensicEventResultFailure ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0];
-        self.liveStateLabel.textColor = color;
-        [self.liveOutputView scrollRangeToVisible:NSMakeRange(self.liveOutputView.text.length, 0)];
-    });
+- (void)renderLiveOperationEvent:(LiveOperationEvent *)event {
+    if (!event || event.sequence <= self.lastRenderedLiveSequence) return;
+    self.lastRenderedLiveSequence = event.sequence;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self renderLiveOperationEvent:event]; });
+        return;
+    }
+    if (!self.liveOutputView || !self.liveStateLabel) return;
+    NSString *timestamp = [NSString stringWithFormat:@"%.3f", [event.timestamp timeIntervalSince1970]];
+    NSString *line = [NSString stringWithFormat:@"%@ #%03lu %@ %@ | %@ | target:%@ | exit:%d",
+                       timestamp, (unsigned long)event.sequence, event.stage ?: @"UNKNOWN", event.status ?: @"PENDING",
+                       event.message ?: @"", event.target.length ? event.target : @"-", event.exitStatus];
+    UIColor *color = [event.status isEqualToString:@"FAILED"] ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] :
+                     ([event.status isEqualToString:@"SUCCESS"] ? [UIColor colorWithRed:0.35 green:0.95 blue:0.6 alpha:1.0] : [UIColor colorWithRed:0.45 green:0.78 blue:1.0 alpha:1.0]);
+    NSDictionary *attributes = @{NSFontAttributeName: self.liveOutputView.font ?: [UIFont systemFontOfSize:10], NSForegroundColorAttributeName: color};
+    NSAttributedString *lineText = [[NSAttributedString alloc] initWithString:[line stringByAppendingString:@"\n"] attributes:attributes];
+    [self.liveOutputView.textStorage appendAttributedString:lineText];
+    NSUInteger maxLength = 120000;
+    if (self.liveOutputView.textStorage.length > maxLength) {
+        NSUInteger removeLength = self.liveOutputView.textStorage.length - maxLength;
+        [self.liveOutputView.textStorage deleteCharactersInRange:NSMakeRange(0, removeLength)];
+    }
+    self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", event.stage ?: @"UNKNOWN", event.status ?: @"PENDING", (unsigned long)event.sequence];
+    self.liveStateLabel.textColor = color;
+    [self.liveOutputView scrollRangeToVisible:NSMakeRange(self.liveOutputView.textStorage.length, 0)];
+    if (event.finalEvent) {
+        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة النهائية: %@ #%03lu — انتهى البث", event.status ?: @"FINAL", (unsigned long)event.sequence];
+    }
 }
 
 - (void)operationRecordUpdated:(NSNotification *)note {
@@ -614,14 +615,16 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     self.currentTxnID = [[NSUUID UUID] UUIDString];
     [engine prepareTransactionWithID:self.currentTxnID];
 
-    self.liveOutputView.text = @"[FORENSIC] بدء مراقبة transaction...\n";
-    self.liveStateLabel.text = @"الحالة الحية: BEGIN — OBSERVED";
+    self.lastRenderedLiveSequence = 0;
+    self.liveOutputView.text = @"";
+    self.liveStateLabel.text = @"الحالة الحية: BEGIN — انتظار أول حدث";
     self.liveStateLabel.textColor = [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0];
-    self.forensicObserver = [[ForensicInstallationObserver alloc] init];
-    [self.forensicObserver beginObservingTransaction:self.currentTxnID
-                                             ipaPath:self.ipaPath
-                                            bundleID:@""
-                                       operationLog:[OperationLog sharedLog]];
+    self.liveStream = [[LiveOperationStream alloc] init];
+    __weak typeof(self) weakLiveSelf = self;
+    [self.liveStream startForTransactionID:self.currentTxnID handler:^(LiveOperationEvent *event) {
+        __strong typeof(weakLiveSelf) strongLiveSelf = weakLiveSelf;
+        if (strongLiveSelf) [strongLiveSelf renderLiveOperationEvent:event];
+    }];
 
     __weak typeof(self) weakSelf = self;
     [engine installIPA:self.ipaPath
