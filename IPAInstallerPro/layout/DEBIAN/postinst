@@ -10,6 +10,19 @@ POSSIBLE_PATHS=(
 
 INSTALLED_PATH=""
 
+# Remove only interrupted-install staging directories. They are never valid apps
+# and can make uikittools attempt to register temporary bundles during triggers.
+# The five-minute age guard protects an installation that may still be running.
+STAGE_ROOTS=(
+    "/var/jb/Applications"
+    "/Applications"
+)
+for stage_root in "${STAGE_ROOTS[@]}"; do
+    if [ -d "$stage_root" ]; then
+        find "$stage_root" -xdev -maxdepth 1 -type d -name '*.app.ipa-stage-*' -mmin +5 -exec /bin/rm -rf {} + 2>/dev/null || true
+    fi
+done
+
 for p in "${POSSIBLE_PATHS[@]}"; do
     if [ -f "$p" ]; then
         INSTALLED_PATH="$p"

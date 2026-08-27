@@ -68,6 +68,7 @@ extern char **environ;
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
+- (NSUInteger)cleanupStaleStageDirectoriesAtApplicationsPath:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -351,6 +352,46 @@ extern char **environ;
         [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"root cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
     }
     return ok;
+}
+
+- (NSUInteger)cleanupStaleStageDirectoriesAtApplicationsPath:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *root = applicationsPath.stringByStandardizingPath;
+    if (root.length == 0 || ![root.lastPathComponent isEqualToString:@"Applications"] || ![fm fileExistsAtPath:root]) return 0;
+
+    NSString *recordID = [opLog beginPhase:OperationPhaseCleanup operation:@"cleanup-stale-ipa-stage" target:root input:@"only *.app.ipa-stage-* older than 5 minutes" transactionID:txnID];
+    NSDate *cutoff = [NSDate dateWithTimeIntervalSinceNow:-300.0];
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    NSMutableArray<NSString *> *removed = [NSMutableArray array];
+    NSMutableArray<NSString *> *failed = [NSMutableArray array];
+    NSArray<NSString *> *entries = [fm contentsOfDirectoryAtPath:root error:nil] ?: @[];
+
+    for (NSString *entry in entries) {
+        if (![entry containsString:@".app.ipa-stage-"]) continue;
+        NSString *candidate = [root stringByAppendingPathComponent:entry];
+        NSDictionary *attributes = [fm attributesOfItemAtPath:candidate error:nil];
+        if (![attributes[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+        NSDate *modified = attributes[NSFileModificationDate];
+        if (modified && [modified compare:cutoff] == NSOrderedDescending) continue;
+        [candidates addObject:candidate];
+    }
+
+    for (NSString *candidate in candidates) {
+        BOOL deleted = NO;
+        if (hasHelper) {
+            deleted = [self runRoot:self.rmPath args:@[@"-rf", candidate] opLog:opLog recordID:nil];
+        } else {
+            deleted = [fm removeItemAtPath:candidate error:nil];
+        }
+        if (deleted && ![fm fileExistsAtPath:candidate]) [removed addObject:candidate.lastPathComponent];
+        else [failed addObject:candidate.lastPathComponent];
+    }
+
+    BOOL verified = (failed.count == 0);
+    NSString *rawOutput = [NSString stringWithFormat:@"candidates=%lu removed=%lu", (unsigned long)candidates.count, (unsigned long)removed.count];
+    NSString *rawError = failed.count ? [NSString stringWithFormat:@"stale stage paths not removed: %@", [failed componentsJoinedByString:@", "]] : @"";
+    [opLog endPhase:recordID exitCode:verified ? 0 : 1 rawOutput:rawOutput rawError:rawError verification:verified ? @"no eligible stale ipa-stage directories remain" : @"some eligible stale ipa-stage directories remain" verified:verified duration:0 context:@{ @"root": root, @"cutoffSeconds": @300, @"candidates": candidates, @"removed": removed, @"failed": failed }];
+    return removed.count;
 }
 
 - (NSString *)runCmdOutput:(NSString *)cmd args:(NSArray *)args {
@@ -849,6 +890,11 @@ extern char **environ;
   self.diagDeepCopyMissing = 0;
   self.diagDeepCopySizeMismatch = 0;
  // If txnID is provided by the engine, use it directly without creating a duplicate OperationLog entry
+
+ // Remove only old, uniquely named staging directories left by an interrupted transaction.
+ // This is intentionally age-bounded so an active installation is never touched.
+ NSString *resolvedApplicationsPath = [[RootlessManager sharedManager] resolvePath:@"/Applications"];
+ [self cleanupStaleStageDirectoriesAtApplicationsPath:resolvedApplicationsPath hasHelper:hasH opLog:opLog txnID:txnID];
 
  // PHASE 0: SAFETY CHECKS
  if (![self validateIPAPathSafety:ipaPath opLog:opLog txnID:txnID]) {
