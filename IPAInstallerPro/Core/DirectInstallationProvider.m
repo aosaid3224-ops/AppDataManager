@@ -40,7 +40,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *chownPath;
 @property (nonatomic, strong) NSString *rmPath;
 @property (nonatomic, strong) NSString *unzipPath;
-@property (nonatomic, strong) NSString *zipPath;
 @property (nonatomic, strong) NSString *whoamiPath;
 @property (nonatomic, strong) NSString *helperPath;
 @property (nonatomic, strong) NSString *mkdirPath;
@@ -57,11 +56,6 @@ extern char **environ;
 @property (nonatomic, strong) NSString *lastMachOVerificationDetail;
 @property (nonatomic, strong) SigningPlan *activeSigningPlan;
 @property (nonatomic, strong) NSString *lastInstalledAppPath;
-- (NSString *)availableAppInstPath;
-- (BOOL)prepareSystemIPAFromAppPath:(NSString *)appPath temporaryRoot:(NSString *)temporaryRoot bundleName:(NSString *)bundleName outputPath:(NSString **)outputPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
-- (BOOL)installViaAppInst:(NSString *)ipaPath appinstPath:(NSString *)appinstPath bundleID:(NSString *)bundleID opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
-- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID;
-- (BOOL)removeSystemApplicationAtPath:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)signBundleExecutableAtPath:(NSString *)bundlePath label:(NSString *)label hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (void)signExe:(NSString *)path hasHelper:(BOOL)hasH opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 - (BOOL)remapSigningPlan:(SigningPlan *)plan toInstalledAppPath:(NSString *)installedAppPath;
@@ -77,97 +71,6 @@ extern char **environ;
 
 @implementation DirectInstallationProvider
 
-- (NSString *)availableAppInstPath {
-    NSArray *candidates = @[
-        @"/var/jb/usr/bin/appinst",
-        @"/usr/bin/appinst",
-        @"/usr/local/bin/appinst"
-    ];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *path in candidates) {
-        if ([fm isExecutableFileAtPath:path]) return path;
-    }
-    return nil;
-}
-
-- (BOOL)prepareSystemIPAFromAppPath:(NSString *)appPath temporaryRoot:(NSString *)temporaryRoot bundleName:(NSString *)bundleName outputPath:(NSString **)outputPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
-    if (!appPath.length || !temporaryRoot.length || !bundleName.length || !self.helperPath.length || !self.zipPath.length) return NO;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *packageRoot = [temporaryRoot stringByAppendingPathComponent:@"appinst-payload"];
-    NSString *payloadRoot = [packageRoot stringByAppendingPathComponent:@"Payload"];
-    NSString *payloadApp = [payloadRoot stringByAppendingPathComponent:bundleName];
-    NSString *ipaPath = [temporaryRoot stringByAppendingPathComponent:@"appinst-prepared.ipa"];
-    [fm removeItemAtPath:packageRoot error:nil];
-    [fm removeItemAtPath:ipaPath error:nil];
-    NSError *error = nil;
-    if (![fm createDirectoryAtPath:payloadRoot withIntermediateDirectories:YES attributes:nil error:&error]) {
-        NSLog(@"[IPAInstallerPro] appinst staging directory failed: %@", error.localizedDescription ?: @"unknown");
-        return NO;
-    }
-    NSString *copyRecord = [opLog beginPhase:OperationPhaseFileCopy operation:@"prepare IPA for system backend" target:[NSString stringWithFormat:@"%@ -> %@", appPath, payloadApp] input:@"root helper --copy-tree" transactionID:txnID];
-    BOOL copied = [self runCmdCapture:self.helperPath args:@[@"--copy-tree", appPath, payloadApp] opLog:opLog recordID:copyRecord operation:@"appinst staging copy"];
-    if (!copied) {
-        [fm removeItemAtPath:packageRoot error:nil];
-        return NO;
-    }
-    NSString *zipRecord = [opLog beginPhase:OperationPhaseIPAExtract operation:@"repackage signed IPA for system backend" target:ipaPath input:@"root helper --zip-tree" transactionID:txnID];
-    BOOL zipped = [self runCmdCapture:self.helperPath args:@[@"--zip-tree", self.zipPath, packageRoot, ipaPath] opLog:opLog recordID:zipRecord operation:@"appinst IPA packaging"];
-    if (!zipped || ![fm fileExistsAtPath:ipaPath]) {
-        [fm removeItemAtPath:packageRoot error:nil];
-        [fm removeItemAtPath:ipaPath error:nil];
-        return NO;
-    }
-    if (outputPath) *outputPath = ipaPath;
-    return YES;
-}
-
-- (BOOL)installViaAppInst:(NSString *)ipaPath appinstPath:(NSString *)appinstPath bundleID:(NSString *)bundleID opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
-    if (!ipaPath.length || !appinstPath.length || !self.helperPath.length) return NO;
-    NSString *record = [opLog beginPhase:OperationPhaseUICache operation:@"appinst system installation" target:ipaPath input:[NSString stringWithFormat:@"bundleID=%@ backend=%@", bundleID ?: @"", appinstPath] transactionID:txnID];
-    BOOL ok = [self runCmdCapture:self.helperPath args:@[appinstPath, ipaPath] opLog:opLog recordID:record operation:@"appinst system installation"];
-    if (!ok) NSLog(@"[IPAInstallerPro] appinst rejected %@; direct backend remains available", bundleID ?: @"(unknown)");
-    return ok;
-}
-
-- (NSString *)registeredApplicationPathForBundleID:(NSString *)bundleID {
-    if (!bundleID.length) return nil;
-    Class LS = objc_getClass("LSApplicationWorkspace");
-    if (LS) {
-        id workspace = [LS performSelector:@selector(defaultWorkspace)];
-        if ([workspace respondsToSelector:@selector(applicationForIdentifier:)]) {
-            id application = [workspace performSelector:@selector(applicationForIdentifier:) withObject:bundleID];
-            if ([application respondsToSelector:@selector(bundleURL)]) {
-                NSURL *url = [application performSelector:@selector(bundleURL)];
-                NSString *path = url.path;
-                if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) return path;
-            }
-        }
-    }
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *roots = @[@"/var/mobile/Containers/Bundle/Application", @"/var/containers/Bundle/Application", @"/Applications", @"/var/jb/Applications"];
-    for (NSString *root in roots) {
-        NSArray *containers = [fm contentsOfDirectoryAtPath:root error:nil];
-        for (NSString *container in containers) {
-            NSString *containerPath = [root stringByAppendingPathComponent:container];
-            NSArray *items = [fm contentsOfDirectoryAtPath:containerPath error:nil];
-            for (NSString *item in items) {
-                if (![item.pathExtension.lowercaseString isEqualToString:@"app"]) continue;
-                NSString *path = [containerPath stringByAppendingPathComponent:item];
-                NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"Info.plist"]];
-                if ([info[@"CFBundleIdentifier"] isEqualToString:bundleID]) return path;
-            }
-        }
-    }
-    return nil;
-}
-
-- (BOOL)removeSystemApplicationAtPath:(NSString *)path opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
-    if (!path.length) return NO;
-    NSString *record = [opLog beginPhase:OperationPhaseCleanup operation:@"remove rejected system app" target:path input:@"root helper rm -rf" transactionID:txnID];
-    BOOL removed = [self runRoot:self.rmPath args:@[@"-rf", path] opLog:opLog recordID:record];
-    return removed && ![[NSFileManager defaultManager] fileExistsAtPath:path];
-}
-
 - (NSString *)providerName { return @"Direct Install"; }
 - (NSString *)providerDescription { return @"Standalone installation with full signing — IPA Installer Pro signature"; }
 - (NSInteger)priority { return 100; }
@@ -182,7 +85,6 @@ extern char **environ;
  self.chownPath = [rm resolvePath:@"/usr/sbin/chown"];
  self.rmPath = [rm resolvePath:@"/bin/rm"];
  self.unzipPath = [rm resolvePath:@"/usr/bin/unzip"];
- self.zipPath = [rm resolvePath:@"/usr/bin/zip"];
  self.whoamiPath = [rm resolvePath:@"/usr/bin/whoami"];
  self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
  self.mvPath = [rm resolvePath:@"/bin/mv"];
@@ -1421,68 +1323,32 @@ extern char **environ;
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
 
- // PHASE 8: INSTALL BACKEND
- NSLog(@"[IPAInstallerPro] === PHASE 8: INSTALL BACKEND ===");
- NSString *verificationAppPath = destApp;
- NSString *appinstPath = [self availableAppInstPath];
- BOOL usedSystemBackend = NO;
- NSString *preparedSystemIPA = nil;
- NSString *backendRecord = [opLog beginPhase:OperationPhaseUICache operation:@"select installation backend" target:bundleID input:@"prefer appinst; preserve 2.1.85 fallback" transactionID:txnID];
- BOOL backendPrepared = NO;
- if (appinstPath.length && hasH) {
-     backendPrepared = [self prepareSystemIPAFromAppPath:destApp temporaryRoot:tmp bundleName:appFolder outputPath:&preparedSystemIPA opLog:opLog txnID:txnID];
-     if (backendPrepared && [self installViaAppInst:preparedSystemIPA appinstPath:appinstPath bundleID:bundleID opLog:opLog txnID:txnID]) {
-         NSString *registeredPath = nil;
-         for (NSUInteger attempt = 0; attempt < 20 && registeredPath.length == 0; attempt++) {
-             registeredPath = [self registeredApplicationPathForBundleID:bundleID];
-             if (!registeredPath.length) usleep(250000);
-         }
-         if (registeredPath.length) {
-             verificationAppPath = registeredPath;
-             usedSystemBackend = YES;
-             NSLog(@"[IPAInstallerPro] System backend registered %@ at %@", bundleID, registeredPath);
-             // The direct rootless candidate is no longer needed after the
-             // system container is visible. Remove only that candidate; the
-             // system-created application remains managed by Launch Services.
-             if (![destApp isEqualToString:registeredPath]) {
-                 [self removeSystemApplicationAtPath:destApp opLog:opLog txnID:txnID];
-             }
-         } else {
-             NSLog(@"[IPAInstallerPro] appinst returned success but no registered path was discoverable; retaining direct fallback");
-         }
-     }
- }
- if (usedSystemBackend) {
-     [opLog endPhase:backendRecord exitCode:0 rawOutput:@"appinst" rawError:@"" verification:@"system backend accepted and registered bundle path" verified:YES duration:0 context:@{ @"backend": @"appinst", @"path": verificationAppPath ?: @"" }];
- } else {
-     NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical (fallback)" target:logicalDest input:@"2.1.85 direct backend" transactionID:txnID];
-     [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
-     NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved (fallback)" target:destApp input:@"2.1.85 direct backend" transactionID:txnID];
-     [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
-     NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a (fallback)" target:@"" input:@"2.1.85 direct backend" transactionID:txnID];
-     [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
-     [opLog endPhase:backendRecord exitCode:0 rawOutput:@"direct-uicache" rawError:@"" verification:appinstPath.length ? @"system backend unavailable or rejected; direct backend retained" : @"appinst unavailable; direct 2.1.85 backend retained" verified:YES duration:0 context:@{ @"backend": @"direct-uicache", @"appinstAvailable": @(appinstPath.length > 0), @"stagingPrepared": @(backendPrepared) }];
- }
- self.lastInstalledAppPath = verificationAppPath;
+ // PHASE 8: UICACHE
+ NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
+ NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
+
+ NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+
+ NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
+ [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
 
  // PHASE 9: VERIFY
  NSLog(@"[IPAInstallerPro] === PHASE 9: VERIFY ===");
- NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:verificationAppPath input:bundleID transactionID:txnID];
- BOOL finalOk = [self verifyInstallation:verificationAppPath bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
+ NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
+ BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
  [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
  verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
 
  if (!finalOk) {
  // ROLLBACK
- if (usedSystemBackend && ![verificationAppPath isEqualToString:destApp]) {
-     [self removeSystemApplicationAtPath:verificationAppPath opLog:opLog txnID:txnID];
- }
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"backend": usedSystemBackend ? @"appinst" : @"direct-uicache", @"path": verificationAppPath ?: @"" }]);
+ if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
  }
 
@@ -1503,7 +1369,7 @@ extern char **environ;
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultSuccess];
  InstallationResult *result = [InstallationResult successResult:[NSString stringWithFormat:@"Installed %@", appFolder]
- provider:[self providerName] transaction:txnID evidence:@{@"bundleID": bundleID, @"path": verificationAppPath, @"backend": usedSystemBackend ? @"appinst" : @"direct-uicache", @"exe": exeName}];
+ provider:[self providerName] transaction:txnID evidence:@{@"bundleID": bundleID, @"path": destApp, @"exe": exeName}];
  result.bundleID = bundleID;
  if (completion) completion(result);
 }

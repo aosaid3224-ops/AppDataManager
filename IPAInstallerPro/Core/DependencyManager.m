@@ -29,20 +29,6 @@
 - (void)setupDependencies {
     self.dependencies = [NSMutableArray array];
 
-    Dependency *appSync = [[Dependency alloc] init];
-    appSync.name = @"AppSync Unified";
-    appSync.packageID = @"ai.akemi.appsyncunified";
-    appSync.descriptionText = @"يسمح بتثبيت تطبيقات IPA غير موقّعة";
-    appSync.repoURL = @"https://cydia.akemi.ai/";
-    [self.dependencies addObject:appSync];
-
-    Dependency *appInst = [[Dependency alloc] init];
-    appInst.name = @"appinst";
-    appInst.packageID = @"ai.akemi.appinst";
-    appInst.descriptionText = @"أداة سطر أوامر لتثبيت IPA";
-    appInst.repoURL = @"https://cydia.akemi.ai/";
-    [self.dependencies addObject:appInst];
-
     Dependency *unzip = [[Dependency alloc] init];
     unzip.name = @"unzip";
     unzip.packageID = @"unzip";
@@ -57,9 +43,6 @@
     RootlessManager *rl = [RootlessManager sharedManager];
     for (Dependency *dep in self.dependencies) {
         dep.isInstalled = [self isPackageInstalled:dep.packageID];
-        if (!dep.isInstalled && [dep.packageID isEqualToString:@"ai.akemi.appinst"]) {
-            dep.isInstalled = [rl fileExistsAtLogicalPath:@"/usr/bin/appinst"];
-        }
         if (!dep.isInstalled && [dep.packageID isEqualToString:@"unzip"]) {
             dep.isInstalled = [rl fileExistsAtLogicalPath:@"/usr/bin/unzip"];
         }

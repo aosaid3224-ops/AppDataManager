@@ -14,8 +14,6 @@
 - (void)scanCapabilities;
 - (NSArray *)allCapabilities;
 - (Capability *)capabilityForIdentifier:(NSString *)identifier;
-- (BOOL)isAppSyncAvailable;
-- (BOOL)isAppInstAvailable;
 - (BOOL)isUnzipAvailable;
 - (BOOL)isLDIDAvailable;
 - (BOOL)isUICacheAvailable;

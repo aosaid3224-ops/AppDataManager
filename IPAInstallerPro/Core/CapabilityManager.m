@@ -92,16 +92,6 @@
     return self.capabilityMap[identifier];
 }
 
-- (BOOL)isAppSyncAvailable {
-    // Standalone mode — AppSync is NOT required
-    return NO;
-}
-
-- (BOOL)isAppInstAvailable {
-    // Standalone mode — appinst is NOT required
-    return NO;
-}
-
 - (BOOL)isUnzipAvailable {
     return [self capabilityForIdentifier:@"unzip"].isAvailable;
 }
