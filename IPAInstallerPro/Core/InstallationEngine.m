@@ -9,6 +9,7 @@
 #import "DirectInstallationProvider.h"
 #import "OperationLog.h"
 #import "RuntimeDiagnostics.h"
+#import "InstallationTransactionCoordinator.h"
 
 @interface InstallationEngine ()
 @property (nonatomic, strong) NSMutableArray<id<InstallationProvider>> *providers;
@@ -85,6 +86,7 @@
     [self.installLock lock];
     if (!self.isInstalling) {
         self.activeTxnID = txnID;
+        [[InstallationTransactionCoordinator sharedCoordinator] beginTransaction:txnID];
         self.currentStage = InstallationStagePreparing;
     }
     [self.installLock unlock];
@@ -136,10 +138,16 @@
         }
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
+        InstallationTransactionCoordinator *transactionCoordinator = [InstallationTransactionCoordinator sharedCoordinator];
+        if (result && result.success && [transactionCoordinator stateForTransaction:transactionID] != InstallationTransactionStateSuccess) {
+            NSLog(@"[IPAInstallerPro] Provider reported success without FINAL_SUCCESS state; converting to failure");
+            [transactionCoordinator markFailedForTransaction:transactionID reason:@"provider success did not match transaction SUCCESS state"];
+            result = [InstallationResult failureResult:@"Transaction success state was not proven" provider:result.providerName ?: @"Provider" transaction:transactionID error:nil evidence:@{ @"transactionState": InstallationTransactionStateName([transactionCoordinator stateForTransaction:transactionID]) }];
+        } else if (!result || !result.success) {
+            [transactionCoordinator markFailedForTransaction:transactionID reason:result.message ?: @"provider failed"];
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (result && result.success) {
-                strongSelf.currentStage = InstallationStageRegistering;
-                if (progressBlock) progressBlock(strongSelf.currentStage, @"Registering app...", 0.8);
                 strongSelf.currentStage = InstallationStageCompleted;
                 if (progressBlock) progressBlock(strongSelf.currentStage, @"Installation complete!", 1.0);
                 NSLog(@"[IPAInstallerPro] Installation succeeded via %@", result.providerName ?: @"Provider");

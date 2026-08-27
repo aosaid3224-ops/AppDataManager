@@ -7,6 +7,7 @@
 #import "DirectInstallationProvider.h"
 #import "RootlessManager.h"
 #import "OperationLog.h"
+#import "InstallationTransactionCoordinator.h"
 #import "JailbreakEnvironment.h"
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
@@ -69,6 +70,9 @@ extern char **environ;
 - (BOOL)verifyLaunchReadinessAtPath:(NSString *)appPath bundleID:(NSString *)bundleID exeName:(NSString *)exeName opLog:(OperationLog *)opLog txnID:(NSString *)txnID reason:(NSString **)reason;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths;
 - (NSUInteger)cleanupStaleStageDirectoriesAtRoot:(NSString *)applicationsPath hasHelper:(BOOL)hasHelper opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)isBundleIDRegistered:(NSString *)bundleID;
+- (BOOL)verifyRegistrationForBundleID:(NSString *)bundleID path:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
+- (BOOL)rollbackRegistrationForBundleID:(NSString *)bundleID path:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID;
 @end
 
 @implementation DirectInstallationProvider
@@ -894,12 +898,16 @@ extern char **environ;
 
 - (void)installIPA:(NSString *)ipaPath transactionID:(NSString *)txnID operationLog:(OperationLog *)opLog completion:(void (^)(InstallationResult *))completion {
  NSFileManager *fm = [NSFileManager defaultManager];
+ if (!txnID.length) txnID = [opLog beginTransactionForIPA:ipaPath];
+ InstallationTransactionCoordinator *transaction = [InstallationTransactionCoordinator sharedCoordinator];
+ BOOL transactionStarted = [transaction beginTransaction:txnID];
+ if (!transactionStarted) {
+     if (completion) completion([InstallationResult failureResult:@"Installation transaction already exists" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+     return;
+ }
+ [transaction transitionTransaction:txnID toState:InstallationTransactionStateAnalyzing reason:@"IPA validation and structural analysis started"];
  BOOL hasH = [self hasRootHelper];
  NSString *bundleID = nil;
-
- if (!txnID || txnID.length == 0) {
- txnID = [opLog beginTransactionForIPA:ipaPath];
- }
   // Reset diagnostics counters for this installation
   self.diagnosticsLog = [NSMutableString string];
   self.diagFrameworksSigned = 0;
@@ -1058,6 +1066,7 @@ extern char **environ;
  }
 
 // PHASE 3.5: SMART SIGNING PLAN
+ [transaction transitionTransaction:txnID toState:InstallationTransactionStatePreparing reason:@"structural preparation and signing plan"];
  NSString *recPlan = [opLog beginPhase:OperationPhaseAppIdentify operation:@"smart-signing-plan" target:srcApp input:@"analyzing structure" transactionID:txnID];
   __block SigningPlan *signingPlan = nil;
  self.activeSigningPlan = nil;
@@ -1123,6 +1132,7 @@ extern char **environ;
  }
 
  // PHASE 4: FILE_COPY (with backup/rollback)
+ [transaction transitionTransaction:txnID toState:InstallationTransactionStateInstalling reason:@"verified source ready for promotion"];
  NSLog(@"[IPAInstallerPro] === PHASE 4: FILE_COPY ===");
  NSString *logicalDest = [@"/Applications" stringByAppendingPathComponent:appFolder];
  NSString *rec7 = [opLog beginPhase:OperationPhaseFileCopy operation:@"resolvePath" target:logicalDest input:logicalDest transactionID:txnID];
@@ -1302,6 +1312,7 @@ extern char **environ;
  }
 
  // PHASE 6: AUTHORITATIVE SMART SIGNING
+ [transaction transitionTransaction:txnID toState:InstallationTransactionStateSigning reason:@"installation promotion complete; signing installed targets"];
  NSLog(@"[IPAInstallerPro] === PHASE 6: SIGNING ===");
  NSString *rec11 = [opLog beginPhase:OperationPhaseSign operation:@"sign-execute" target:destApp input:@"authoritative per-target plan" transactionID:txnID];
  NSUInteger smartSignedCount = 0;
@@ -1405,50 +1416,88 @@ extern char **environ;
       return;
   }
 
-  NSString *launchReadinessReason = nil;
-  BOOL launchReady = [self verifyLaunchReadinessAtPath:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID reason:&launchReadinessReason];
-  if (!launchReady) {
-      NSLog(@"[IPAInstallerPro] Launch readiness gate failed — rollback: %@", launchReadinessReason ?: @"unknown reason");
-      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
-      [fm removeItemAtPath:tmp error:nil];
-      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
-      [opLog endTransaction:txnID finalResult:OperationResultFailed];
-      if (completion) completion([InstallationResult failureResult:launchReadinessReason ?: @"Launch readiness verification failed — rollback" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"launchReadiness": @"failed" }]);
-      return;
-  }
-
   NSString *dbgExit = [opLog beginPhase:OperationPhaseSign operation:@"[DEBUG] EXITING POST-SIGN VERIFICATION" target:@"" input:@"" transactionID:txnID];
   [opLog endPhase:dbgExit exitCode:0 rawOutput:@"[DEBUG] EXITING POST-SIGN VERIFICATION" rawError:@"" verification:@"debug" verified:YES duration:0];
 
+  // INSTALLATION VERIFICATION MUST PRECEDE ANY REGISTRATION.
+  [transaction transitionTransaction:txnID toState:InstallationTransactionStateVerifyingInstall reason:@"promotion, permissions, signatures and topology completed"];
+  NSLog(@"[IPAInstallerPro] === VERIFY INSTALLATION BEFORE REGISTRATION ===");
+  NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"verify installation before registration" target:destApp input:bundleID transactionID:txnID];
+  BOOL installVerified = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
+  [opLog endPhase:rec15 exitCode:installVerified ? 0 : 1 rawOutput:@"" rawError:installVerified ? @"" : @"Installation verification failed before registration"
+  verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@ registered_not_required=YES", bundleID, exeName] verified:installVerified duration:0];
+  if (!installVerified) {
+      [transaction beginRollbackForTransaction:txnID reason:@"installation verification failed before registration"];
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [transaction markFailedForTransaction:txnID reason:@"installation verification failed before registration"];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Installation verification failed before registration — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
 
- // PHASE 8: UICACHE
- NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE ===");
- NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
+  // REGISTRATION is a guarded transaction transition. A concurrent failure
+  // cannot pass this check because the coordinator serializes the state.
+  if (![transaction beginRegistrationForTransaction:txnID reason:@"installation verification passed"] ) {
+      [transaction markFailedForTransaction:txnID reason:@"registration rejected by transaction state"];
+      [fm removeItemAtPath:tmp error:nil];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Registration rejected: transaction was not in VERIFYING_INSTALL state" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
 
- NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+  // PHASE 8: UICACHE / REGISTRATION
+  NSLog(@"[IPAInstallerPro] === PHASE 8: UICACHE REGISTRATION ===");
+  NSString *rec14a = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p logical" target:logicalDest input:@"" transactionID:txnID];
+  BOOL logicalRegistrationOK = [self runRoot:self.uicachePath args:@[@"-p", logicalDest] opLog:opLog recordID:rec14a];
+  NSString *rec14b = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -p resolved" target:destApp input:@"" transactionID:txnID];
+  BOOL resolvedRegistrationOK = [self runRoot:self.uicachePath args:@[@"-p", destApp] opLog:opLog recordID:rec14b];
+  NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
+  BOOL allRegistrationOK = [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
+  BOOL registrationCommandsOK = logicalRegistrationOK && resolvedRegistrationOK && allRegistrationOK;
+  BOOL registrationVerified = registrationCommandsOK && [self verifyRegistrationForBundleID:bundleID path:destApp opLog:opLog txnID:txnID];
+  if (!registrationVerified || ![transaction markRegistrationVerifiedForTransaction:txnID reason:@"uicache completed and Bundle ID is registered"]) {
+      NSLog(@"[IPAInstallerPro] Registration verification failed — rolling back registration and bundle");
+      [transaction beginRollbackForTransaction:txnID reason:@"registration command or verification failed"];
+      [self rollbackRegistrationForBundleID:bundleID path:destApp opLog:opLog txnID:txnID];
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [transaction markFailedForTransaction:txnID reason:@"registration verification failed; rollback completed"];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Registration verification failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
 
- NSString *rec14c = [opLog beginPhase:OperationPhaseUICache operation:@"uicache -a" target:@"" input:@"" transactionID:txnID];
- [self runRoot:self.uicachePath args:@[@"-a"] opLog:opLog recordID:rec14c];
+  [transaction transitionTransaction:txnID toState:InstallationTransactionStateLaunching reason:@"registration verified"];
+  NSString *launchReadinessReason = nil;
+  BOOL launchReady = [self verifyLaunchReadinessAtPath:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID reason:&launchReadinessReason];
+  if (!launchReady) {
+      NSLog(@"[IPAInstallerPro] Launch readiness gate failed — rollback registration: %@", launchReadinessReason ?: @"unknown reason");
+      [transaction beginRollbackForTransaction:txnID reason:launchReadinessReason ?: @"launch validation failed"];
+      [self rollbackRegistrationForBundleID:bundleID path:destApp opLog:opLog txnID:txnID];
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [transaction markFailedForTransaction:txnID reason:launchReadinessReason ?: @"launch validation failed; rollback completed"];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:launchReadinessReason ?: @"Launch readiness verification failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"launchReadiness": @"failed", @"registrationRollback": @YES }]);
+      return;
+  }
 
- // PHASE 9: VERIFY
- NSLog(@"[IPAInstallerPro] === PHASE 9: VERIFY ===");
- NSString *rec15 = [opLog beginPhase:OperationPhaseVerify operation:@"final verify" target:destApp input:bundleID transactionID:txnID];
- BOOL finalOk = [self verifyInstallation:destApp bundleID:bundleID exeName:exeName opLog:opLog txnID:txnID];
- [opLog endPhase:rec15 exitCode:finalOk ? 0 : 1 rawOutput:@"" rawError:finalOk ? @"" : @"Final verification failed"
- verification:[NSString stringWithFormat:@"bundleID=%@ exe=%@", bundleID, exeName] verified:finalOk duration:0];
-
- if (!finalOk) {
- // ROLLBACK
- [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
- [fm removeItemAtPath:tmp error:nil];
-  // Emit diagnostics report even on failure
-  [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
- [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:@"Final verification failed, rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
- return;
- }
+   if (![transaction markSuccessForTransaction:txnID reason:@"registration verified and launch validation passed"]) {
+      NSLog(@"[IPAInstallerPro] Final success rejected by transaction coordinator — rollback");
+      [transaction beginRollbackForTransaction:txnID reason:@"success transition rejected"];
+      [self rollbackRegistrationForBundleID:bundleID path:destApp opLog:opLog txnID:txnID];
+      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
+      [fm removeItemAtPath:tmp error:nil];
+      [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+      [transaction markFailedForTransaction:txnID reason:@"success transition rejected; rollback completed"];
+      [opLog endTransaction:txnID finalResult:OperationResultFailed];
+      if (completion) completion([InstallationResult failureResult:@"Transaction success transition rejected — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
+      return;
+  }
 
  // SUCCESS — cleanup backup and temp
  [self cleanupBackup:backupPath opLog:opLog txnID:txnID];
@@ -2240,6 +2289,33 @@ extern char **environ;
  }
 
  return ok;
+}
+
+- (BOOL)isBundleIDRegistered:(NSString *)bundleID {
+    if (!bundleID.length) return NO;
+    Class LS = objc_getClass("LSApplicationWorkspace");
+    if (!LS) return NO;
+    id workspace = [LS performSelector:@selector(defaultWorkspace)];
+    if (!workspace || ![workspace respondsToSelector:@selector(applicationForIdentifier:)]) return NO;
+    id application = [workspace performSelector:@selector(applicationForIdentifier:) withObject:bundleID];
+    return application != nil;
+}
+
+- (BOOL)verifyRegistrationForBundleID:(NSString *)bundleID path:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    BOOL registered = [self isBundleIDRegistered:bundleID];
+    NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"verify registration" target:bundleID input:appPath ?: @"" transactionID:txnID];
+    [opLog endPhase:recordID exitCode:registered ? 0 : 1 rawOutput:@"" rawError:registered ? @"" : @"Bundle ID is not registered after uicache"
+    verification:[NSString stringWithFormat:@"registered=%@ path=%@", registered ? @"YES" : @"NO", appPath ?: @"-"] verified:registered duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"registered": @(registered) }];
+    return registered;
+}
+
+- (BOOL)rollbackRegistrationForBundleID:(NSString *)bundleID path:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSString *recordID = [opLog beginPhase:OperationPhaseCleanup operation:@"uicache -u registration rollback" target:appPath ?: @"" input:bundleID ?: @"" transactionID:txnID];
+    BOOL commandOK = [self runRoot:self.uicachePath args:@[@"-u", appPath ?: @""] opLog:opLog recordID:recordID];
+    BOOL unregistered = ![self isBundleIDRegistered:bundleID];
+    [opLog endPhase:recordID exitCode:(commandOK && unregistered) ? 0 : 1 rawOutput:@"" rawError:(commandOK && unregistered) ? @"" : @"Registration rollback could not prove unregistered state"
+    verification:[NSString stringWithFormat:@"command=%@ unregistered=%@ bundleID=%@ path=%@", commandOK ? @"SUCCESS" : @"FAILED", unregistered ? @"YES" : @"NO", bundleID ?: @"-", appPath ?: @"-"] verified:(commandOK && unregistered) duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"commandOK": @(commandOK), @"unregistered": @(unregistered) }];
+    return commandOK && unregistered;
 }
 
 - (void)uninstallAppWithBundleID:(NSString *)bundleID completion:(void (^)(BOOL, NSString *))completion {
