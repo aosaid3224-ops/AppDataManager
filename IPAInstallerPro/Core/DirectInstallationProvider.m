@@ -1773,16 +1773,27 @@ extern char **environ;
         if (!isMachO) continue;
         NSNumber *permissions = attributes[NSFilePosixPermissions];
         mode_t mode = permissions ? permissions.unsignedShortValue : 0;
-        if ((mode & S_IXUSR) != 0) continue;
-        BOOL ok = [self runRoot:self.chmodPath args:@[@"u+x", fullPath] opLog:opLog recordID:nil];
+        BOOL alreadyAccessible = ((mode & (S_IRUSR | S_IXUSR)) == (S_IRUSR | S_IXUSR)) &&
+            (access([fullPath UTF8String], R_OK | X_OK) == 0);
+        if (alreadyAccessible) continue;
+
+        // chmod uses additive symbolic bits: it preserves existing write bits but
+        // makes every Mach-O readable and executable by the principals that must
+        // load/launch it. Non-Mach-O resources are never touched here.
+        BOOL commandOK = [self runRoot:self.chmodPath args:@[@"a+rx", fullPath] opLog:opLog recordID:nil];
+        struct stat after = {0};
+        BOOL statAfter = (lstat([fullPath UTF8String], &after) == 0);
+        BOOL modeAfter = statAfter && ((after.st_mode & (S_IRUSR | S_IXUSR)) == (S_IRUSR | S_IXUSR));
+        BOOL accessAfter = (access([fullPath UTF8String], R_OK | X_OK) == 0);
+        BOOL ok = commandOK && statAfter && modeAfter && accessAfter;
         if (!ok) {
             allOK = NO;
-            NSLog(@"[IPAInstallerPro] Failed to set executable bit: %@", fullPath);
+            NSLog(@"[IPAInstallerPro] Failed to establish Mach-O executable access: %@ command=%@ stat=%@ mode=%o access=%@ errno=%d", fullPath, commandOK ? @"YES" : @"NO", statAfter ? @"YES" : @"NO", statAfter ? (after.st_mode & 0777) : 0, accessAfter ? @"YES" : @"NO", errno);
         } else {
             changed++;
         }
     }
-    NSLog(@"[IPAInstallerPro] Mach-O executable permission normalization: %lu files changed", (unsigned long)changed);
+    NSLog(@"[IPAInstallerPro] Mach-O executable permission normalization: %lu files changed (postcondition checked)", (unsigned long)changed);
     return allOK;
 }
 
