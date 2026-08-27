@@ -12,6 +12,20 @@ extern char **environ;
 @implementation IPAArchiveExtractionResult
 @end
 
+@interface IPAArchiveExtractionTask ()
+@property (nonatomic, assign) pid_t processID;
+@end
+
+@implementation IPAArchiveExtractionTask
+
+- (void)cancel {
+    self.cancellationRequested = YES;
+    pid_t pid = self.processID;
+    if (pid > 0) kill(pid, SIGTERM);
+}
+
+@end
+
 @interface IPAArchiveExtractor ()
 @end
 
@@ -57,7 +71,7 @@ extern char **environ;
     return nil;
 }
 
-- (int)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments captureOutput:(BOOL)captureOutput output:(NSString **)output error:(NSString **)error {
+- (int)runExecutable:(NSString *)path arguments:(NSArray<NSString *> *)arguments task:(IPAArchiveExtractionTask *)task captureOutput:(BOOL)captureOutput output:(NSString **)output error:(NSString **)error {
     if (path.length == 0) return 127;
     int pipefd[2] = {-1, -1};
     if (captureOutput && pipe(pipefd) != 0) return 127;
@@ -85,15 +99,23 @@ extern char **environ;
     argv[argvStrings.count] = NULL;
 
     pid_t pid = 0;
+    if (task.isCancellationRequested) {
+        posix_spawn_file_actions_destroy(&actions);
+        free(argv);
+        if (captureOutput) { close(pipefd[0]); close(pipefd[1]); }
+        return ECANCELED;
+    }
     int spawnStatus = posix_spawn(&pid, path.fileSystemRepresentation, &actions, NULL, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
     free(argv);
     if (captureOutput) close(pipefd[1]);
     if (spawnStatus != 0) {
+        task.processID = 0;
         if (captureOutput) close(pipefd[0]);
         return spawnStatus;
     }
 
+    task.processID = pid;
     NSMutableData *captured = [NSMutableData data];
     if (captureOutput) {
         uint8_t buffer[32768];
@@ -105,7 +127,13 @@ extern char **environ;
     }
 
     int waitStatus = 0;
-    if (waitpid(pid, &waitStatus, 0) < 0) return 127;
+    pid_t waited = 0;
+    do {
+        waited = waitpid(pid, &waitStatus, WNOHANG);
+        if (waited == 0) usleep(100000);
+    } while (waited == 0);
+    task.processID = 0;
+    if (waited < 0) return 127;
     if (output) *output = [[NSString alloc] initWithData:captured encoding:NSUTF8StringEncoding] ?: @"";
     if (error) *error = [[NSString alloc] initWithData:captured encoding:NSUTF8StringEncoding] ?: @"";
     return WIFEXITED(waitStatus) ? WEXITSTATUS(waitStatus) : 128;
@@ -148,9 +176,10 @@ extern char **environ;
     return YES;
 }
 
-- (void)extractIPAAtPath:(NSString *)ipaPath outputPath:(NSString *)outputPath progress:(IPAArchiveExtractionProgress)progress completion:(IPAArchiveExtractionCompletion)completion {
+- (IPAArchiveExtractionTask *)extractIPAAtPath:(NSString *)ipaPath outputPath:(NSString *)outputPath progress:(IPAArchiveExtractionProgress)progress completion:(IPAArchiveExtractionCompletion)completion {
     NSString *source = [ipaPath copy];
     NSString *requestedOutput = [outputPath copy];
+    IPAArchiveExtractionTask *task = [[IPAArchiveExtractionTask alloc] init];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         NSFileManager *fm = [NSFileManager defaultManager];
         void (^report)(double, NSString *) = ^(double value, NSString *status) {
@@ -161,10 +190,13 @@ extern char **environ;
             dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(result); });
         };
         void (^fail)(NSString *) = ^(NSString *message) {
-            finish([self resultForSource:source success:NO output:nil message:@"فشل فك الحزمة" error:message]);
+            IPAArchiveExtractionResult *failed = [self resultForSource:source success:NO output:nil message:(task.isCancellationRequested ? @"تم إلغاء فك الحزمة" : @"فشل فك الحزمة") error:message];
+            failed.cancelled = task.isCancellationRequested;
+            finish(failed);
         };
 
         report(0.02, @"التحقق من ملف IPA...");
+        if (task.isCancellationRequested) { fail(@"أُلغيت قبل البدء"); return; }
         if (source.length == 0 || ![source.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
             fail(@"يجب اختيار ملف بامتداد .ipa");
             return;
@@ -193,13 +225,13 @@ extern char **environ;
 
         report(0.08, @"التحقق من سلامة أرشيف ZIP...");
         NSString *testOutput = nil;
-        int testExit = [self runExecutable:unzip arguments:@[@"-tq", source] captureOutput:YES output:&testOutput error:nil];
+        int testExit = [self runExecutable:unzip arguments:@[@"-tq", source] task:task captureOutput:YES output:&testOutput error:nil];
         if (testExit != 0) {
             fail(testOutput.length > 0 ? testOutput : @"أرشيف IPA غير صالح أو تالف");
             return;
         }
         NSString *listingOutput = nil;
-        int listingExit = [self runExecutable:unzip arguments:@[@"-Z1", source] captureOutput:YES output:&listingOutput error:nil];
+        int listingExit = [self runExecutable:unzip arguments:@[@"-Z1", source] task:task captureOutput:YES output:&listingOutput error:nil];
         if (listingExit != 0 || listingOutput.length == 0) {
             fail(@"تعذر قراءة قائمة محتويات IPA للتحقق من المسارات");
             return;
@@ -220,7 +252,7 @@ extern char **environ;
         }
 
         report(0.15, @"استخراج كامل لمحتويات IPA...");
-        int extractExit = [self runExecutable:unzip arguments:@[@"-q", @"-o", source, @"-d", temporary] captureOutput:NO output:nil error:nil];
+        int extractExit = [self runExecutable:unzip arguments:@[@"-q", @"-o", source, @"-d", temporary] task:task captureOutput:NO output:nil error:nil];
         if (extractExit != 0) {
             [fm removeItemAtPath:temporary error:nil];
             fail(@"فشل unzip أثناء استخراج محتويات الحزمة");
@@ -259,6 +291,11 @@ extern char **environ;
             return;
         }
 
+        if (task.isCancellationRequested) {
+            [fm removeItemAtPath:requestedOutput error:nil];
+            fail(@"أُلغيت قبل إتمام النتيجة");
+            return;
+        }
         IPAArchiveExtractionResult *result = [self resultForSource:source success:YES output:requestedOutput message:@"تم فك حزمة IPA بالكامل" error:nil];
         result.extractedEntryCount = entries;
         result.extractedByteCount = bytes;
@@ -266,6 +303,7 @@ extern char **environ;
         [[Logger sharedLogger] info:[NSString stringWithFormat:@"IPA archive unpacked: %@ -> %@ entries=%lu bytes=%llu", source, requestedOutput, (unsigned long)entries, bytes]];
         finish(result);
     });
+    return task;
 }
 
 @end

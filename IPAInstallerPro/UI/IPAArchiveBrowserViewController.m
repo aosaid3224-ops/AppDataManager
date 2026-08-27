@@ -55,7 +55,50 @@
         return [a[@"name"] compare:b[@"name"] options:NSCaseInsensitiveSearch];
     }];
     self.items = items;
+    [self installApplicationSummaryHeaderIfNeeded];
     [self.tableView reloadData];
+}
+
+- (void)installApplicationSummaryHeaderIfNeeded {
+    NSString *payload = [self.rootPath stringByAppendingPathComponent:@"Payload"];
+    NSArray<NSString *> *payloadItems = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payload error:nil];
+    NSString *appPath = nil;
+    for (NSString *name in payloadItems) {
+        if (name.pathExtension.lowercaseString.length > 0 && [name.pathExtension.lowercaseString isEqualToString:@"app"]) {
+            appPath = [payload stringByAppendingPathComponent:name];
+            break;
+        }
+    }
+    if (!appPath) return;
+    NSString *plistPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+    if (![plist isKindOfClass:NSDictionary.class]) return;
+    NSString *bundleID = [plist[@"CFBundleIdentifier"] isKindOfClass:NSString.class] ? plist[@"CFBundleIdentifier"] : @"غير معروف";
+    NSString *version = [plist[@"CFBundleShortVersionString"] isKindOfClass:NSString.class] ? plist[@"CFBundleShortVersionString"] : @"غير معروف";
+    NSString *executable = [plist[@"CFBundleExecutable"] isKindOfClass:NSString.class] ? plist[@"CFBundleExecutable"] : @"غير معروف";
+    unsigned long long size = 0;
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:appPath];
+    NSString *relative;
+    while ((relative = [enumerator nextObject])) {
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:[appPath stringByAppendingPathComponent:relative] error:nil];
+        size += [attrs[NSFileSize] unsignedLongLongValue];
+    }
+    UILabel *header = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 92)];
+    header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    header.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.12 alpha:1.0];
+    header.textColor = UIColor.whiteColor;
+    header.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+    header.numberOfLines = 0;
+    header.textAlignment = NSTextAlignmentNatural;
+    header.text = [NSString stringWithFormat:@"  Bundle ID: %@\n  Version: %@\n  Executable: %@\n  App Size: %@", bundleID, version, executable, [self formattedSize:size]];
+    self.tableView.tableHeaderView = header;
+}
+
+- (NSString *)formattedSize:(unsigned long long)bytes {
+    if (bytes < 1024) return [NSString stringWithFormat:@"%llu B", bytes];
+    if (bytes < 1024ULL * 1024ULL) return [NSString stringWithFormat:@"%.1f KB", bytes / 1024.0];
+    if (bytes < 1024ULL * 1024ULL * 1024ULL) return [NSString stringWithFormat:@"%.1f MB", bytes / (1024.0 * 1024.0)];
+    return [NSString stringWithFormat:@"%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0)];
 }
 
 - (void)doneTapped:(id)sender {

@@ -3,10 +3,13 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "IPAArchiveBrowserViewController.h"
 
-@interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate>
+@interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel *emptyLabel;
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *items;
+@property (nonatomic, strong) IPAArchiveExtractionTask *activeTask;
+@property (nonatomic, strong) UISearchController *searchController;
+@property (nonatomic, assign) BOOL sortByDate;
 @end
 
 @implementation IPAUnpackViewController
@@ -30,8 +33,16 @@
 }
 
 - (void)setupNavigation {
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addIPATapped:)];
-    self.navigationItem.rightBarButtonItem.tintColor = UIColor.whiteColor;
+    UIBarButtonItem *add = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addIPATapped:)];
+    UIBarButtonItem *sort = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.arrow.down"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleSort:)];
+    self.navigationItem.rightBarButtonItems = @[add, sort];
+    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems) item.tintColor = UIColor.whiteColor;
+    self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+    self.searchController.searchResultsUpdater = self;
+    self.searchController.obscuresBackgroundDuringPresentation = NO;
+    self.searchController.searchBar.placeholder = @"بحث في حزم IPA...";
+    self.navigationItem.searchController = self.searchController;
+    self.navigationItem.hidesSearchBarWhenScrolling = NO;
 }
 
 - (void)setupTableView {
@@ -67,9 +78,7 @@
         [ipaTypes addObject:type];
     }
     if (ipaTypes.count == 0) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر فتح الملفات" message:@"تعذر تسجيل نوع IPA على هذا النظام." preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+        [self showMessage:@"تعذر تسجيل نوع IPA على هذا النظام."];
         return;
     }
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:ipaTypes asCopy:NO];
@@ -80,45 +89,94 @@
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSUInteger added = 0;
     for (NSURL *url in urls) {
-        // The picker advertises only IPA, but keep a second programmatic guard
-        // because external document providers may return a broader URL type.
         if (!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"ipa"]) continue;
+        BOOL duplicate = NO;
+        for (NSDictionary *existing in self.items) {
+            if ([existing[@"url"] isEqual:url]) { duplicate = YES; break; }
+        }
+        if (duplicate) continue;
         BOOL accessed = [url startAccessingSecurityScopedResource];
         NSMutableDictionary *item = [@{
             @"url": url,
             @"name": url.lastPathComponent ?: @"IPA",
-            @"status": @"جاهز للاستخراج",
+            @"displayName": [url.lastPathComponent stringByDeletingPathExtension] ?: @"IPA",
+            @"status": @"جاهز",
             @"progress": @0.0,
             @"extracting": @NO,
+            @"securityScopeActive": @(accessed),
         } mutableCopy];
-        item[@"securityScopeActive"] = @(accessed);
         [self.items addObject:item];
+        added++;
     }
     self.emptyLabel.hidden = self.items.count > 0;
     [self.tableView reloadData];
+    if (added == 0 && urls.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
 }
 
+- (NSArray<NSDictionary *> *)displayRows {
+    NSString *query = self.searchController.searchBar.text.lowercaseString ?: @"";
+    NSArray *visibleItems = [self.items filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) {
+        if (query.length == 0) return YES;
+        NSString *name = [item[@"displayName"] ?: item[@"name"] ?: @"" lowercaseString];
+        return [name containsString:query];
+    }]];
+    visibleItems = [visibleItems sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        if (self.sortByDate) {
+            NSDate *aDate = [[[NSFileManager defaultManager] attributesOfItemAtPath:((NSURL *)a[@"url"]).path error:nil] objectForKey:NSFileModificationDate];
+            NSDate *bDate = [[[NSFileManager defaultManager] attributesOfItemAtPath:((NSURL *)b[@"url"]).path error:nil] objectForKey:NSFileModificationDate];
+            return [bDate compare:aDate];
+        }
+        return [[a[@"displayName"] ?: a[@"name"] ?: @"" description] localizedCaseInsensitiveCompare:[b[@"displayName"] ?: b[@"name"] ?: @"" description]];
+    }];
+    NSMutableArray *rows = [NSMutableArray array];
+    for (NSMutableDictionary *item in visibleItems) {
+        [rows addObject:@{ @"kind": @"source", @"item": item }];
+        NSString *output = item[@"outputPath"];
+        if (output.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:output]) {
+            [rows addObject:@{ @"kind": @"output", @"item": item }];
+        }
+    }
+    return rows;
+}
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
+    [self.tableView reloadData];
+}
+
+- (void)toggleSort:(id)sender {
+    self.sortByDate = !self.sortByDate;
+    [self.tableView reloadData];
+}
+
+- (NSDictionary *)rowDescriptorAtIndexPath:(NSIndexPath *)indexPath {
+    NSArray *rows = [self displayRows];
+    return indexPath.row < rows.count ? rows[indexPath.row] : nil;
+}
+
 - (void)confirmExtractionForItem:(NSMutableDictionary *)item indexPath:(NSIndexPath *)indexPath {
-    if ([item[@"extracting"] boolValue]) return;
+    if ([item[@"extracting"] boolValue] || self.activeTask) return;
     NSURL *url = item[@"url"];
-    NSString *name = item[@"name"] ?: @"IPA";
-    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"فك حزمة IPA"
-        message:[NSString stringWithFormat:@"هل تريد استخراج محتويات ملف IPA؟\n\n%@\n\nسيتم إنشاء مجلد جديد بجانب الملف الأصلي دون تعديل أو حذف ملف IPA.", name]
-        preferredStyle:UIAlertControllerStyleAlert];
+    NSString *name = item[@"displayName"] ?: item[@"name"] ?: @"IPA";
+    BOOL hasPreviousOutput = [item[@"outputPath"] length] > 0;
+    NSString *message = hasPreviousOutput
+        ? [NSString stringWithFormat:@"سيتم إنشاء ناتج جديد بجانب الملف الأصلي، مع إبقاء الناتج السابق دون تغيير.\n\n%@", name]
+        : [NSString stringWithFormat:@"سيتم إنشاء مجلد جديد بجانب الملف الأصلي دون تعديل أو حذف ملف IPA.\n\n%@", name];
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:hasPreviousOutput ? @"إعادة استخراج IPA" : @"فك حزمة IPA" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirm addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:@"نعم، استخراج" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         NSString *outputPath = [[IPAArchiveExtractor sharedExtractor] uniqueOutputDirectoryForIPAPath:url.path];
         item[@"extracting"] = @YES;
         item[@"status"] = @"جارٍ التحقق والاستخراج...";
         item[@"progress"] = @0.0;
-            [self reloadItem:item];
-
+        [self reloadItem:item];
+        self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"إلغاء" style:UIBarButtonItemStylePlain target:self action:@selector(cancelActiveExtraction:)];
         __weak typeof(self) weakSelf = self;
-        [[IPAArchiveExtractor sharedExtractor] extractIPAAtPath:url.path outputPath:outputPath progress:^(double progress, NSString *status) {
+        self.activeTask = [[IPAArchiveExtractor sharedExtractor] extractIPAAtPath:url.path outputPath:outputPath progress:^(double progress, NSString *status) {
             __strong typeof(weakSelf) strongSelf = weakSelf;
             if (!strongSelf) return;
             item[@"progress"] = @(progress);
@@ -128,19 +186,21 @@
             __strong typeof(weakSelf) strongSelf = weakSelf;
             if (!strongSelf) return;
             item[@"extracting"] = @NO;
+            strongSelf.activeTask = nil;
+            strongSelf.navigationItem.leftBarButtonItem = nil;
             item[@"progress"] = result.success ? @1.0 : @0.0;
-            item[@"status"] = result.success ? @"تم الاستخراج بالكامل" : (result.errorMessage.length ? result.errorMessage : @"فشل فك الحزمة");
+            item[@"status"] = result.success ? @"نجح الاستخراج" : (result.cancelled ? @"أُلغي" : (result.errorMessage.length ? result.errorMessage : @"فشل فك الحزمة"));
             if (result.success) item[@"outputPath"] = result.outputPath ?: @"";
-            [strongSelf.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+            [strongSelf reloadItem:item];
             if (result.success) {
-                UIAlertController *done = [UIAlertController alertControllerWithTitle:@"تم فك الحزمة"
-                    message:[NSString stringWithFormat:@"تم استخراج كامل المحتوى إلى:\n%@\n\nعدد العناصر: %lu", result.outputPath, (unsigned long)result.extractedEntryCount]
-                    preferredStyle:UIAlertControllerStyleAlert];
+                UIAlertController *done = [UIAlertController alertControllerWithTitle:@"تم فك الحزمة" message:[NSString stringWithFormat:@"تم استخراج كامل المحتوى إلى:\n%@\n\nعدد العناصر: %lu", result.outputPath, (unsigned long)result.extractedEntryCount] preferredStyle:UIAlertControllerStyleAlert];
                 [done addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleCancel handler:nil]];
-                [done addAction:[UIAlertAction actionWithTitle:@"فتح المجلد" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                    [strongSelf openOutputPath:result.outputPath];
-                }]];
+                [done addAction:[UIAlertAction actionWithTitle:@"فتح المجلد" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { [strongSelf openOutputPath:result.outputPath]; }]];
                 [strongSelf presentViewController:done animated:YES completion:nil];
+            } else if (result.cancelled) {
+                UIAlertController *cancelled = [UIAlertController alertControllerWithTitle:@"تم إلغاء الاستخراج" message:@"تم تنظيف الحالة المؤقتة ولم يتم اعتماد مجلد ناقص كناتج." preferredStyle:UIAlertControllerStyleAlert];
+                [cancelled addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+                [strongSelf presentViewController:cancelled animated:YES completion:nil];
             } else {
                 UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل فك الحزمة" message:result.errorMessage ?: @"تعذر استخراج الملف" preferredStyle:UIAlertControllerStyleAlert];
                 [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
@@ -151,11 +211,17 @@
     [self presentViewController:confirm animated:YES completion:nil];
 }
 
+- (void)cancelActiveExtraction:(id)sender {
+    if (!self.activeTask) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"إلغاء الاستخراج" message:@"هل تريد إلغاء العملية؟ سيتم تنظيف الملفات المؤقتة ولن يتغير ملف IPA الأصلي." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"متابعة" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء العملية" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { [self.activeTask cancel]; }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)reloadItem:(NSMutableDictionary *)item {
-    NSUInteger index = [self.items indexOfObjectIdenticalTo:item];
-    if (index == NSNotFound || index >= self.items.count) return;
-    NSIndexPath *path = [NSIndexPath indexPathForRow:index inSection:0];
-    [self.tableView reloadRowsAtIndexPaths:@[path] withRowAnimation:UITableViewRowAnimationNone];
+    self.emptyLabel.hidden = self.items.count > 0;
+    [self.tableView reloadData];
 }
 
 - (void)openOutputPath:(NSString *)path {
@@ -166,35 +232,196 @@
     [self presentViewController:navigation animated:YES completion:nil];
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.items.count; }
+- (void)sharePath:(NSString *)path {
+    if (path.length == 0) return;
+    UIActivityViewController *activity = [[UIActivityViewController alloc] initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+    activity.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItems.firstObject;
+    [self presentViewController:activity animated:YES completion:nil];
+}
+
+- (void)savePathToFiles:(NSString *)path {
+    if (path.length == 0) return;
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[[NSURL fileURLWithPath:path]] asCopy:YES];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)showInfoForPath:(NSString *)path title:(NSString *)title {
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    BOOL isDirectory = [attrs[NSFileType] isEqualToString:NSFileTypeDirectory];
+    NSString *message = [NSString stringWithFormat:@"المسار:\n%@\n\nالنوع: %@\nالحجم: %@\nالتاريخ: %@", path, isDirectory ? @"مجلد" : @"ملف", [self formattedSize:[attrs[NSFileSize] unsignedLongLongValue]], [self formattedDate:attrs[NSFileModificationDate]]];
+    [self showAlertWithTitle:title ?: @"معلومات الملف" message:message];
+}
+
+- (void)renameDisplayNameForItem:(NSMutableDictionary *)item {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"إعادة تسمية العرض" message:@"سيتم تغيير الاسم الظاهر داخل Spider فقط، ولن يتغير اسم الملف الحقيقي." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.text = item[@"displayName"] ?: item[@"name"]; field.clearButtonMode = UITextFieldViewModeWhileEditing; }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حفظ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { NSString *value = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; if (value.length > 0) { item[@"displayName"] = value; [self reloadItem:item]; } }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)renameOutputForItem:(NSMutableDictionary *)item {
+    NSString *oldPath = item[@"outputPath"];
+    if (oldPath.length == 0) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"إعادة تسمية الناتج" message:@"سيتم تغيير اسم مجلد الاستخراج الحقيقي فقط، ولن يتغير ملف IPA الأصلي." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.text = oldPath.lastPathComponent;
+        field.clearButtonMode = UITextFieldViewModeWhileEditing;
+        field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حفظ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *name = [alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (name.length == 0 || [name containsString:@"/"] || [name containsString:@"\\"] || [name isEqualToString:@"."] || [name isEqualToString:@".."] || [name containsString:@":"]) {
+            [self showMessage:@"اسم المجلد غير صالح."];
+            return;
+        }
+        NSString *newPath = [[oldPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:name];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:newPath]) {
+            [self showMessage:@"يوجد مجلد بهذا الاسم؛ اختر اسمًا آخر."];
+            return;
+        }
+        NSError *error = nil;
+        if (![[NSFileManager defaultManager] moveItemAtPath:oldPath toPath:newPath error:&error]) {
+            [self showMessage:error.localizedDescription ?: @"تعذر إعادة تسمية الناتج."];
+            return;
+        }
+        item[@"outputPath"] = newPath;
+        [self reloadItem:item];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)removeSourceFromList:(NSMutableDictionary *)item {
+    if ([item[@"securityScopeActive"] boolValue]) [item[@"url"] stopAccessingSecurityScopedResource];
+    [self.items removeObjectIdenticalTo:item];
+    self.emptyLabel.hidden = self.items.count > 0;
+    [self.tableView reloadData];
+}
+
+- (void)deleteOutputForItem:(NSMutableDictionary *)item {
+    NSString *path = item[@"outputPath"];
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"حذف الناتج" message:@"سيُحذف مجلد الاستخراج فقط، ولن يُحذف ملف IPA الأصلي ولن يُزال المصدر من القائمة." preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"حذف الناتج" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { NSError *error = nil; if ([[NSFileManager defaultManager] fileExistsAtPath:path] && ![[NSFileManager defaultManager] removeItemAtPath:path error:&error]) { [self showMessage:error.localizedDescription ?: @"تعذر حذف الناتج"]; return; } [item removeObjectForKey:@"outputPath"]; item[@"status"] = @"جاهز لإعادة الاستخراج"; [self reloadItem:item]; }]];
+    [self presentViewController:confirm animated:YES completion:nil];
+}
+
+- (NSString *)formattedSize:(unsigned long long)bytes {
+    if (bytes < 1024) return [NSString stringWithFormat:@"%llu B", bytes];
+    if (bytes < 1024 * 1024) return [NSString stringWithFormat:@"%.1f KB", bytes / 1024.0];
+    if (bytes < 1024ULL * 1024ULL * 1024ULL) return [NSString stringWithFormat:@"%.1f MB", bytes / (1024.0 * 1024.0)];
+    return [NSString stringWithFormat:@"%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0)];
+}
+
+- (NSString *)formattedDate:(NSDate *)date {
+    if (!date) return @"غير معروف";
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateStyle = NSDateFormatterShortStyle;
+    formatter.timeStyle = NSDateFormatterShortStyle;
+    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"ar"];
+    return [formatter stringFromDate:date];
+}
+
+- (void)showMessage:(NSString *)message { [self showAlertWithTitle:@"فك حزمة IPA" message:message]; }
+
+- (void)showAlertWithTitle:(NSString *)title message:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (UIContextMenuConfiguration *)tableView:(UITableView *)tableView contextMenuConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath point:(CGPoint)point {
+    NSDictionary *descriptor = [self rowDescriptorAtIndexPath:indexPath];
+    if (!descriptor) return nil;
+    NSString *kind = descriptor[@"kind"];
+    NSMutableDictionary *item = descriptor[@"item"];
+    BOOL isOutput = [kind isEqualToString:@"output"];
+    __weak typeof(self) weakSelf = self;
+    return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:^UIMenu *(NSArray<UIMenuElement *> *suggestedActions) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) return nil;
+        NSMutableArray<UIMenuElement *> *actions = [NSMutableArray array];
+        if (isOutput) {
+            [actions addObject:[UIAction actionWithTitle:@"فتح" image:[UIImage systemImageNamed:@"folder"] identifier:nil handler:^(__kindof UIAction *action) { [self openOutputPath:item[@"outputPath"]]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"حفظ في الملفات" image:[UIImage systemImageNamed:@"square.and.arrow.down"] identifier:nil handler:^(__kindof UIAction *action) { [self savePathToFiles:item[@"outputPath"]]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"مشاركة" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(__kindof UIAction *action) { [self sharePath:item[@"outputPath"]]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"إعادة تسمية" image:[UIImage systemImageNamed:@"pencil"] identifier:nil handler:^(__kindof UIAction *action) { [self renameOutputForItem:item]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"نسخ المسار" image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(__kindof UIAction *action) { [UIPasteboard generalPasteboard].string = item[@"outputPath"]; [self showMessage:@"تم نسخ المسار."]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"معلومات الملف" image:[UIImage systemImageNamed:@"info.circle"] identifier:nil handler:^(__kindof UIAction *action) { [self showInfoForPath:item[@"outputPath"] title:@"معلومات الناتج"]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"حذف الناتج" image:[UIImage systemImageNamed:@"trash"] identifier:nil handler:^(__kindof UIAction *action) { [self deleteOutputForItem:item]; }]];
+        } else {
+            NSString *extractTitle = [item[@"outputPath"] length] > 0 ? @"إعادة استخراج" : @"استخراج";
+            [actions addObject:[UIAction actionWithTitle:extractTitle image:[UIImage systemImageNamed:@"archivebox"] identifier:nil handler:^(__kindof UIAction *action) { [self confirmExtractionForItem:item indexPath:indexPath]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"مشاركة" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(__kindof UIAction *action) { [self sharePath:((NSURL *)item[@"url"]).path]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"فتح في الملفات" image:[UIImage systemImageNamed:@"folder"] identifier:nil handler:^(__kindof UIAction *action) { [self sharePath:((NSURL *)item[@"url"]).path]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"إعادة تسمية العرض" image:[UIImage systemImageNamed:@"pencil"] identifier:nil handler:^(__kindof UIAction *action) { [self renameDisplayNameForItem:item]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"معلومات الملف" image:[UIImage systemImageNamed:@"info.circle"] identifier:nil handler:^(__kindof UIAction *action) { [self showInfoForPath:((NSURL *)item[@"url"]).path title:@"معلومات IPA"]; }]];
+            [actions addObject:[UIAction actionWithTitle:@"إزالة من القائمة" image:[UIImage systemImageNamed:@"minus.circle"] identifier:nil handler:^(__kindof UIAction *action) { [self removeSourceFromList:item]; }]];
+        }
+        return [UIMenu menuWithTitle:@"إجراءات" children:actions];
+    }];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self displayRows].count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"IPAUnpackCell" forIndexPath:indexPath];
-    NSDictionary *item = self.items[indexPath.row];
-    BOOL extracting = [item[@"extracting"] boolValue];
-    BOOL success = item[@"outputPath"] != nil;
-    cell.textLabel.text = item[@"name"];
+    NSDictionary *descriptor = [self rowDescriptorAtIndexPath:indexPath];
+    NSString *kind = descriptor[@"kind"];
+    NSMutableDictionary *item = descriptor[@"item"];
+    BOOL output = [kind isEqualToString:@"output"];
+    cell.indentationLevel = output ? 1 : 0;
+    cell.textLabel.text = output ? [NSString stringWithFormat:@"↳ %@ — Extracted", item[@"displayName"] ?: item[@"name"]] : (item[@"displayName"] ?: item[@"name"]);
     cell.textLabel.textColor = UIColor.whiteColor;
-    cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    double progress = [item[@"progress"] doubleValue];
-    cell.detailTextLabel.text = extracting ? [NSString stringWithFormat:@"%@ %.0f%%", item[@"status"] ?: @"جارٍ العمل...", progress * 100.0] : item[@"status"];
-    cell.detailTextLabel.textColor = success ? [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0] : (extracting ? [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] : [UIColor colorWithWhite:0.55 alpha:1.0]);
+    cell.textLabel.font = [UIFont systemFontOfSize:15 weight:output ? UIFontWeightMedium : UIFontWeightSemibold];
+    if (output) {
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:item[@"outputPath"] error:nil];
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@", [self formattedSize:[attrs[NSFileSize] unsignedLongLongValue]], [self formattedDate:attrs[NSFileModificationDate]]];
+        cell.detailTextLabel.textColor = [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0];
+        cell.imageView.image = [[UIImage systemImageNamed:@"folder.fill"] imageWithTintColor:[UIColor colorWithRed:0.4 green:0.55 blue:0.95 alpha:1.0]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    } else {
+        BOOL extracting = [item[@"extracting"] boolValue];
+        double progress = [item[@"progress"] doubleValue];
+        NSString *status = item[@"status"] ?: @"جاهز";
+        cell.detailTextLabel.text = extracting ? [NSString stringWithFormat:@"%@ %.0f%%", status, progress * 100.0] : [NSString stringWithFormat:@"%@ • %@", status, item[@"name"] ?: @""];
+        cell.detailTextLabel.textColor = extracting ? [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] : [UIColor colorWithWhite:0.55 alpha:1.0];
+        cell.imageView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithRed:0.35 green:0.75 blue:0.55 alpha:1.0]];
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.selectionStyle = extracting ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
+    }
     cell.detailTextLabel.numberOfLines = 2;
-    cell.imageView.image = [[UIImage systemImageNamed:success ? @"folder.fill" : @"doc.zipper"] imageWithTintColor:success ? [UIColor colorWithRed:0.4 green:0.55 blue:0.95 alpha:1.0] : [UIColor colorWithRed:0.35 green:0.75 blue:0.55 alpha:1.0]];
-    cell.accessoryType = success ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
-    cell.selectionStyle = extracting ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    NSMutableDictionary *item = self.items[indexPath.row];
-    if ([item[@"extracting"] boolValue]) return;
-    if (item[@"outputPath"] && [item[@"outputPath"] length] > 0) {
+    NSDictionary *descriptor = [self rowDescriptorAtIndexPath:indexPath];
+    if (!descriptor) return;
+    NSMutableDictionary *item = descriptor[@"item"];
+    if ([descriptor[@"kind"] isEqualToString:@"output"]) {
         [self openOutputPath:item[@"outputPath"]];
-    } else {
+    } else if (![item[@"extracting"] boolValue] && !self.activeTask) {
         [self confirmExtractionForItem:item indexPath:indexPath];
     }
+}
+
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath { return YES; }
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
+    NSDictionary *descriptor = [self rowDescriptorAtIndexPath:indexPath];
+    if (!descriptor) return nil;
+    NSMutableDictionary *item = descriptor[@"item"];
+    BOOL output = [descriptor[@"kind"] isEqualToString:@"output"];
+    NSString *title = output ? @"حذف الناتج" : @"إزالة من القائمة";
+    UIContextualAction *action = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:title handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
+        if (output) [self deleteOutputForItem:item]; else [self removeSourceFromList:item];
+        completionHandler(YES);
+    }];
+    return [UISwipeActionsConfiguration configurationWithActions:@[action]];
 }
 
 @end
