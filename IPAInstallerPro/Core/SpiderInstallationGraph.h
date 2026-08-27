@@ -22,6 +22,10 @@ typedef NS_ENUM(NSInteger, SpiderBundleRole) {
 @property (nonatomic, assign) BOOL machOValid;
 @property (nonatomic, assign) BOOL arm64Compatible;
 @property (nonatomic, assign) BOOL hasCodeSignature;
+@property (nonatomic, assign) BOOL hasEncryptedSlice;
+@property (nonatomic, assign) uint32_t encryptedSliceCount;
+@property (nonatomic, assign) BOOL hasEncryptedArm64Slice;
+@property (nonatomic, assign) uint32_t encryptedArm64SliceCount;
 @property (nonatomic, strong) NSArray<NSString *> *fatalFindings;
 @property (nonatomic, strong) NSArray<NSString *> *warnings;
 - (NSDictionary *)evidence;

@@ -12,6 +12,10 @@
         @"machOValid": @(self.machOValid),
         @"arm64Compatible": @(self.arm64Compatible),
         @"hasCodeSignature": @(self.hasCodeSignature),
+        @"hasEncryptedSlice": @(self.hasEncryptedSlice),
+        @"encryptedSliceCount": @(self.encryptedSliceCount),
+        @"hasEncryptedArm64Slice": @(self.hasEncryptedArm64Slice),
+        @"encryptedArm64SliceCount": @(self.encryptedArm64SliceCount),
         @"fatalFindings": self.fatalFindings ?: @[],
         @"warnings": self.warnings ?: @[]
     };
@@ -98,6 +102,10 @@
         node.executableExists = node.executableExists && node.executablePath.length > 0;
         node.machOValid = (match != nil && match.parseStatus != IPAStructuralParseFailed);
         node.hasCodeSignature = (match != nil && match.hasCodeSignature);
+        node.hasEncryptedSlice = (match != nil && match.hasEncryptedSlice);
+        node.encryptedSliceCount = match ? match.encryptedSliceCount : 0;
+        node.hasEncryptedArm64Slice = (match != nil && match.hasEncryptedArm64Slice);
+        node.encryptedArm64SliceCount = match ? match.encryptedArm64SliceCount : 0;
         node.arm64Compatible = NO;
         for (IPAStructuralExecutableSlice *slice in match.slices) {
             NSString *arch = slice.architectureName.lowercaseString ?: @"";
@@ -105,6 +113,11 @@
                 node.arm64Compatible = YES;
                 break;
             }
+        }
+        if (node.hasEncryptedArm64Slice && match != nil) {
+            [nodeFatal addObject:[NSString stringWithFormat:@"arm64 Mach-O slice is encrypted (cryptid!=0, slices=%u); signing cannot decrypt this code", node.encryptedArm64SliceCount]];
+        } else if (node.hasEncryptedSlice && match != nil) {
+            [nodeWarnings addObject:[NSString stringWithFormat:@"non-arm64 Mach-O slice(s) are encrypted (cryptid!=0, slices=%u); target arm64 slice remains unencrypted", node.encryptedSliceCount]];
         }
         if (node.launchCritical || node.role == SpiderBundleRoleAppExtension || node.role == SpiderBundleRoleXPCService) {
             if (!node.executableExists) [nodeFatal addObject:@"required executable is missing"];
@@ -150,7 +163,7 @@
 - (NSString *)summary {
     NSMutableString *text = [NSMutableString stringWithFormat:@"Spider graph: nodes=%lu coherent=%@\n", (unsigned long)self.nodes.count, self.coherent ? @"YES" : @"NO"];
     for (SpiderBundleNode *node in self.nodes) {
-        [text appendFormat:@"[%@] %@ id=%@ exe=%@ machO=%@ arm64=%@ signed=%@\n", node.roleName, node.path.lastPathComponent ?: @"", node.bundleIdentifier ?: @"-", node.executablePath.lastPathComponent ?: @"-", node.machOValid ? @"YES" : @"NO", node.arm64Compatible ? @"YES" : @"NO", node.hasCodeSignature ? @"YES" : @"NO"];
+        [text appendFormat:@"[%@] %@ id=%@ exe=%@ machO=%@ arm64=%@ signed=%@ encrypted=%@\n", node.roleName, node.path.lastPathComponent ?: @"", node.bundleIdentifier ?: @"-", node.executablePath.lastPathComponent ?: @"-", node.machOValid ? @"YES" : @"NO", node.arm64Compatible ? @"YES" : @"NO", node.hasCodeSignature ? @"YES" : @"NO", node.hasEncryptedArm64Slice ? @"YES" : (node.hasEncryptedSlice ? @"NON-ARM64" : @"NO")];
     }
     if (self.fatalFindings.count) [text appendFormat:@"Fatal findings: %@\n", [self.fatalFindings componentsJoinedByString:@" | "]];
     if (self.warnings.count) [text appendFormat:@"Warnings: %@\n", [self.warnings componentsJoinedByString:@" | "]];

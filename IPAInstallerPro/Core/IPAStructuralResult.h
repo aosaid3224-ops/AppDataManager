@@ -85,6 +85,10 @@ typedef NS_ENUM(NSInteger, IPAStructuralParseStatus) {
 @property (nonatomic, assign) uint32_t platform;
 @property (nonatomic, strong) NSString *platformName;
 @property (nonatomic, assign) BOOL hasCodeSignature;
+@property (nonatomic, assign) BOOL hasEncryptedSlice;
+@property (nonatomic, assign) uint32_t encryptedSliceCount;
+@property (nonatomic, assign) BOOL hasEncryptedArm64Slice;
+@property (nonatomic, assign) uint32_t encryptedArm64SliceCount;
 @property (nonatomic, assign) IPAStructuralParseStatus parseStatus;
 @property (nonatomic, strong) NSString *parseError;
 - (NSDictionary *)dictionaryRepresentation;

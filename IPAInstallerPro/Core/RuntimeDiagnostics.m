@@ -58,6 +58,7 @@
 
 // ─── RuntimeDiagnostics Implementation ───
 @interface RuntimeDiagnostics ()
+- (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName afterDate:(NSDate *)afterDate;
 @end
 
 @implementation RuntimeDiagnostics
@@ -197,9 +198,15 @@
         NSString *terminationReason = [self determineTerminationReason:result.pid
                                                                bundleID:bundleID
                                                               processName:proc.name
-                                                               exitStatus:exitStatus
-                                                                signalNum:signalNum];
+                                                              exitStatus:exitStatus
+                                                               signalNum:signalNum];
         result.terminationReason = terminationReason;
+        // A launched app is not our child, so waitpid may return no signal and
+        // leave exitStatus at its initial value. A fresh crash report is stronger
+        // evidence than that missing wait status and must drive classification.
+        NSString *crashEvidencePath = [self findCrashReportForBundleID:bundleID processName:proc.name afterDate:result.launchRequestedAt];
+        BOOL crashEvidenceFound = (crashEvidencePath.length > 0);
+        if (crashEvidenceFound) result.crashReportPath = crashEvidencePath;
         // ─── STATE CLASSIFICATION ───
         // RUNNING: stayed alive for full window
         // EXITED_NORMAL: exited with status 0 (no crash signal)
@@ -227,6 +234,11 @@
         } else if (signalNum != 0) {
             state = @"CRASHED";
             terminationType = [NSString stringWithFormat:@"Crashed by %@ (%d)", [self signalName:signalNum], signalNum];
+            crashDetected = YES;
+            exitCodeForLog = 2;
+        } else if (crashEvidenceFound) {
+            state = @"CRASHED";
+            terminationType = [NSString stringWithFormat:@"Crash report found after process disappearance: %@", crashEvidencePath.lastPathComponent ?: @"unknown report"];
             crashDetected = YES;
             exitCodeForLog = 2;
         } else if (exitStatus == 0) {
@@ -269,7 +281,7 @@
         NSMutableString *diagnosticOutput = [NSMutableString string];
 
         // 4a. Crash Reporter (.ips files)
-        NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name];
+        NSString *crashPath = [self findCrashReportForBundleID:bundleID processName:proc.name afterDate:result.launchRequestedAt];
         if (crashPath) {
             result.crashReportPath = crashPath;
             NSString *crashContent = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
@@ -562,6 +574,10 @@
 #pragma mark - Crash Report Search
 
 - (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName {
+    return [self findCrashReportForBundleID:bundleID processName:processName afterDate:nil];
+}
+
+- (NSString *)findCrashReportForBundleID:(NSString *)bundleID processName:(NSString *)processName afterDate:(NSDate *)afterDate {
     NSFileManager *fm = [NSFileManager defaultManager];
 
     NSArray *searchPaths = @[
@@ -589,7 +605,8 @@
                 NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
                 NSDate *modDate = attrs[NSFileModificationDate];
 
-                if (modDate && [now timeIntervalSinceDate:modDate] < 300) {
+                if (modDate && [now timeIntervalSinceDate:modDate] < 300 &&
+                    (!afterDate || [modDate compare:afterDate] != NSOrderedAscending)) {
                     if (!latestDate || [modDate compare:latestDate] == NSOrderedDescending) {
                         latestDate = modDate;
                         latestPath = fullPath;

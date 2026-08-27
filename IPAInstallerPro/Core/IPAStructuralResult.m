@@ -82,6 +82,10 @@
     d[@"platform"] = @(self.platform);
     if (self.platformName) d[@"platformName"] = self.platformName;
     d[@"hasCodeSignature"] = @(self.hasCodeSignature);
+    d[@"hasEncryptedSlice"] = @(self.hasEncryptedSlice);
+    d[@"encryptedSliceCount"] = @(self.encryptedSliceCount);
+    d[@"hasEncryptedArm64Slice"] = @(self.hasEncryptedArm64Slice);
+    d[@"encryptedArm64SliceCount"] = @(self.encryptedArm64SliceCount);
     d[@"parseStatus"] = @(self.parseStatus);
     if (self.parseError) d[@"parseError"] = self.parseError;
 
@@ -196,6 +200,9 @@
             e.path, e.machOTypeName ?: @"N/A", e.fileSize,
             (unsigned long)e.slices.count, (unsigned long)e.dependencies.count,
             (unsigned long)e.rpaths.count, e.hasCodeSignature ? @"YES" : @"NO"];
+        if (e.hasEncryptedSlice) {
+            [report appendFormat:@"  Encryption: FAIRPLAY/cryptid-present slices=%u, arm64=%u — signing cannot decrypt this binary\n", e.encryptedSliceCount, e.encryptedArm64SliceCount];
+        }
         for (IPAStructuralExecutableSlice *s in e.slices) {
             [report appendFormat:@"  Slice: %@ | UUID=%@ | Offset=%llu | Size=%llu\n",
                 s.architectureName ?: @"?", s.uuid ?: @"N/A", s.offset, s.size];

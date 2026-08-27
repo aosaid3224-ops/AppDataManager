@@ -217,6 +217,10 @@
         exec.platform = machoResult.platform;
         exec.platformName = machoResult.platformName;
         exec.hasCodeSignature = machoResult.hasCodeSignature;
+        exec.hasEncryptedSlice = machoResult.hasEncryptedSlice;
+        exec.encryptedSliceCount = machoResult.encryptedSliceCount;
+        exec.hasEncryptedArm64Slice = machoResult.hasEncryptedArm64Slice;
+        exec.encryptedArm64SliceCount = machoResult.encryptedArm64SliceCount;
         exec.parseStatus = (IPAStructuralParseStatus)machoResult.parseStatus;
         exec.parseError = machoResult.parseError;
 

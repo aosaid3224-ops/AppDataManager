@@ -8,6 +8,7 @@
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
 #import "SignatureAnalyzer.h"
+#import "JailbreakEnvironment.h"
 
 @interface SigningPlanner ()
 @end
@@ -349,6 +350,20 @@
         }
     }
 
+    // Dopamine's PMAP-CS path exposes a lower-risk app-store trust level for
+    // user applications. TrollStore Lite uses this only on PMAP-CS devices;
+    // mirror that principle here without applying the private key globally or
+    // to frameworks/dylibs. The environment check is the compatibility gate.
+    JailbreakEnvironment *environment = [JailbreakEnvironment sharedEnvironment];
+    NSString *jbType = environment.jailbreakType.lowercaseString ?: @"";
+    BOOL dopamineRootless = environment.isRootless && [jbType containsString:@"dopamine"];
+    if (dopamineRootless &&
+        (target.targetType == SigningTargetTypeMainExecutable ||
+         target.targetType == SigningTargetTypeAppExtension ||
+         target.targetType == SigningTargetTypeXPCService)) {
+        ents[@"jb.pmap_cs.custom_trust"] = @"PMAP_CS_APP_STORE";
+    }
+
     BOOL sourceNoContainer = [target.originalEntitlements.rawEntitlements[@"com.apple.private.security.no-container"] boolValue];
     BOOL sourceNoSandbox = [target.originalEntitlements.rawEntitlements[@"com.apple.private.security.no-sandbox"] boolValue];
     id existing = ents[@"com.apple.private.security.container-required"];
@@ -356,10 +371,13 @@
         // Preserve an explicitly unsandboxed source target; do not invent a
         // conflicting container identity. The generic dictionary itself is not
         // treated as source evidence because it is the installer's baseline.
+        target.plannedEntitlements = [[EntitlementSet alloc] initWithDictionary:ents sourcePath:target.filePath];
         return;
     }
     if ([existing isKindOfClass:[NSString class]] && [(NSString *)existing length] > 0) {
-        // Keep a source-provided string container identity exactly.
+        // Keep a source-provided string container identity exactly, while still
+        // committing the PMAP-CS policy already added above.
+        target.plannedEntitlements = [[EntitlementSet alloc] initWithDictionary:ents sourcePath:target.filePath];
         return;
     }
 

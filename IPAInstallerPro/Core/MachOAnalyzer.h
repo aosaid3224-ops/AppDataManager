@@ -24,6 +24,8 @@ typedef NS_ENUM(NSInteger, MachOParseStatus) {
 @property (nonatomic, assign) uint64_t size;
 @property (nonatomic, strong) NSString *uuid;
 @property (nonatomic, strong) NSString *architectureName;
+@property (nonatomic, assign) BOOL encrypted;
+@property (nonatomic, assign) uint32_t encryptionID;
 - (NSDictionary *)dictionaryRepresentation;
 @end
 
@@ -72,6 +74,10 @@ typedef NS_ENUM(NSInteger, MachOParseStatus) {
 @property (nonatomic, assign) uint32_t platform;
 @property (nonatomic, strong) NSString *platformName;
 @property (nonatomic, assign) BOOL hasCodeSignature;
+@property (nonatomic, assign) BOOL hasEncryptedSlice;
+@property (nonatomic, assign) uint32_t encryptedSliceCount;
+@property (nonatomic, assign) BOOL hasEncryptedArm64Slice;
+@property (nonatomic, assign) uint32_t encryptedArm64SliceCount;
 @property (nonatomic, assign) uint32_t codeSignatureOffset;
 @property (nonatomic, assign) uint32_t codeSignatureSize;
 @property (nonatomic, assign) MachOParseStatus parseStatus;

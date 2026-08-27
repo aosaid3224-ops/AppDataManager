@@ -11,6 +11,7 @@
 
 #import "MachOAnalyzer.h"
 #import <sys/stat.h>
+#include <string.h>
 
 // ============================================
 // Mach-O Constants (local definitions to avoid header conflicts)
@@ -32,6 +33,8 @@
 #define LC_UUID                 0x1b
 #define LC_CODE_SIGNATURE       0x1d
 #define LC_BUILD_VERSION        0x32
+#define LC_ENCRYPTION_INFO      0x21
+#define LC_ENCRYPTION_INFO_64   0x2c
 
 #define MH_EXECUTE      2
 #define MH_DYLIB        6
@@ -173,6 +176,8 @@ static inline uint64_t swap64(uint64_t v) {
     d[@"size"] = @(self.size);
     if (self.uuid) d[@"uuid"] = self.uuid;
     if (self.architectureName) d[@"architectureName"] = self.architectureName;
+    d[@"encrypted"] = @(self.encrypted);
+    d[@"encryptionID"] = @(self.encryptionID);
     return d;
 }
 @end
@@ -233,6 +238,10 @@ static inline uint64_t swap64(uint64_t v) {
     d[@"platform"] = @(self.platform);
     if (self.platformName) d[@"platformName"] = self.platformName;
     d[@"hasCodeSignature"] = @(self.hasCodeSignature);
+    d[@"hasEncryptedSlice"] = @(self.hasEncryptedSlice);
+    d[@"encryptedSliceCount"] = @(self.encryptedSliceCount);
+    d[@"hasEncryptedArm64Slice"] = @(self.hasEncryptedArm64Slice);
+    d[@"encryptedArm64SliceCount"] = @(self.encryptedArm64SliceCount);
     d[@"codeSignatureOffset"] = @(self.codeSignatureOffset);
     d[@"codeSignatureSize"] = @(self.codeSignatureSize);
     d[@"parseStatus"] = @(self.parseStatus);
@@ -466,6 +475,8 @@ static inline uint64_t swap64(uint64_t v) {
     slice.offset = offset;
     slice.size = length; // For single arch, size is entire file
     slice.architectureName = [self architectureNameForCputype:cputype subtype:cpusubtype];
+    slice.encrypted = NO;
+    slice.encryptionID = 0;
 
     NSMutableArray *slices = [NSMutableArray arrayWithArray:result.slices];
     [slices addObject:slice];
@@ -554,6 +565,30 @@ static inline uint64_t swap64(uint64_t v) {
                     result.uuid = uuidStr;
                     slice.uuid = uuidStr;
                     lcObj.cmdDescription = [NSString stringWithFormat:@"LC_UUID: %@", uuidStr];
+                }
+                break;
+            }
+            case LC_ENCRYPTION_INFO:
+            case LC_ENCRYPTION_INFO_64: {
+                // cryptid is the fifth uint32 field in both encryption-info
+                // commands. A non-zero value means FairPlay-encrypted content
+                // remains in this slice; signing cannot decrypt it.
+                if (cmdsize >= 20) {
+                    const uint8_t *cryptidBytes = (const uint8_t *)lc + 16;
+                    uint32_t cryptid = 0;
+                    memcpy(&cryptid, cryptidBytes, sizeof(cryptid));
+                    if (isSwap) cryptid = swap32(cryptid);
+                    slice.encryptionID = cryptid;
+                    slice.encrypted = (cryptid != 0);
+                    if (slice.encrypted) {
+                        result.hasEncryptedSlice = YES;
+                        result.encryptedSliceCount += 1;
+                        if (cputype == CPU_TYPE_ARM64) {
+                            result.hasEncryptedArm64Slice = YES;
+                            result.encryptedArm64SliceCount += 1;
+                        }
+                    }
+                    lcObj.cmdDescription = [NSString stringWithFormat:@"%@ cryptid=%u", baseCmd == LC_ENCRYPTION_INFO_64 ? @"LC_ENCRYPTION_INFO_64" : @"LC_ENCRYPTION_INFO", cryptid];
                 }
                 break;
             }
@@ -682,11 +717,18 @@ static inline uint64_t swap64(uint64_t v) {
             slice.size = size;
             slice.uuid = sliceResult.uuid;
             slice.architectureName = [self architectureNameForCputype:cputype subtype:cpusubtype];
+            MachOSlice *parsedSlice = sliceResult.slices.firstObject;
+            slice.encrypted = parsedSlice.encrypted;
+            slice.encryptionID = parsedSlice.encryptionID;
             [slices addObject:slice];
 
             [allDeps addObjectsFromArray:sliceResult.dependencies];
             [allRpaths addObjectsFromArray:sliceResult.rpaths];
             [allLcs addObjectsFromArray:sliceResult.loadCommands];
+            if (sliceResult.hasEncryptedSlice) result.hasEncryptedSlice = YES;
+            result.encryptedSliceCount += sliceResult.encryptedSliceCount;
+            if (sliceResult.hasEncryptedArm64Slice) result.hasEncryptedArm64Slice = YES;
+            result.encryptedArm64SliceCount += sliceResult.encryptedArm64SliceCount;
 
             // Use first successful slice for global values
             if (!result.machOTypeName) {
