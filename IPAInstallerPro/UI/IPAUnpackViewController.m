@@ -1,5 +1,6 @@
 #import "IPAUnpackViewController.h"
 #import "Core/IPAArchiveExtractor.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "IPAArchiveBrowserViewController.h"
 
 @interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate>
@@ -57,8 +58,15 @@
 }
 
 - (void)addIPATapped:(id)sender {
-    NSArray *types = @[@"com.apple.itunes.ipa", @"public.zip-archive"];
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:types inMode:UIDocumentPickerModeOpen];
+    UTType *ipaType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
+    if (!ipaType) ipaType = [UTType typeWithFilenameExtension:@"ipa"];
+    if (!ipaType) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر فتح الملفات" message:@"تعذر تسجيل نوع IPA على هذا النظام." preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ipaType] asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = YES;
     picker.modalPresentationStyle = UIModalPresentationFormSheet;
@@ -67,7 +75,9 @@
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     for (NSURL *url in urls) {
-        if (![url.pathExtension.lowercaseString isEqualToString:@"ipa"]) continue;
+        // The picker advertises only IPA, but keep a second programmatic guard
+        // because external document providers may return a broader URL type.
+        if (!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"ipa"]) continue;
         BOOL accessed = [url startAccessingSecurityScopedResource];
         NSMutableDictionary *item = [@{
             @"url": url,
