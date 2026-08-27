@@ -10,6 +10,7 @@
 #import "JailbreakEnvironment.h"
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
+#import "SpiderInstallationGraph.h"
 #import "SigningPlanner.h"
 #import "MachORPathRepair.h"
 #import "MachOAnalyzer.h"
@@ -998,6 +999,20 @@ extern char **environ;
  BOOL planGenerated = NO;
  @try {
  IPAStructuralResult *structResult = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:ipaPath keepExtracted:NO];
+ SpiderInstallationGraph *spiderGraph = [SpiderInstallationGraph graphFromStructuralResult:structResult];
+ NSString *spiderRecord = [opLog beginPhase:OperationPhaseAppIdentify operation:@"spider-bundle-graph" target:srcApp input:@"role-aware structural graph" transactionID:txnID];
+ NSString *spiderSummary = [spiderGraph summary];
+ NSString *spiderErrors = [spiderGraph.fatalFindings componentsJoinedByString:@" | "];
+ [opLog endPhase:spiderRecord exitCode:spiderGraph.coherent ? 0 : 1 rawOutput:spiderSummary rawError:spiderErrors ?: @"" verification:spiderGraph.coherent ? @"host/child bundle graph coherent" : @"Spider graph rejected structural contract" verified:spiderGraph.coherent duration:0 context:spiderGraph.evidence];
+ if (!spiderGraph.coherent) {
+     NSLog(@"[Spider] Structural gate rejected IPA: %@", spiderErrors);
+     [fm removeItemAtPath:tmp error:nil];
+     [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
+     [opLog endPhase:recPlan exitCode:1 rawOutput:spiderSummary rawError:spiderErrors ?: @"Spider graph rejected IPA" verification:@"installation refused before copy/sign" verified:NO duration:0 context:spiderGraph.evidence];
+     [opLog endTransaction:txnID finalResult:OperationResultFailed];
+     if (completion) completion([InstallationResult failureResult:@"Spider structural analysis rejected the IPA" provider:[self providerName] transaction:txnID error:nil evidence:spiderGraph.evidence]);
+     return;
+ }
  BOOL parseComplete = YES;
  for (IPAStructuralExecutable *executable in structResult.executables) {
      if (executable.parseStatus == IPAStructuralParseFailed) {
