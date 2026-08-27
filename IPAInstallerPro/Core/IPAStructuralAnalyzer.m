@@ -324,6 +324,197 @@
     return result;
 }
 
+- (IPAStructuralResult *)analyzeExtractedPayloadAtPath:(NSString *)payloadPath sourceIPAPath:(NSString *)ipaPath {
+    IPAStructuralResult *result = [[IPAStructuralResult alloc] init];
+    result.ipaPath = ipaPath;
+    result.extractPath = [payloadPath stringByDeletingLastPathComponent];
+    result.analysisStartTime = [NSDate date];
+    result.success = NO;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDirectory = NO;
+    if (!payloadPath.length || ![fm fileExistsAtPath:payloadPath isDirectory:&isDirectory] || !isDirectory) {
+        [result.errors addObject:@"Extracted Payload directory does not exist"];
+        result.analysisEndTime = [NSDate date];
+        result.analysisDurationMs = [result.analysisEndTime timeIntervalSinceDate:result.analysisStartTime] * 1000.0;
+        return result;
+    }
+
+    struct stat ipaStat = {0};
+    if (ipaPath.length && stat(ipaPath.fileSystemRepresentation, &ipaStat) == 0) result.ipaSize = ipaStat.st_size;
+
+    NSMutableArray<IPAStructuralBundle *> *bundles = [NSMutableArray array];
+    NSMutableArray<IPAStructuralExecutable *> *executables = [NSMutableArray array];
+    NSMutableSet<NSString *> *processedExePaths = [NSMutableSet set];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:payloadPath];
+    NSString *relativePath = nil;
+
+    while ((relativePath = [enumerator nextObject])) {
+        NSString *fullPath = [payloadPath stringByAppendingPathComponent:relativePath];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+        if (attrs && [attrs[NSFileType] isEqualToString:NSFileTypeSymbolicLink]) {
+            [result.warnings addObject:[NSString stringWithFormat:@"Symlink skipped: %@", relativePath]];
+            continue;
+        }
+
+        BOOL itemIsDirectory = NO;
+        if (![fm fileExistsAtPath:fullPath isDirectory:&itemIsDirectory]) continue;
+
+        if (itemIsDirectory) {
+            NSString *bundleType = [self bundleTypeFromPath:relativePath];
+            if (bundleType) {
+                IPAStructuralBundle *bundle = [[IPAStructuralBundle alloc] init];
+                bundle.path = fullPath;
+                bundle.bundleType = bundleType;
+
+                NSInteger nestingLevel = 0;
+                NSString *parentPath = nil;
+                NSArray *components = [relativePath pathComponents];
+                for (NSInteger i = components.count - 2; i >= 0; i--) {
+                    NSString *comp = components[i];
+                    if ([comp.lowercaseString hasSuffix:@".app"] ||
+                        [comp.lowercaseString hasSuffix:@".appex"] ||
+                        [comp.lowercaseString hasSuffix:@".xpc"] ||
+                        [comp.lowercaseString hasSuffix:@".framework"] ||
+                        [comp.lowercaseString hasSuffix:@".bundle"]) {
+                        nestingLevel++;
+                        if (!parentPath) {
+                            parentPath = [payloadPath stringByAppendingPathComponent:[[components subarrayWithRange:NSMakeRange(0, i + 1)] componentsJoinedByString:@"/"]];
+                        }
+                    }
+                }
+                bundle.nestingLevel = nestingLevel;
+                bundle.parentBundlePath = parentPath;
+
+                NSString *infoPlistPath = [fullPath stringByAppendingPathComponent:@"Info.plist"];
+                if ([fm fileExistsAtPath:infoPlistPath]) {
+                    NSDictionary *plist = [self readInfoPlistAtPath:infoPlistPath];
+                    if (plist) {
+                        bundle.bundleIdentifier = plist[@"CFBundleIdentifier"];
+                        bundle.executableName = plist[@"CFBundleExecutable"];
+                        if (bundle.executableName) {
+                            bundle.executablePath = [fullPath stringByAppendingPathComponent:bundle.executableName];
+                            bundle.executableExists = [fm fileExistsAtPath:bundle.executablePath];
+                        }
+                    }
+                }
+                [bundles addObject:bundle];
+            }
+            continue;
+        }
+
+        if ([processedExePaths containsObject:fullPath]) continue;
+        NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:fullPath];
+        if (!fh) continue;
+        NSData *magicData = [fh readDataOfLength:4];
+        [fh closeFile];
+        if (magicData.length < 4) continue;
+
+        uint32_t magic = 0;
+        [magicData getBytes:&magic length:4];
+        if (![self isMachOMagic:magic]) continue;
+        [processedExePaths addObject:fullPath];
+
+        MachOAnalysisResult *machoResult = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:fullPath];
+        IPAStructuralExecutable *exec = [[IPAStructuralExecutable alloc] init];
+        exec.path = fullPath;
+        exec.name = fullPath.lastPathComponent;
+        exec.fileSize = machoResult.fileSize;
+        exec.machOType = machoResult.machOType;
+        exec.machOTypeName = machoResult.machOTypeName;
+        exec.uuid = machoResult.uuid;
+        exec.minOSVersion = machoResult.minOSVersion;
+        exec.sdkVersion = machoResult.sdkVersion;
+        exec.platform = machoResult.platform;
+        exec.platformName = machoResult.platformName;
+        exec.hasCodeSignature = machoResult.hasCodeSignature;
+        exec.hasEncryptedSlice = machoResult.hasEncryptedSlice;
+        exec.encryptedSliceCount = machoResult.encryptedSliceCount;
+        exec.hasEncryptedArm64Slice = machoResult.hasEncryptedArm64Slice;
+        exec.encryptedArm64SliceCount = machoResult.encryptedArm64SliceCount;
+        exec.parseStatus = (IPAStructuralParseStatus)machoResult.parseStatus;
+        exec.parseError = machoResult.parseError;
+
+        NSMutableArray *slices = [NSMutableArray array];
+        for (MachOSlice *ms in machoResult.slices) {
+            IPAStructuralExecutableSlice *slice = [[IPAStructuralExecutableSlice alloc] init];
+            slice.cputype = ms.cputype;
+            slice.cpusubtype = ms.cpusubtype;
+            slice.offset = ms.offset;
+            slice.size = ms.size;
+            slice.uuid = ms.uuid;
+            slice.architectureName = ms.architectureName;
+            [slices addObject:slice];
+        }
+        exec.slices = slices;
+
+        NSMutableArray *deps = [NSMutableArray array];
+        for (MachODependency *md in machoResult.dependencies) {
+            IPAStructuralDependency *dep = [[IPAStructuralDependency alloc] init];
+            dep.rawInstallName = md.rawInstallName;
+            dep.isWeak = md.isWeak;
+            dep.sourceExecutablePath = md.sourceExecutablePath;
+            [deps addObject:dep];
+        }
+        exec.dependencies = deps;
+
+        NSMutableArray *rpaths = [NSMutableArray array];
+        for (MachORPath *mr in machoResult.rpaths) {
+            IPAStructuralRPath *rp = [[IPAStructuralRPath alloc] init];
+            rp.rawPath = mr.rawPath;
+            rp.sourceExecutablePath = mr.sourceExecutablePath;
+            [rpaths addObject:rp];
+        }
+        exec.rpaths = rpaths;
+
+        NSMutableArray *loadCommands = [NSMutableArray array];
+        for (MachOLoadCommand *mlc in machoResult.loadCommands) {
+            IPAStructuralLoadCommand *lc = [[IPAStructuralLoadCommand alloc] init];
+            lc.cmd = mlc.cmd;
+            lc.cmdsize = mlc.cmdsize;
+            lc.cmdDescription = mlc.cmdDescription;
+            [loadCommands addObject:lc];
+        }
+        exec.loadCommands = loadCommands;
+        [executables addObject:exec];
+
+        if (machoResult.parseStatus == MachOParsePartial) {
+            [result.warnings addObject:[NSString stringWithFormat:@"Partial Mach-O parse: %@ — %@", fullPath.lastPathComponent, machoResult.parseError ?: @"unknown"]];
+        } else if (machoResult.parseStatus == MachOParseFailed) {
+            [result.warnings addObject:[NSString stringWithFormat:@"Mach-O parse failed: %@ — %@", fullPath.lastPathComponent, machoResult.parseError ?: @"unknown"]];
+        }
+    }
+
+    result.bundles = [bundles copy];
+    result.executables = [executables copy];
+    result.success = (result.errors.count == 0);
+    result.bundleCount = bundles.count;
+    result.executableCount = executables.count;
+
+    NSInteger fwCount = 0, dylibCount = 0, appexCount = 0, xpcCount = 0, sliceCount = 0, depCount = 0, rpathCount = 0;
+    for (IPAStructuralBundle *bundle in bundles) {
+        if ([bundle.bundleType isEqualToString:@".framework"]) fwCount++;
+        else if ([bundle.bundleType isEqualToString:@".appex"]) appexCount++;
+        else if ([bundle.bundleType isEqualToString:@".xpc"]) xpcCount++;
+    }
+    for (IPAStructuralExecutable *exec in executables) {
+        if ([exec.machOTypeName isEqualToString:@"MH_DYLIB"]) dylibCount++;
+        sliceCount += exec.slices.count;
+        depCount += exec.dependencies.count;
+        rpathCount += exec.rpaths.count;
+    }
+    result.frameworkCount = fwCount;
+    result.dylibCount = dylibCount;
+    result.appexCount = appexCount;
+    result.xpcCount = xpcCount;
+    result.sliceCount = sliceCount;
+    result.dependencyCount = depCount;
+    result.rpathCount = rpathCount;
+    result.analysisEndTime = [NSDate date];
+    result.analysisDurationMs = [result.analysisEndTime timeIntervalSinceDate:result.analysisStartTime] * 1000.0;
+    return result;
+}
+
 #pragma mark - Helpers
 
 - (NSString *)createTempDirectory {
