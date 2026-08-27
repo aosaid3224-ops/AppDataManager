@@ -371,7 +371,9 @@ extern char **environ;
         if (![entry containsString:@".app.ipa-stage-"]) continue;
         NSString *candidate = [root stringByAppendingPathComponent:entry];
         NSDictionary *attributes = [fm attributesOfItemAtPath:candidate error:nil];
-        if (![attributes[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+        NSString *fileType = attributes[NSFileType];
+        BOOL removableStage = [fileType isEqualToString:NSFileTypeDirectory] || [fileType isEqualToString:NSFileTypeSymbolicLink];
+        if (!removableStage) continue;
         NSDate *modified = attributes[NSFileModificationDate];
         if (modified && [modified compare:cutoff] == NSOrderedDescending) continue;
         [candidates addObject:candidate];
@@ -384,7 +386,9 @@ extern char **environ;
         } else {
             deleted = [fm removeItemAtPath:candidate error:nil];
         }
-        if (deleted && ![fm fileExistsAtPath:candidate]) [removed addObject:candidate.lastPathComponent];
+        struct stat postDeleteStat;
+        BOOL stillExists = (lstat(candidate.fileSystemRepresentation, &postDeleteStat) == 0);
+        if (deleted && !stillExists) [removed addObject:candidate.lastPathComponent];
         else [failed addObject:candidate.lastPathComponent];
     }
 
