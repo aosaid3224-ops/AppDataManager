@@ -38,13 +38,22 @@ extern char **environ;
     return shared;
 }
 
+- (NSString *)privateWorkspaceRoot {
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+    NSString *applicationSupport = paths.firstObject ?: NSTemporaryDirectory();
+    return [[applicationSupport stringByAppendingPathComponent:@"IPAInstallerPro"] stringByAppendingPathComponent:@"IPAExtractor"];
+}
+
 - (NSString *)defaultOutputDirectoryForIPAPath:(NSString *)ipaPath {
-    NSString *base = [[ipaPath stringByDeletingPathExtension] stringByAppendingString:@".unpacked"];
-    return base;
+    NSString *sourceName = [[ipaPath lastPathComponent] stringByDeletingPathExtension];
+    if (sourceName.length == 0) sourceName = @"IPA";
+    return [[self privateWorkspaceRoot] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ — Extracted", sourceName]];
 }
 
 - (NSString *)uniqueOutputDirectoryForIPAPath:(NSString *)ipaPath {
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *workspace = [self privateWorkspaceRoot];
+    [fm createDirectoryAtPath:workspace withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *base = [self defaultOutputDirectoryForIPAPath:ipaPath];
     NSString *candidate = base;
     NSUInteger suffix = 2;
@@ -206,10 +215,11 @@ extern char **environ;
             fail(@"ملف IPA غير موجود أو ليس ملفًا عاديًا");
             return;
         }
-        NSString *sourceDirectory = [[source stringByDeletingLastPathComponent] stringByStandardizingPath];
+        NSString *workspace = [[self privateWorkspaceRoot] stringByStandardizingPath];
         NSString *outputDirectory = [[requestedOutput stringByDeletingLastPathComponent] stringByStandardizingPath];
-        if (requestedOutput.length == 0 || ![outputDirectory isEqualToString:sourceDirectory]) {
-            fail(@"مسار الناتج يجب أن يكون بجانب ملف IPA الأصلي");
+        NSString *workspacePrefix = [workspace stringByAppendingString:@"/"];
+        if (requestedOutput.length == 0 || (![outputDirectory isEqualToString:workspace] && ![outputDirectory hasPrefix:workspacePrefix])) {
+            fail(@"مسار الناتج يجب أن يكون داخل مساحة العمل الخاصة بالأداة");
             return;
         }
         if ([fm fileExistsAtPath:requestedOutput]) {
@@ -244,7 +254,7 @@ extern char **environ;
             }
         }
 
-        NSString *temporary = [[source stringByDeletingLastPathComponent] stringByAppendingPathComponent:[NSString stringWithFormat:@".ipa-unpack-%@.tmp", [NSUUID UUID].UUIDString]];
+        NSString *temporary = [workspace stringByAppendingPathComponent:[NSString stringWithFormat:@".ipa-unpack-%@.tmp", [NSUUID UUID].UUIDString]];
         NSError *directoryError = nil;
         if (![fm createDirectoryAtPath:temporary withIntermediateDirectories:NO attributes:nil error:&directoryError]) {
             fail(directoryError.localizedDescription ?: @"تعذر إنشاء مساحة مؤقتة");

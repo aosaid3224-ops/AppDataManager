@@ -19,8 +19,9 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 
 - (void)dealloc {
     for (NSDictionary *item in self.items) {
-        if ([item[@"securityScopeActive"] boolValue]) {
-            [item[@"url"] stopAccessingSecurityScopedResource];
+        NSURL *url = [self urlForItem:item];
+        if ([item[@"securityScopeActive"] boolValue] && url) {
+            [url stopAccessingSecurityScopedResource];
         }
     }
 }
@@ -263,8 +264,8 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     NSString *name = item[@"displayName"] ?: item[@"name"] ?: @"IPA";
     BOOL hasPreviousOutput = [item[@"outputPath"] length] > 0;
     NSString *message = hasPreviousOutput
-        ? [NSString stringWithFormat:@"سيتم إنشاء ناتج جديد بجانب الملف الأصلي، مع إبقاء الناتج السابق دون تغيير.\n\n%@", name]
-        : [NSString stringWithFormat:@"سيتم إنشاء مجلد جديد بجانب الملف الأصلي دون تعديل أو حذف ملف IPA.\n\n%@", name];
+        ? [NSString stringWithFormat:@"سيتم إنشاء ناتج جديد داخل مساحة العمل الخاصة بالأداة، مع إبقاء الناتج السابق دون تغيير.\n\n%@", name]
+        : [NSString stringWithFormat:@"سيتم إنشاء مجلد الناتج داخل مساحة العمل الخاصة بالأداة دون تعديل أو حذف ملف IPA الأصلي.\n\n%@", name];
     UIAlertController *confirm = [UIAlertController alertControllerWithTitle:hasPreviousOutput ? @"إعادة استخراج IPA" : @"فك حزمة IPA" message:message preferredStyle:UIAlertControllerStyleAlert];
     [confirm addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:@"نعم، استخراج" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -409,7 +410,8 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)removeSourceFromList:(NSMutableDictionary *)item {
-    if ([item[@"securityScopeActive"] boolValue]) [item[@"url"] stopAccessingSecurityScopedResource];
+    NSURL *url = [self urlForItem:item];
+    if ([item[@"securityScopeActive"] boolValue] && url) [url stopAccessingSecurityScopedResource];
     [self.items removeObjectIdenticalTo:item];
     [self persistItems];
     self.emptyLabel.hidden = self.items.count > 0;
@@ -422,6 +424,27 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     [confirm addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
     [confirm addAction:[UIAlertAction actionWithTitle:@"حذف الناتج" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) { NSError *error = nil; if ([[NSFileManager defaultManager] fileExistsAtPath:path] && ![[NSFileManager defaultManager] removeItemAtPath:path error:&error]) { [self showMessage:error.localizedDescription ?: @"تعذر حذف الناتج"]; return; }         [item removeObjectForKey:@"outputPath"]; item[@"state"] = @"ready"; item[@"status"] = @"جاهز لإعادة الاستخراج"; [self reloadItem:item]; }]];
     [self presentViewController:confirm animated:YES completion:nil];
+}
+
+- (UIImage *)ipaFileIcon {
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(40, 40)];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        CGContextRef cg = context.CGContext;
+        CGRect page = CGRectMake(7, 3, 26, 34);
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:page cornerRadius:5];
+        [[UIColor colorWithRed:0.18 green:0.28 blue:0.42 alpha:1.0] setFill];
+        [path fill];
+        [[UIColor colorWithWhite:0.9 alpha:1.0] setStroke];
+        path.lineWidth = 1.5;
+        [path stroke];
+        CGRect badge = CGRectMake(4, 23, 32, 13);
+        UIBezierPath *badgePath = [UIBezierPath bezierPathWithRoundedRect:badge cornerRadius:4];
+        [[UIColor colorWithRed:0.2 green:0.72 blue:0.45 alpha:1.0] setFill];
+        [badgePath fill];
+        NSDictionary *attributes = @{ NSFontAttributeName: [UIFont systemFontOfSize:8 weight:UIFontWeightBold], NSForegroundColorAttributeName: UIColor.whiteColor };
+        [@"IPA" drawInRect:CGRectMake(4, 25, 32, 9) withAttributes:attributes];
+        CGContextSetStrokeColorWithColor(cg, [UIColor colorWithWhite:0.9 alpha:1.0].CGColor);
+    }];
 }
 
 - (NSString *)formattedSize:(unsigned long long)bytes {
@@ -561,7 +584,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         cell.detailTextLabel.textColor = extracting ? [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] : (unavailable ? [UIColor colorWithRed:0.95 green:0.65 blue:0.25 alpha:1.0] : [UIColor colorWithWhite:0.55 alpha:1.0]);
         cell.detailTextLabel.textAlignment = NSTextAlignmentRight;
         cell.detailTextLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-        cell.imageView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithRed:0.35 green:0.75 blue:0.55 alpha:1.0]];
+        cell.imageView.image = [self ipaFileIcon];
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = extracting ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     }
