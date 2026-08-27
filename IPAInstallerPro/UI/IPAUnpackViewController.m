@@ -58,15 +58,21 @@
 }
 
 - (void)addIPATapped:(id)sender {
-    UTType *ipaType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
-    if (!ipaType) ipaType = [UTType typeWithFilenameExtension:@"ipa"];
-    if (!ipaType) {
+    UTType *appleIPAType = [UTType typeWithIdentifier:@"com.apple.itunes.ipa"];
+    UTType *localIPAType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
+    UTType *extensionIPAType = [UTType typeWithFilenameExtension:@"ipa"];
+    NSMutableArray<UTType *> *ipaTypes = [NSMutableArray array];
+    for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null]]) {
+        if (![type isKindOfClass:UTType.class] || [ipaTypes containsObject:type]) continue;
+        [ipaTypes addObject:type];
+    }
+    if (ipaTypes.count == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر فتح الملفات" message:@"تعذر تسجيل نوع IPA على هذا النظام." preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ipaType] asCopy:NO];
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:ipaTypes asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = YES;
     picker.modalPresentationStyle = UIModalPresentationFormSheet;
