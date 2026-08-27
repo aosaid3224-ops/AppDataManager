@@ -8,9 +8,10 @@
 @interface LiveOperationStream ()
 @property (nonatomic, copy) NSString *transactionID;
 @property (nonatomic, copy) LiveOperationEventHandler handler;
+@property (nonatomic, copy) NSString *subscriptionID;
 @property (nonatomic, assign, readwrite, getter=isClosed) BOOL closed;
 @property (nonatomic, assign) NSUInteger nextSequence;
-@property (nonatomic, strong) NSMutableSet<NSString *> *deliveredFinalRecordIDs;
+@property (nonatomic, assign) BOOL finalDelivered;
 @end
 
 @implementation LiveOperationEvent
@@ -23,25 +24,28 @@
     self.transactionID = [transactionID copy];
     self.handler = [handler copy];
     self.nextSequence = 0;
+    self.finalDelivered = NO;
     self.closed = NO;
-    self.deliveredFinalRecordIDs = [NSMutableSet set];
-    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-    [center addObserver:self selector:@selector(recordAdded:) name:@"OperationRecordAdded" object:nil];
-    [center addObserver:self selector:@selector(recordUpdated:) name:@"OperationRecordUpdated" object:nil];
+    __weak typeof(self) weakSelf = self;
+    self.subscriptionID = [[OperationLog sharedLog] subscribeLiveToTransactionID:self.transactionID handler:^(OperationRecord *record, BOOL isUpdate) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        [strongSelf receiveRecord:record isUpdate:isUpdate];
+    }];
 }
 
 - (void)close {
-    if (self.closed && !self.transactionID.length) return;
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"OperationRecordAdded" object:nil];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"OperationRecordUpdated" object:nil];
+    if (self.subscriptionID.length) {
+        [[OperationLog sharedLog] unsubscribeLiveSubscription:self.subscriptionID];
+    }
+    self.subscriptionID = nil;
     self.closed = YES;
     self.handler = nil;
     self.transactionID = nil;
-    [self.deliveredFinalRecordIDs removeAllObjects];
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (self.subscriptionID.length) [[OperationLog sharedLog] unsubscribeLiveSubscription:self.subscriptionID];
 }
 
 - (BOOL)accepts:(OperationRecord *)record {
@@ -49,9 +53,7 @@
 }
 
 - (BOOL)isFinalRecord:(OperationRecord *)record {
-    if (record.phase == OperationPhaseComplete) return YES;
-    if (record.result == OperationResultFailed && (record.phase == OperationPhaseCleanup || record.phase == OperationPhaseCrashDiagnostics)) return YES;
-    return NO;
+    return record.phase == OperationPhaseComplete;
 }
 
 - (NSString *)stageName:(OperationRecord *)record {
@@ -67,46 +69,31 @@
     return @"FAILED";
 }
 
-- (LiveOperationEvent *)eventFromRecord:(OperationRecord *)record update:(BOOL)update {
+- (void)receiveRecord:(OperationRecord *)record isUpdate:(BOOL)isUpdate {
+    if (![self accepts:record] || self.finalDelivered) return;
     LiveOperationEvent *event = [[LiveOperationEvent alloc] init];
     event.recordID = record.recordID ?: @"";
     event.transactionID = record.transactionID ?: @"";
     event.sequence = ++self.nextSequence;
-    event.timestamp = record.timestamp ?: [NSDate date];
+    event.operationTimestamp = record.timestamp ?: [NSDate date];
+    event.timestamp = [NSDate date];
+    event.dispatchedAt = [NSDate date];
     event.stage = [self stageName:record];
-    event.status = [self statusName:record update:update];
+    event.status = [self statusName:record update:isUpdate];
     event.message = record.operation ?: @"";
     event.target = record.target ?: @"";
     event.exitStatus = record.exitCode;
     event.finalEvent = [self isFinalRecord:record];
-    event.update = update;
-    return event;
-}
+    event.update = isUpdate;
 
-- (void)emitRecord:(OperationRecord *)record update:(BOOL)update {
-    if (![self accepts:record]) return;
-    LiveOperationEvent *event = [self eventFromRecord:record update:update];
     LiveOperationEventHandler handler = self.handler;
     if (handler) handler(event);
     if (event.finalEvent) {
-        [self.deliveredFinalRecordIDs addObject:event.recordID];
-        // Closing is synchronous and happens only after delivering the final
-        // event. Any queued notification arriving afterward is rejected.
+        self.finalDelivered = YES;
+        // The final event is delivered before the subscription is closed.
+        // Any later callback is rejected at the stream boundary.
         [self close];
     }
-}
-
-- (void)recordAdded:(NSNotification *)notification {
-    [self emitRecord:notification.object update:NO];
-}
-
-- (void)recordUpdated:(NSNotification *)notification {
-    OperationRecord *record = notification.object;
-    if (![self accepts:record]) return;
-    // A final record must be delivered exactly once. It may be emitted first
-    // as BEGIN and later as END, but not after the stream has closed.
-    if ([self isFinalRecord:record] && [self.deliveredFinalRecordIDs containsObject:record.recordID]) return;
-    [self emitRecord:record update:YES];
 }
 
 @end

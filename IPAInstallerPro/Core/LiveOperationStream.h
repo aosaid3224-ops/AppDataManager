@@ -2,9 +2,6 @@
 // LiveOperationStream.h
 // IPA Installer Pro — UI/Event Pipeline only
 //
-// Consumes only notifications emitted for the active transaction. It never
-// reads the persisted log and never starts or changes an installation.
-//
 
 #import <Foundation/Foundation.h>
 #import "OperationLog.h"
@@ -13,7 +10,11 @@
 @property (nonatomic, copy) NSString *recordID;
 @property (nonatomic, copy) NSString *transactionID;
 @property (nonatomic, assign) NSUInteger sequence;
-@property (nonatomic, strong) NSDate *timestamp;
+@property (nonatomic, strong) NSDate *timestamp;          // event_created_at
+@property (nonatomic, strong) NSDate *operationTimestamp;  // OperationRecord timestamp
+@property (nonatomic, strong) NSDate *dispatchedAt;       // callback dispatch time
+@property (nonatomic, strong) NSDate *renderedAt;         // UI render time
+@property (nonatomic, assign) NSTimeInterval renderLagMs;
 @property (nonatomic, copy) NSString *stage;
 @property (nonatomic, copy) NSString *status;
 @property (nonatomic, copy) NSString *message;

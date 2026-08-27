@@ -201,6 +201,15 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UIView *liveOutputCard;
 @property (nonatomic, strong) UILabel *liveStateLabel;
 @property (nonatomic, strong) UITextView *liveOutputView;
+@property (nonatomic, strong) NSMutableArray<LiveOperationEvent *> *pendingLiveCriticalEvents;
+@property (nonatomic, strong) LiveOperationEvent *pendingLiveNormalLast;
+@property (nonatomic, assign) NSUInteger pendingLiveNormalCount;
+@property (nonatomic, assign) NSUInteger pendingLiveNormalFirstSequence;
+@property (nonatomic, assign) BOOL liveRenderDrainScheduled;
+@property (nonatomic, assign) NSUInteger liveRenderGeneration;
+@property (nonatomic, assign) BOOL liveFinalRendered;
+@property (nonatomic, strong) dispatch_queue_t liveRenderQueue;
+@property (nonatomic, assign) NSUInteger lateLiveEventCount;
 
 @end
 
@@ -211,6 +220,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     _rawLog = [NSMutableString string];
+    _pendingLiveCriticalEvents = [NSMutableArray array];
+    _liveRenderQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.live-render", DISPATCH_QUEUE_SERIAL);
     [self setupUI];
     [self registerForOperationLogNotifications];
     [self startInstallation];
@@ -299,14 +310,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 #pragma mark - OperationLog Notifications
 
 - (void)registerForOperationLogNotifications {
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(operationRecordAdded:)
-                                                 name:@"OperationRecordAdded"
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(operationRecordUpdated:)
-                                                 name:@"OperationRecordUpdated"
-                                               object:nil];
+    // LiveOperationStream is the only live source for this screen. The old
+    // OperationRecord notifications remain available to other screens, but
+    // are intentionally not subscribed here to prevent a second UI backlog.
 }
 
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
@@ -350,33 +356,95 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     });
 }
 
+- (BOOL)isCriticalLiveEvent:(LiveOperationEvent *)event {
+    if (event.finalEvent) return YES;
+    NSString *stage = event.stage.uppercaseString ?: @"";
+    NSString *status = event.status.uppercaseString ?: @"";
+    NSSet *criticalStages = [NSSet setWithArray:@[@"START", @"IPA_OPEN", @"IPA_EXTRACT", @"APP_IDENTIFY", @"FILE_COPY", @"UICACHE", @"VERIFY", @"LAUNCH", @"RUNTIME_MONITOR", @"CRASH_DIAGNOSTICS", @"COMPLETE"]];
+    // SIGN/FRAMEWORK/DYLIB/PERMISSION/CLEANUP can generate hundreds of
+    // records. Their full history stays in OperationLog; the UI keeps the
+    // latest normal event and a count, while failures always bypass coalescing.
+    return [criticalStages containsObject:stage] || [status isEqualToString:@"FAILED"] ||
+           ([status isEqualToString:@"SUCCESS"] && ![stage isEqualToString:@"SIGN"] && ![stage isEqualToString:@"FRAMEWORK"] && ![stage isEqualToString:@"DYLIB"] && ![stage isEqualToString:@"PERMISSION"] && ![stage isEqualToString:@"CLEANUP"]);
+}
+
 - (void)renderLiveOperationEvent:(LiveOperationEvent *)event {
-    if (!event || event.sequence <= self.lastRenderedLiveSequence) return;
-    self.lastRenderedLiveSequence = event.sequence;
-    if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ [self renderLiveOperationEvent:event]; });
-        return;
-    }
-    if (!self.liveOutputView || !self.liveStateLabel) return;
-    NSString *timestamp = [NSString stringWithFormat:@"%.3f", [event.timestamp timeIntervalSince1970]];
-    NSString *line = [NSString stringWithFormat:@"%@ #%03lu %@ %@ | %@ | target:%@ | exit:%d",
-                       timestamp, (unsigned long)event.sequence, event.stage ?: @"UNKNOWN", event.status ?: @"PENDING",
-                       event.message ?: @"", event.target.length ? event.target : @"-", event.exitStatus];
+    if (!event || ![event.transactionID isEqualToString:self.currentTxnID]) return;
+    dispatch_async(self.liveRenderQueue, ^{
+        if (self.liveFinalRendered) {
+            self.lateLiveEventCount += 1;
+            return;
+        }
+        if (event.finalEvent) {
+            // The final line has priority over any presentation backlog. The
+            // complete OperationLog remains untouched; only UI pending items
+            // are discarded here.
+            [self.pendingLiveCriticalEvents removeAllObjects];
+            self.pendingLiveNormalLast = nil;
+            self.pendingLiveNormalCount = 0;
+            self.pendingLiveNormalFirstSequence = 0;
+            [self.pendingLiveCriticalEvents addObject:event];
+        } else if ([self isCriticalLiveEvent:event]) {
+            [self.pendingLiveCriticalEvents addObject:event];
+        } else {
+            if (self.pendingLiveNormalCount == 0) self.pendingLiveNormalFirstSequence = event.sequence;
+            self.pendingLiveNormalCount += 1;
+            self.pendingLiveNormalLast = event;
+        }
+        if (!self.liveRenderDrainScheduled) {
+            self.liveRenderDrainScheduled = YES;
+            dispatch_async(dispatch_get_main_queue(), ^{ [self drainLiveOperationEvents]; });
+        }
+    });
+}
+
+- (void)appendRenderedLiveLineForEvent:(LiveOperationEvent *)event note:(NSString *)note {
+    if (!event || !self.liveOutputView) return;
+    event.renderedAt = [NSDate date];
+    event.renderLagMs = [event.renderedAt timeIntervalSinceDate:event.timestamp] * 1000.0;
+    NSString *created = [NSString stringWithFormat:@"%.3f", [event.timestamp timeIntervalSince1970]];
+    NSString *rendered = [NSString stringWithFormat:@"%.3f", [event.renderedAt timeIntervalSince1970]];
+    NSString *line = [NSString stringWithFormat:@"%@ #%03lu %@ %@ | %@ | created:%@ rendered:%@ lag:%.1fms | target:%@ | exit:%d%@\n",
+                       rendered, (unsigned long)event.sequence, event.stage ?: @"UNKNOWN", event.status ?: @"PENDING",
+                       event.message ?: @"", created, rendered, event.renderLagMs, event.target.length ? event.target : @"-", event.exitStatus, note ?: @""];
     UIColor *color = [event.status isEqualToString:@"FAILED"] ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] :
                      ([event.status isEqualToString:@"SUCCESS"] ? [UIColor colorWithRed:0.35 green:0.95 blue:0.6 alpha:1.0] : [UIColor colorWithRed:0.45 green:0.78 blue:1.0 alpha:1.0]);
     NSDictionary *attributes = @{NSFontAttributeName: self.liveOutputView.font ?: [UIFont systemFontOfSize:10], NSForegroundColorAttributeName: color};
-    NSAttributedString *lineText = [[NSAttributedString alloc] initWithString:[line stringByAppendingString:@"\n"] attributes:attributes];
-    [self.liveOutputView.textStorage appendAttributedString:lineText];
+    [self.liveOutputView.textStorage appendAttributedString:[[NSAttributedString alloc] initWithString:line attributes:attributes]];
     NSUInteger maxLength = 120000;
-    if (self.liveOutputView.textStorage.length > maxLength) {
-        NSUInteger removeLength = self.liveOutputView.textStorage.length - maxLength;
-        [self.liveOutputView.textStorage deleteCharactersInRange:NSMakeRange(0, removeLength)];
-    }
-    self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", event.stage ?: @"UNKNOWN", event.status ?: @"PENDING", (unsigned long)event.sequence];
-    self.liveStateLabel.textColor = color;
+    if (self.liveOutputView.textStorage.length > maxLength) [self.liveOutputView.textStorage deleteCharactersInRange:NSMakeRange(0, self.liveOutputView.textStorage.length - maxLength)];
     [self.liveOutputView scrollRangeToVisible:NSMakeRange(self.liveOutputView.textStorage.length, 0)];
-    if (event.finalEvent) {
-        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة النهائية: %@ #%03lu — انتهى البث", event.status ?: @"FINAL", (unsigned long)event.sequence];
+}
+
+- (void)drainLiveOperationEvents {
+    if (![NSThread isMainThread]) { dispatch_async(dispatch_get_main_queue(), ^{ [self drainLiveOperationEvents]; }); return; }
+    __block NSArray<LiveOperationEvent *> *critical = nil;
+    __block LiveOperationEvent *normalLast = nil;
+    __block NSUInteger normalCount = 0;
+    dispatch_sync(self.liveRenderQueue, ^{
+        critical = [self.pendingLiveCriticalEvents copy];
+        normalLast = self.pendingLiveNormalLast;
+        normalCount = self.pendingLiveNormalCount;
+        [self.pendingLiveCriticalEvents removeAllObjects];
+        self.pendingLiveNormalLast = nil;
+        self.pendingLiveNormalCount = 0;
+        self.pendingLiveNormalFirstSequence = 0;
+        self.liveRenderDrainScheduled = NO;
+    });
+    for (LiveOperationEvent *event in critical) {
+        if (self.liveFinalRendered) { self.lateLiveEventCount += 1; continue; }
+        [self appendRenderedLiveLineForEvent:event note:nil];
+        self.lastRenderedLiveSequence = event.sequence;
+        UIColor *color = [event.status isEqualToString:@"FAILED"] ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0];
+        self.liveStateLabel.textColor = color;
+        self.liveStateLabel.text = event.finalEvent ? [NSString stringWithFormat:@"الحالة النهائية: %@ #%03lu — انتهى البث", event.status ?: @"FINAL", (unsigned long)event.sequence] : [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", event.stage ?: @"UNKNOWN", event.status ?: @"PENDING", (unsigned long)event.sequence];
+        if (event.finalEvent) self.liveFinalRendered = YES;
+    }
+    if (!self.liveFinalRendered && normalCount > 0 && normalLast) {
+        NSString *note = [NSString stringWithFormat:@" (تم تجميع %lu حدث عرض عادي)", (unsigned long)normalCount];
+        [self appendRenderedLiveLineForEvent:normalLast note:note];
+        self.lastRenderedLiveSequence = normalLast.sequence;
+        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", normalLast.stage ?: @"UNKNOWN", normalLast.status ?: @"PENDING", (unsigned long)normalLast.sequence];
     }
 }
 

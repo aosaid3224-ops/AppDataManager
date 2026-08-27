@@ -61,8 +61,14 @@ typedef NS_ENUM(NSInteger, OperationPhase) {
 - (NSDictionary *)dictionaryRepresentation;
 @end
 
+typedef void (^OperationLogLiveHandler)(OperationRecord *record, BOOL isUpdate);
+
 @interface OperationLog : NSObject
 + (instancetype)sharedLog;
+/** Subscribes to one transaction after each record is persisted. The callback
+    must be lightweight; it is invoked on the log's serial queue. */
+- (NSString *)subscribeLiveToTransactionID:(NSString *)transactionID handler:(OperationLogLiveHandler)handler;
+- (void)unsubscribeLiveSubscription:(NSString *)subscriptionID;
 - (NSString *)beginTransactionForIPA:(NSString *)ipaPath;
 - (void)endTransaction:(NSString *)transactionID finalResult:(OperationResult)result;
 - (NSString *)beginPhase:(OperationPhase)phase

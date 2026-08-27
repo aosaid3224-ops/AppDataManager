@@ -10,11 +10,21 @@
 
 static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
 
+@interface OperationLogLiveSubscription : NSObject
+@property (nonatomic, copy) NSString *transactionID;
+@property (nonatomic, copy) OperationLogLiveHandler handler;
+@end
+
+@implementation OperationLogLiveSubscription
+@end
+
 @interface OperationLog ()
 @property (nonatomic, strong) NSMutableArray<OperationRecord *> *records;
 @property (nonatomic, strong) dispatch_queue_t logQueue;
+@property (nonatomic, strong) dispatch_queue_t persistenceQueue;
 @property (nonatomic, strong) NSString *logFilePath;
 @property (nonatomic, strong) NSString *activeTxnID;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, OperationLogLiveSubscription *> *liveSubscriptions;
 @end
 
 @implementation OperationLog
@@ -30,13 +40,48 @@ static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
     self = [super init];
     if (self) {
         _logQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.oplog", DISPATCH_QUEUE_SERIAL);
+        _persistenceQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.oplog.persistence", DISPATCH_QUEUE_SERIAL);
         _records = [NSMutableArray array];
+        _liveSubscriptions = [NSMutableDictionary dictionary];
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
         NSString *docs = paths.firstObject;
         _logFilePath = [docs stringByAppendingPathComponent:kLogFileName];
         [self loadLog];
     }
     return self;
+}
+
+#pragma mark - Live subscription
+
+- (NSString *)subscribeLiveToTransactionID:(NSString *)transactionID handler:(OperationLogLiveHandler)handler {
+    if (!transactionID.length || !handler) return @"";
+    NSString *subscriptionID = [[NSUUID UUID] UUIDString];
+    OperationLogLiveSubscription *subscription = [[OperationLogLiveSubscription alloc] init];
+    subscription.transactionID = [transactionID copy];
+    subscription.handler = [handler copy];
+    dispatch_sync(self.logQueue, ^{
+        self.liveSubscriptions[subscriptionID] = subscription;
+    });
+    return subscriptionID;
+}
+
+- (void)unsubscribeLiveSubscription:(NSString *)subscriptionID {
+    if (!subscriptionID.length) return;
+    // This is intentionally asynchronous because a live handler may close its
+    // stream while it is executing on logQueue.
+    dispatch_async(self.logQueue, ^{
+        [self.liveSubscriptions removeObjectForKey:subscriptionID];
+    });
+}
+
+- (void)publishLiveRecord:(OperationRecord *)record update:(BOOL)update {
+    if (!record.transactionID.length || self.liveSubscriptions.count == 0) return;
+    NSArray<OperationLogLiveSubscription *> *subscriptions = [self.liveSubscriptions.allValues copy];
+    for (OperationLogLiveSubscription *subscription in subscriptions) {
+        if ([subscription.transactionID isEqualToString:record.transactionID] && subscription.handler) {
+            subscription.handler(record, update);
+        }
+    }
 }
 
 #pragma mark - Transaction Lifecycle
@@ -143,6 +188,7 @@ static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
                 updated.context = context ?: @{};
                 self.records[i] = updated;
                 [self saveLog];
+                [self publishLiveRecord:updated update:YES];
                 [self broadcastRecordUpdated:updated];
                 break;
             }
@@ -156,6 +202,7 @@ static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
     dispatch_async(self.logQueue, ^{
         [self.records addObject:record];
         [self saveLog];
+        [self publishLiveRecord:record update:NO];
         [self broadcastRecordAdded:record];
     });
 }
@@ -307,11 +354,15 @@ static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
 #pragma mark - Persistence
 
 - (void)saveLog {
-    NSMutableArray *dicts = [NSMutableArray array];
-    for (OperationRecord *rec in self.records) {
-        [dicts addObject:[rec dictionaryRepresentation]];
-    }
-    [dicts writeToFile:self.logFilePath atomically:YES];
+    // Snapshot on logQueue, persist asynchronously on a separate serial queue.
+    // Live subscribers must never wait for plist I/O.
+    NSArray<OperationRecord *> *snapshot = [self.records copy];
+    NSString *path = [self.logFilePath copy];
+    dispatch_async(self.persistenceQueue, ^{
+        NSMutableArray *dicts = [NSMutableArray arrayWithCapacity:snapshot.count];
+        for (OperationRecord *rec in snapshot) [dicts addObject:[rec dictionaryRepresentation]];
+        [dicts writeToFile:path atomically:YES];
+    });
 }
 
 - (void)loadLog {
