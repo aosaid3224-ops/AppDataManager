@@ -2,6 +2,21 @@
 set -e
 
 HELPER_NAME="ipainstallerpro_helper"
+RM_BIN=""
+for candidate_rm in /var/jb/bin/rm /var/jb/usr/bin/rm /bin/rm /usr/bin/rm; do
+    if [ -x "$candidate_rm" ]; then
+        RM_BIN="$candidate_rm"
+        break
+    fi
+done
+if [ -z "$RM_BIN" ]; then
+    RM_BIN=$(command -v rm 2>/dev/null || true)
+fi
+if [ -z "$RM_BIN" ]; then
+    echo "ERROR: no usable rootless rm binary was found" >&2
+    exit 127
+fi
+
 # Check all possible locations (rootless and rootful)
 POSSIBLE_PATHS=(
     "/usr/bin/${HELPER_NAME}"
@@ -41,7 +56,7 @@ done
 for stage_root in "${STAGE_ROOTS[@]}"; do
     for stage_path in "$stage_root"/*.app.ipa-stage-*; do
         [ -d "$stage_path" ] || continue
-        /bin/rm -rf -- "$stage_path" 2>/dev/null || true
+        "$RM_BIN" -rf -- "$stage_path" 2>/dev/null || true
     done
 done
 

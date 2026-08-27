@@ -86,6 +86,20 @@ extern char **environ;
  self.chmodPath = [rm resolvePath:@"/usr/bin/chmod"];
  self.chownPath = [rm resolvePath:@"/usr/sbin/chown"];
  self.rmPath = [rm resolvePath:@"/bin/rm"];
+ if (![[NSFileManager defaultManager] isExecutableFileAtPath:self.rmPath]) {
+     NSArray<NSString *> *rmCandidates = @[
+         @"/var/jb/usr/bin/rm",
+         @"/var/jb/bin/rm",
+         @"/usr/bin/rm",
+         @"/bin/rm"
+     ];
+     for (NSString *candidate in rmCandidates) {
+         if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+             self.rmPath = candidate;
+             break;
+         }
+     }
+ }
  self.unzipPath = [rm resolvePath:@"/usr/bin/unzip"];
  self.whoamiPath = [rm resolvePath:@"/usr/bin/whoami"];
  self.mkdirPath = [rm resolvePath:@"/bin/mkdir"];
