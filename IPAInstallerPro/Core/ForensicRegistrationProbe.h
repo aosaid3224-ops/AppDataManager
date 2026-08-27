@@ -20,4 +20,8 @@
                     operationLog:(OperationLog *)operationLog
                     logicalPath:(NSString *)logicalPath
                    resolvedPath:(NSString *)resolvedPath;
+
+/// Read-only LaunchServices facts used by the transaction verifier. This does
+/// not invoke uicache and does not mutate registration state.
+- (NSDictionary *)launchServicesFactsForBundleID:(NSString *)bundleID;
 @end

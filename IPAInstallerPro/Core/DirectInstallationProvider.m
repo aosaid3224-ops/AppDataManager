@@ -8,6 +8,7 @@
 #import "RootlessManager.h"
 #import "OperationLog.h"
 #import "InstallationTransactionCoordinator.h"
+#import "ForensicRegistrationProbe.h"
 #import "JailbreakEnvironment.h"
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
@@ -2299,19 +2300,16 @@ extern char **environ;
 
 - (BOOL)isBundleIDRegistered:(NSString *)bundleID {
     if (!bundleID.length) return NO;
-    Class LS = objc_getClass("LSApplicationWorkspace");
-    if (!LS) return NO;
-    id workspace = [LS performSelector:@selector(defaultWorkspace)];
-    if (!workspace || ![workspace respondsToSelector:@selector(applicationForIdentifier:)]) return NO;
-    id application = [workspace performSelector:@selector(applicationForIdentifier:) withObject:bundleID];
-    return application != nil;
+    NSDictionary *facts = [[ForensicRegistrationProbe sharedProbe] launchServicesFactsForBundleID:bundleID];
+    return [facts[@"registered"] boolValue];
 }
 
 - (BOOL)verifyRegistrationForBundleID:(NSString *)bundleID path:(NSString *)appPath opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
-    BOOL registered = [self isBundleIDRegistered:bundleID];
+    NSDictionary *facts = [[ForensicRegistrationProbe sharedProbe] launchServicesFactsForBundleID:bundleID];
+    BOOL registered = [facts[@"registered"] boolValue];
     NSString *recordID = [opLog beginPhase:OperationPhaseVerify operation:@"verify registration" target:bundleID input:appPath ?: @"" transactionID:txnID];
-    [opLog endPhase:recordID exitCode:registered ? 0 : 1 rawOutput:@"" rawError:registered ? @"" : @"Bundle ID is not registered after uicache"
-    verification:[NSString stringWithFormat:@"registered=%@ path=%@", registered ? @"YES" : @"NO", appPath ?: @"-"] verified:registered duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"registered": @(registered) }];
+    [opLog endPhase:recordID exitCode:registered ? 0 : 1 rawOutput:@"" rawError:registered ? @"" : @"Bundle ID is not registered by any supported LaunchServices source"
+    verification:[NSString stringWithFormat:@"registered=%@ path=%@ workspaceEnumeration=%@ proxyLookup=%@", registered ? @"YES" : @"NO", appPath ?: @"-", [facts[@"workspaceEnumerationSupported"] boolValue] ? @"YES" : @"NO", [facts[@"proxyLookupSupported"] boolValue] ? @"YES" : @"NO"] verified:registered duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"registered": @(registered), @"launchServicesFacts": facts ?: @{} }];
     return registered;
 }
 
