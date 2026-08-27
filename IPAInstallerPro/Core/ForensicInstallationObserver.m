@@ -109,10 +109,16 @@
 }
 
 - (ForensicInstallState)stateForRecord:(OperationRecord *)record result:(ForensicEventResult *)resultOut {
+    BOOL isPendingBegin = (record.result == OperationResultPending || record.exitCode == -1) && record.rawOutput.length == 0 && record.rawError.length == 0;
     BOOL successful = record.verified && record.exitCode == 0 && record.result != OperationResultFailed;
-    ForensicEventResult result = successful ? ForensicEventResultSuccess : (record.result == OperationResultPending ? ForensicEventResultPending : ForensicEventResultFailure);
-    ForensicInstallState state = self.currentState;
+    ForensicEventResult result = isPendingBegin ? ForensicEventResultPending : (successful ? ForensicEventResultSuccess : (record.result == OperationResultPartial ? ForensicEventResultPartial : ForensicEventResultFailure));
+    ForensicInstallState state = isPendingBegin ? self.currentState : self.currentState;
     NSString *op = record.operation.lowercaseString ?: @"";
+    if (isPendingBegin) {
+        if (state == ForensicInstallStateUnknown) state = ForensicInstallStateBegun;
+        if (resultOut) *resultOut = ForensicEventResultPending;
+        return state;
+    }
 
     if (record.phase == OperationPhaseIPAOpen) state = successful ? ForensicInstallStateInputInspected : ForensicInstallStateFailed;
     else if (record.phase == OperationPhaseIPAExtract) state = successful ? ForensicInstallStateExtracted : ForensicInstallStateFailed;

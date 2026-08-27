@@ -10,6 +10,7 @@
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
 #import "MachOAnalyzer.h"
+#import "RootlessManager.h"
 #import <sys/stat.h>
 #import <spawn.h>
 #import <sys/wait.h>
@@ -343,7 +344,21 @@
 }
 
 - (BOOL)extractIPA:(NSString *)ipaPath toDirectory:(NSString *)destDir error:(NSString **)error {
-    NSString *output = [self runCmdOutput:@"/usr/bin/unzip" args:@[@"-o", @"-q", ipaPath, @"-d", destDir]];
+    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
+    if (!unzipPath.length || ![[NSFileManager defaultManager] isExecutableFileAtPath:unzipPath]) {
+        NSArray<NSString *> *fallbacks = @[@"/var/jb/usr/bin/unzip", @"/var/jb/bin/unzip", @"/usr/bin/unzip"];
+        for (NSString *candidate in fallbacks) {
+            if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+                unzipPath = candidate;
+                break;
+            }
+        }
+    }
+    if (!unzipPath.length || ![[NSFileManager defaultManager] isExecutableFileAtPath:unzipPath]) {
+        if (error) *error = @"Rootless unzip executable not found";
+        return NO;
+    }
+    NSString *output = [self runCmdOutput:unzipPath args:@[@"-o", @"-q", ipaPath, @"-d", destDir]];
 
     if (output && output.length > 0 &&
         [output rangeOfString:@"error" options:NSCaseInsensitiveSearch].location != NSNotFound) {
