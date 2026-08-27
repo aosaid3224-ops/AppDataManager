@@ -1291,23 +1291,34 @@ extern char **environ;
      return;
  }
 
- // STAT verification
+ // STAT verification (experimental branch only; Golden baseline is untouched)
  NSString *destExe = [destApp stringByAppendingPathComponent:exeName];
  mode_t mode = 0; uid_t uid = 0; gid_t gid = 0;
  BOOL statOk = [self verifyStat:destExe mode:&mode uid:&uid gid:&gid];
- NSString *rec10c = [opLog beginPhase:OperationPhasePermission operation:@"stat verification" target:destExe input:@"" transactionID:txnID];
- [opLog endPhase:rec10c exitCode:statOk ? 0 : 1 rawOutput:@"" rawError:statOk ? @"" : [NSString stringWithFormat:@"stat failed, errno=%d", errno]
- verification:[NSString stringWithFormat:@"mode=%o uid=%d gid=%d", mode, uid, gid]
- verified:(statOk && mode >= 0755 && uid == 0 && gid == 0) duration:0];
+ mode_t appMode = 0; uid_t appUID = 0; gid_t appGID = 0;
+ BOOL appStatOk = [self verifyStat:destApp mode:&appMode uid:&appUID gid:&appGID];
+ // Validate the actual runtime access available to the installer/app user rather than
+ // assuming a fixed uid/gid or requiring owner-only mode bits. Group/world write remains
+ // forbidden, and the executable must have the same owner/group as its containing bundle.
+ BOOL executableAccess = statOk && (access([destExe UTF8String], R_OK | X_OK) == 0);
+ BOOL bundleAccess = appStatOk && (access([destApp UTF8String], R_OK | X_OK) == 0);
+ BOOL secureMode = statOk && ((mode & (S_IWGRP | S_IWOTH)) == 0);
+ BOOL ownershipMatchesBundle = statOk && appStatOk && uid == appUID && gid == appGID;
+ BOOL permissionVerified = statOk && appStatOk && executableAccess && bundleAccess && secureMode && ownershipMatchesBundle;
+ NSString *statFailure = permissionVerified ? @"" : [NSString stringWithFormat:@"statOk=%@ appStatOk=%@ mode=%o uid=%d gid=%d appMode=%o appUid=%d appGid=%d executableAccess=%@ bundleAccess=%@ secureMode=%@ ownershipMatchesBundle=%@ errno=%d", statOk ? @"YES" : @"NO", appStatOk ? @"YES" : @"NO", mode, uid, gid, appMode, appUID, appGID, executableAccess ? @"YES" : @"NO", bundleAccess ? @"YES" : @"NO", secureMode ? @"YES" : @"NO", ownershipMatchesBundle ? @"YES" : @"NO", errno];
+ NSString *rec10c = [opLog beginPhase:OperationPhasePermission operation:@"stat verification" target:destExe input:@"permission postcondition" transactionID:txnID];
+ [opLog endPhase:rec10c exitCode:permissionVerified ? 0 : 1 rawOutput:permissionVerified ? @"stat/postcondition passed" : @"" rawError:statFailure
+ verification:[NSString stringWithFormat:@"statOk=%@ mode=%o uid=%d gid=%d appStatOk=%@ appMode=%o appUid=%d appGid=%d executableAccess=%@ bundleAccess=%@ secureMode=%@ ownershipMatchesBundle=%@", statOk ? @"YES" : @"NO", mode, uid, gid, appStatOk ? @"YES" : @"NO", appMode, appUID, appGID, executableAccess ? @"YES" : @"NO", bundleAccess ? @"YES" : @"NO", secureMode ? @"YES" : @"NO", ownershipMatchesBundle ? @"YES" : @"NO"]
+ verified:permissionVerified duration:0];
 
- if (!statOk || mode < 0755 || uid != 0 || gid != 0) {
+ if (!permissionVerified) {
  // ROLLBACK
  [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
  [fm removeItemAtPath:tmp error:nil];
   // Emit diagnostics report even on failure
   [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
  [opLog endTransaction:txnID finalResult:OperationResultFailed];
- if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Permission verification failed: mode=%o uid=%d gid=%d", mode, uid, gid]
+ if (completion) completion([InstallationResult failureResult:[NSString stringWithFormat:@"Permission postcondition failed: statOk=%@ mode=%o uid=%d gid=%d appUid=%d appGid=%d executableAccess=%@ bundleAccess=%@ secureMode=%@ ownershipMatchesBundle=%@", statOk ? @"YES" : @"NO", mode, uid, gid, appUID, appGID, executableAccess ? @"YES" : @"NO", bundleAccess ? @"YES" : @"NO", secureMode ? @"YES" : @"NO", ownershipMatchesBundle ? @"YES" : @"NO"]
  provider:[self providerName] transaction:txnID error:nil evidence:nil]);
  return;
  }
