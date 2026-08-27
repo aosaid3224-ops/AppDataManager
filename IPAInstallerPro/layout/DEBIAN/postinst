@@ -20,6 +20,16 @@ STAGE_ROOTS=(
     "/var/jb/var/tmp/IPAInstallerPro-Staging"
     "/var/tmp/IPAInstallerPro-Staging"
 )
+# uicache resolves /var/jb/Applications before enumerating it. Add the
+# physical target as well, because find/glob behavior differs across roots.
+for logical_root in "/var/jb/Applications" "/Applications" "/var/jb/var/tmp/IPAInstallerPro-Staging" "/var/tmp/IPAInstallerPro-Staging"; do
+    if [ -d "$logical_root" ]; then
+        physical_root=$(cd "$logical_root" 2>/dev/null && pwd -P || true)
+        if [ -n "$physical_root" ]; then
+            STAGE_ROOTS+=("$physical_root")
+        fi
+    fi
+done
 for stage_root in "${STAGE_ROOTS[@]}"; do
     for stage_path in "$stage_root"/*.app.ipa-stage-*; do
         [ -d "$stage_path" ] || continue
