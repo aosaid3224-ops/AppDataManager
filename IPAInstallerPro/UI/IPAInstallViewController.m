@@ -195,6 +195,26 @@
     progressVC.ipaName = self.ipaInfo.displayName ?: self.ipaInfo.name;
     progressVC.ipaPath = self.ipaInfo.filePath;
     progressVC.modalPresentationStyle = UIModalPresentationFullScreen;
+    if (self.launchedFromDuplicate) {
+        progressVC.dismissOnDuplicateSuccess = YES;
+        __weak typeof(self) weakSelf = self;
+        __weak InstallationProgressViewController *weakProgressVC = progressVC;
+        progressVC.duplicateCompletionHandler = ^(BOOL success, InstallationResult *result) {
+            if (!success) return;
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            __strong InstallationProgressViewController *strongProgressVC = weakProgressVC;
+            if (!strongSelf || !strongProgressVC) return;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [strongProgressVC dismissViewControllerAnimated:YES completion:^{
+                    [strongSelf dismissViewControllerAnimated:YES completion:^{
+                        if (strongSelf.duplicateCompletionHandler) {
+                            strongSelf.duplicateCompletionHandler(YES);
+                        }
+                    }];
+                }];
+            });
+        };
+    }
     [self presentViewController:progressVC animated:YES completion:nil];
 }
 

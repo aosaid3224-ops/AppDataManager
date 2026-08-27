@@ -719,6 +719,21 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         }
         [self.progressView setProgress:1.0 animated:YES];
         self.headerLabel.text = @"\u0627\u0643\u062a\u0645\u0644 \u0627\u0644\u062a\u062b\u0628\u064a\u062a \u2713";
+        if (self.dismissOnDuplicateSuccess) {
+            // Duplicate owns this progress modal. Close the passive stream and
+            // release presentation state before notifying its parent. The
+            // ordinary install flow keeps the existing report-card behavior.
+            [self.liveStream close];
+            self.liveStream = nil;
+            [self.pendingLiveCriticalEvents removeAllObjects];
+            self.pendingLiveNormalLast = nil;
+            self.pendingLiveNormalCount = 0;
+            self.liveRenderGeneration += 1;
+            IPADuplicateCompletionHandler handler = [self.duplicateCompletionHandler copy];
+            self.duplicateCompletionHandler = nil;
+            if (handler) handler(YES, result);
+            return;
+        }
         [self showReportCard:result success:YES];
     });
 }
