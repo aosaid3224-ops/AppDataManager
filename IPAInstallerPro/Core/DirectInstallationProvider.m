@@ -2248,12 +2248,18 @@ extern char **environ;
  NSString *p = [fwp stringByAppendingPathComponent:item];
  if ([item hasSuffix:@".dylib"] || [item hasSuffix:@".so"]) {
  BOOL dylibReadable = [fm isReadableFileAtPath:p];
- BOOL dylibX_OK = (access([p UTF8String], X_OK) == 0);
+ BOOL dylibExecutableBit = (access([p UTF8String], X_OK) == 0);
+ MachOAnalysisResult *dylibAnalysis = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:p];
+ BOOL dylibMachOValid = (dylibAnalysis && dylibAnalysis.parseStatus == MachOParseSuccess && dylibAnalysis.machOType != 0);
+ // Shared libraries are loaded by the host process and are not main
+ // executables. Their X_OK bit is recorded as evidence but is not a failure
+ // condition; readability and valid Mach-O metadata remain mandatory.
+ BOOL dylibValid = dylibReadable && dylibMachOValid;
  NSString *recFw = [opLog beginPhase:OperationPhaseVerify operation:[NSString stringWithFormat:@"verify dylib %@", item] target:p input:@"" transactionID:txnID];
- [opLog endPhase:recFw exitCode:(dylibReadable && dylibX_OK) ? 0 : 1 rawOutput:@"" rawError:(dylibReadable && dylibX_OK) ? @"" : @"Permission denied"
- verification:[NSString stringWithFormat:@"readable=%@ xok=%@", dylibReadable ? @"YES" : @"NO", dylibX_OK ? @"YES" : @"NO"]
- verified:(dylibReadable && dylibX_OK) duration:0];
- if (!dylibReadable || !dylibX_OK) ok = NO;
+ [opLog endPhase:recFw exitCode:dylibValid ? 0 : 1 rawOutput:@"" rawError:dylibValid ? @"" : [NSString stringWithFormat:@"readable=%@ machoValid=%@", dylibReadable ? @"YES" : @"NO", dylibMachOValid ? @"YES" : @"NO"]
+ verification:[NSString stringWithFormat:@"readable=%@ executableBit=%@ machoValid=%@ signatureCheckedByPostSign=YES", dylibReadable ? @"YES" : @"NO", dylibExecutableBit ? @"YES" : @"NO", dylibMachOValid ? @"YES" : @"NO"]
+ verified:dylibValid duration:0 context:@{ @"path": p ?: @"", @"readable": @(dylibReadable), @"executableBit": @(dylibExecutableBit), @"machoValid": @(dylibMachOValid), @"signatureCheckedByPostSign": @YES }];
+ if (!dylibValid) ok = NO;
  }
  }
  }
