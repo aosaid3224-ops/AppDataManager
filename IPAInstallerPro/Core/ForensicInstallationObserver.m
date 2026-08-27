@@ -75,6 +75,12 @@
 }
 
 - (ForensicTransactionReport *)finishObservation {
+    if (self.observing && self.operationLog && self.currentReport.transactionID.length > 0) {
+        // Drain the OperationLog queue and project its final records before
+        // removing observers, so the live report never loses the last END event.
+        NSArray<OperationRecord *> *finalRecords = [self.operationLog recordsForTransaction:self.currentReport.transactionID];
+        for (OperationRecord *record in finalRecords) [self consumeRecord:record];
+    }
     if (self.observing) [[NSNotificationCenter defaultCenter] removeObserver:self];
     self.observing = NO;
     if (!self.currentReport) return nil;
@@ -277,6 +283,8 @@
     [events sortUsingComparator:^NSComparisonResult(ForensicEvent *a, ForensicEvent *b) { return [a.startedAt compare:b.startedAt]; }];
     self.currentReport.events = [events copy];
     self.currentReport.finalState = self.currentState;
+    ForensicEvent *publishedEvent = event;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"ForensicEventUpdated" object:publishedEvent userInfo:@{@"event": [publishedEvent dictionaryRepresentation]}];
 }
 
 @end

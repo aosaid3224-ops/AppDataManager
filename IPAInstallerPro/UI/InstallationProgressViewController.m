@@ -9,6 +9,8 @@
 #import "InstallationEngine.h"
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
+#import "ForensicInstallationObserver.h"
+#import "ForensicTypes.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -193,6 +195,12 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIView *logContainer;
 
+// Passive forensic stream: observes the same transaction without starting a
+// second install, signing pass, or registration pass.
+@property (nonatomic, strong) ForensicInstallationObserver *forensicObserver;
+@property (nonatomic, strong) UIView *liveOutputCard;
+@property (nonatomic, strong) UILabel *liveStateLabel;
+@property (nonatomic, strong) UITextView *liveOutputView;
 
 @end
 
@@ -210,6 +218,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.forensicObserver finishObservation];
 }
 
 #pragma mark - Raw Log
@@ -298,6 +307,10 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
                                              selector:@selector(operationRecordUpdated:)
                                                  name:@"OperationRecordUpdated"
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(forensicEventUpdated:)
+                                                 name:@"ForensicEventUpdated"
+                                               object:nil];
 }
 
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
@@ -338,6 +351,31 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         self.currentPhaseIndex = uiPhase;
         float progress = (float)(uiPhase + 1) / (float)self.phaseViews.count;
         [self.progressView setProgress:progress animated:YES];
+    });
+}
+
+- (void)forensicEventUpdated:(NSNotification *)note {
+    ForensicEvent *event = note.object;
+    if (!event || ![event.transactionID isEqualToString:self.currentTxnID]) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self.liveOutputView || !self.liveStateLabel) return;
+        NSString *state = ForensicInstallStateName(event.stateAfter);
+        NSString *result = ForensicEventResultName(event.result);
+        NSString *line = [NSString stringWithFormat:@"[%@] %@ | %@ | target:%@ | path:%@ | pid:%d uid:%ld gid:%ld | exit:%d | result:%@",
+                           state, event.phase ?: @"FORENSIC", event.operation ?: @"", event.target ?: @"-",
+                           event.resolvedPath.length ? event.resolvedPath : @"-", event.pid,
+                           (long)event.uid, (long)event.gid, event.exitStatus, result];
+        NSMutableString *block = [NSMutableString stringWithString:line];
+        if (event.failureReason.length > 0) [block appendFormat:@"\nسبب الفشل: %@", event.failureReason];
+        if (event.stdoutText.length > 0) [block appendFormat:@"\nstdout: %@", event.stdoutText];
+        if (event.stderrText.length > 0) [block appendFormat:@"\nstderr: %@", event.stderrText];
+        NSString *existing = self.liveOutputView.text ?: @"";
+        NSString *updated = existing.length > 500000 ? [existing substringFromIndex:existing.length - 500000] : existing;
+        self.liveOutputView.text = updated.length ? [updated stringByAppendingFormat:@"\n%@\n", block] : [block stringByAppendingString:@"\n"];
+        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@", state, result];
+        UIColor *color = event.result == ForensicEventResultFailure ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0];
+        self.liveStateLabel.textColor = color;
+        [self.liveOutputView scrollRangeToVisible:NSMakeRange(self.liveOutputView.text.length, 0)];
     });
 }
 
@@ -420,6 +458,40 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     _progressView.clipsToBounds = YES;
     [_containerView addSubview:_progressView];
 
+    _liveOutputCard = [[UIView alloc] init];
+    _liveOutputCard.translatesAutoresizingMaskIntoConstraints = NO;
+    _liveOutputCard.backgroundColor = [UIColor colorWithWhite:0.045 alpha:1.0];
+    _liveOutputCard.layer.cornerRadius = 12;
+    _liveOutputCard.layer.borderWidth = 1;
+    _liveOutputCard.layer.borderColor = [UIColor colorWithWhite:0.16 alpha:1.0].CGColor;
+    [_containerView addSubview:_liveOutputCard];
+
+    UILabel *liveTitle = [[UILabel alloc] init];
+    liveTitle.translatesAutoresizingMaskIntoConstraints = NO;
+    liveTitle.text = @"الإخراج الحي للعملية";
+    liveTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+    liveTitle.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
+    [_liveOutputCard addSubview:liveTitle];
+
+    _liveStateLabel = [[UILabel alloc] init];
+    _liveStateLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _liveStateLabel.text = @"الحالة الحية: بانتظار البدء";
+    _liveStateLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    _liveStateLabel.textColor = [UIColor colorWithWhite:0.55 alpha:1.0];
+    _liveStateLabel.numberOfLines = 2;
+    [_liveOutputCard addSubview:_liveStateLabel];
+
+    _liveOutputView = [[UITextView alloc] init];
+    _liveOutputView.translatesAutoresizingMaskIntoConstraints = NO;
+    _liveOutputView.backgroundColor = [UIColor colorWithWhite:0.02 alpha:1.0];
+    _liveOutputView.textColor = [UIColor colorWithRed:0.45 green:0.95 blue:0.6 alpha:1.0];
+    _liveOutputView.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
+    _liveOutputView.editable = NO;
+    _liveOutputView.selectable = YES;
+    _liveOutputView.text = @"لا توجد أحداث بعد...";
+    _liveOutputView.layer.cornerRadius = 8;
+    [_liveOutputCard addSubview:_liveOutputView];
+
     _phasesStack = [[UIStackView alloc] init];
     _phasesStack.translatesAutoresizingMaskIntoConstraints = NO;
     _phasesStack.axis = UILayoutConstraintAxisVertical;
@@ -465,7 +537,25 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [_progressView.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
         [_progressView.heightAnchor constraintEqualToConstant:4],
 
-        [_phasesStack.topAnchor constraintEqualToAnchor:_progressView.bottomAnchor constant:24],
+        [_liveOutputCard.topAnchor constraintEqualToAnchor:_progressView.bottomAnchor constant:16],
+        [_liveOutputCard.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor],
+        [_liveOutputCard.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
+        [_liveOutputCard.heightAnchor constraintEqualToConstant:214],
+
+        [liveTitle.topAnchor constraintEqualToAnchor:_liveOutputCard.topAnchor constant:10],
+        [liveTitle.leadingAnchor constraintEqualToAnchor:_liveOutputCard.leadingAnchor constant:12],
+        [liveTitle.trailingAnchor constraintLessThanOrEqualToAnchor:_liveOutputCard.trailingAnchor constant:-12],
+
+        [_liveStateLabel.topAnchor constraintEqualToAnchor:liveTitle.bottomAnchor constant:2],
+        [_liveStateLabel.leadingAnchor constraintEqualToAnchor:liveTitle.leadingAnchor],
+        [_liveStateLabel.trailingAnchor constraintEqualToAnchor:_liveOutputCard.trailingAnchor constant:-12],
+
+        [_liveOutputView.topAnchor constraintEqualToAnchor:_liveStateLabel.bottomAnchor constant:6],
+        [_liveOutputView.leadingAnchor constraintEqualToAnchor:_liveOutputCard.leadingAnchor constant:8],
+        [_liveOutputView.trailingAnchor constraintEqualToAnchor:_liveOutputCard.trailingAnchor constant:-8],
+        [_liveOutputView.bottomAnchor constraintEqualToAnchor:_liveOutputCard.bottomAnchor constant:-8],
+
+        [_phasesStack.topAnchor constraintEqualToAnchor:_liveOutputCard.bottomAnchor constant:20],
         [_phasesStack.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor],
         [_phasesStack.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
         [_phasesStack.bottomAnchor constraintLessThanOrEqualToAnchor:_containerView.bottomAnchor]
@@ -523,6 +613,15 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     self.currentTxnID = [[NSUUID UUID] UUIDString];
     [engine prepareTransactionWithID:self.currentTxnID];
+
+    self.liveOutputView.text = @"[FORENSIC] بدء مراقبة transaction...\n";
+    self.liveStateLabel.text = @"الحالة الحية: BEGIN — OBSERVED";
+    self.liveStateLabel.textColor = [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0];
+    self.forensicObserver = [[ForensicInstallationObserver alloc] init];
+    [self.forensicObserver beginObservingTransaction:self.currentTxnID
+                                             ipaPath:self.ipaPath
+                                            bundleID:@""
+                                       operationLog:[OperationLog sharedLog]];
 
     __weak typeof(self) weakSelf = self;
     [engine installIPA:self.ipaPath
