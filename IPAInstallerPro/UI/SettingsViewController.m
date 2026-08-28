@@ -9,21 +9,15 @@
 #import "CapabilityManager.h"
 #import "JailbreakEnvironment.h"
 #import "RootlessManager.h"
-#import "Logger.h"
-#import "IPAStructuralAnalyzer.h"
-#import "IPAStructuralResult.h"
 #import "IPTheme.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import <MobileCoreServices/MobileCoreServices.h>
 
-@interface SettingsViewController () <UIDocumentPickerDelegate>
+@interface SettingsViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UILabel *envLabel;
 @property (nonatomic, strong) UILabel *capLabel;
-@property (nonatomic, copy) NSString *lastReportText;
-@property (nonatomic, copy) NSString *lastJsonText;
 @end
 
 @implementation SettingsViewController
@@ -36,7 +30,6 @@
     [self setupScrollView];
     [self setupEnvironmentSection];
     [self setupCapabilitiesSection];
-    [self setupAnalyzerSection];
     [self refreshData];
 }
 
@@ -133,39 +126,6 @@
         [self.capLabel.heightAnchor constraintGreaterThanOrEqualToConstant:260]
     ]];}
 
-#pragma mark - Analyzer Test Section
-
-- (void)setupAnalyzerSection {
-    UILabel *header = [[UILabel alloc] init];
-    header.translatesAutoresizingMaskIntoConstraints = NO;
-    header.text = @"🧪 اختبار Analyzer";
-    header.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    header.textColor = [UIColor whiteColor];
-    header.textAlignment = NSTextAlignmentRight;
-    [self.contentView addSubview:header];
-
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-    btn.translatesAutoresizingMaskIntoConstraints = NO;
-    btn.backgroundColor = [IPTheme accentColor];
-    [btn setTitle:@"🔍 اختيار وتحليل IPA" forState:UIControlStateNormal];
-    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    btn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    btn.layer.cornerRadius = 17;
-    [btn addTarget:self action:@selector(pickIPAFile) forControlEvents:UIControlEventTouchUpInside];
-    [self.contentView addSubview:btn];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [header.topAnchor constraintEqualToAnchor:self.capLabel.bottomAnchor constant:32],
-        [header.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-        [header.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-
-        [btn.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
-        [btn.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-        [btn.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [btn.heightAnchor constraintEqualToConstant:52],
-        [btn.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-24]
-    ]];}
-
 #pragma mark - Data
 
 - (void)refreshData {
@@ -193,134 +153,6 @@
     }
 
     self.capLabel.text = capStr;
-}
-
-#pragma mark - IPA File Picker
-
-- (void)pickIPAFile {
-    NSArray *types = @[@"public.item", @"public.data"];
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:types inMode:UIDocumentPickerModeOpen];
-    picker.delegate = self;
-    picker.modalPresentationStyle = UIModalPresentationFullScreen;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-#pragma mark - UIDocumentPickerDelegate
-
-- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    if (urls.count == 0) return;
-
-    NSURL *url = urls[0];
-    NSString *path = url.path;
-
-    if (![path.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ملف غير صالح"
-                                                                       message:@"الملف المختار ليس IPA. اختر ملفًا ينتهي بـ .ipa"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
-    UIAlertController *progress = [UIAlertController alertControllerWithTitle:@"⏳ جاري التحليل..."
-                                                                      message:url.lastPathComponent
-                                                               preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:progress animated:YES completion:nil];
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        IPAStructuralResult *result = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:path];
-
-        NSString *jsonPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ipa_analysis.json"];
-        [[result jsonRepresentation] writeToFile:jsonPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-
-        self.lastReportText = [result summaryReport];
-        self.lastJsonText = [result jsonRepresentation];
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [progress dismissViewControllerAnimated:YES completion:^{
-                [self showRawResultViewer];
-            }];
-        });
-    });
-}
-
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    // User cancelled
-}
-
-#pragma mark - Raw Result Viewer
-
-- (void)showRawResultViewer {
-    UIViewController *vc = [[UIViewController alloc] init];
-    vc.title = @"📋 لوغات التحليل الخام";
-    vc.view.backgroundColor = [IPTheme backgroundColor];
-
-    CGFloat w = vc.view.bounds.size.width;
-    CGFloat h = vc.view.bounds.size.height;
-    CGFloat safeTop = 0;
-    if (@available(iOS 11.0, *)) {
-        safeTop = vc.view.safeAreaInsets.top;
-    }
-
-    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
-    seg.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
-    seg.selectedSegmentIndex = 0;
-    seg.backgroundColor = [IPTheme cardColor]; seg.layer.cornerRadius = 12; seg.layer.masksToBounds = YES;
-    if (@available(iOS 13.0, *)) {
-        seg.selectedSegmentTintColor = [IPTheme accentColor];
-        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
-        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateSelected];
-    } else {
-        seg.tintColor = [IPTheme accentColor];
-    }
-    [seg addTarget:self action:@selector(rawSegmentChanged:) forControlEvents:UIControlEventValueChanged];
-    [vc.view addSubview:seg];
-
-    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
-    tv.backgroundColor = [IPTheme cardColor]; tv.layer.cornerRadius = 16; tv.layer.borderWidth = 0.7; tv.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    tv.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
-    tv.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
-    tv.editable = NO;
-    tv.selectable = YES;
-    tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    tv.text = self.lastReportText ?: @"No data";
-    tv.tag = 9001;
-    [vc.view addSubview:tv];
-
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(16, h - 44, w - 32, 36);
-    closeBtn.backgroundColor = [IPTheme secondaryCardColor]; closeBtn.layer.borderWidth = 0.7; closeBtn.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    [closeBtn setTitle:@"❌ إغلاق" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-    closeBtn.layer.cornerRadius = 16;
-    closeBtn.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-    [closeBtn addTarget:self action:@selector(closeRawViewer:) forControlEvents:UIControlEventTouchUpInside];
-    [vc.view addSubview:closeBtn];
-
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-    nav.navigationBar.barStyle = UIBarStyleBlack;
-    nav.navigationBar.tintColor = [UIColor whiteColor];
-    nav.modalPresentationStyle = UIModalPresentationFullScreen;
-    [self presentViewController:nav animated:YES completion:nil];
-}
-
-- (void)rawSegmentChanged:(UISegmentedControl *)sender {
-    UIViewController *presented = self.presentedViewController;
-    if ([presented isKindOfClass:[UINavigationController class]]) {
-        UIViewController *top = [(UINavigationController *)presented topViewController];
-        for (UIView *v in top.view.subviews) {
-            if ([v isKindOfClass:[UITextView class]] && v.tag == 9001) {
-                UITextView *tv = (UITextView *)v;
-                tv.text = (sender.selectedSegmentIndex == 0) ? self.lastReportText : self.lastJsonText;
-                break;
-            }
-        }
-    }
-}
-
-- (void)closeRawViewer:(UIButton *)sender {
-    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
