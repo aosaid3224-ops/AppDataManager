@@ -161,23 +161,35 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)addIPATapped:(id)sender {
-    UTType *appleIPAType = [UTType typeWithIdentifier:@"com.apple.itunes.ipa"];
-    UTType *localIPAType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
-    UTType *extensionIPAType = [UTType typeWithFilenameExtension:@"ipa"];
-    NSMutableArray<UTType *> *ipaTypes = [NSMutableArray array];
-    for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null]]) {
-        if (![type isKindOfClass:UTType.class] || [ipaTypes containsObject:type]) continue;
-        [ipaTypes addObject:type];
-    }
-    if (ipaTypes.count == 0) {
-        [self showMessage:@"تعذر تسجيل نوع IPA على هذا النظام."];
-        return;
-    }
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:ipaTypes asCopy:NO];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = YES;
-    picker.modalPresentationStyle = UIModalPresentationFormSheet;
-    [self presentViewController:picker animated:YES completion:nil];
+    void (^presentPicker)(void) = ^{
+        UTType *appleIPAType = [UTType typeWithIdentifier:@"com.apple.itunes.ipa"];
+        UTType *localIPAType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
+        UTType *extensionIPAType = [UTType typeWithFilenameExtension:@"ipa"];
+        NSMutableArray<UTType *> *ipaTypes = [NSMutableArray array];
+        for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null]]) {
+            if (![type isKindOfClass:UTType.class] || [ipaTypes containsObject:type]) continue;
+            [ipaTypes addObject:type];
+        }
+        if (ipaTypes.count == 0) {
+            [self showMessage:@"تعذر تسجيل نوع IPA على هذا النظام."];
+            return;
+        }
+        UIViewController *presenter = self;
+        if (self.navigationController.visibleViewController == self) presenter = self.navigationController;
+        if (!presenter.viewIfLoaded.window) presenter = self;
+        if (presenter.presentedViewController) {
+            NSLog(@"[IPAExtractor] picker presentation deferred: %@ is already presenting %@", presenter, presenter.presentedViewController);
+            return;
+        }
+        UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:ipaTypes asCopy:NO];
+        picker.delegate = self;
+        picker.allowsMultipleSelection = YES;
+        picker.modalPresentationStyle = UIModalPresentationPageSheet;
+        NSLog(@"[IPAExtractor] presenting IPA picker from %@ with %lu allowed types", presenter, (unsigned long)ipaTypes.count);
+        [presenter presentViewController:picker animated:YES completion:nil];
+    };
+    if ([NSThread isMainThread]) presentPicker();
+    else dispatch_async(dispatch_get_main_queue(), presentPicker);
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
