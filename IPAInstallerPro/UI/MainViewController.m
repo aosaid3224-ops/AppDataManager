@@ -3,6 +3,7 @@
 #import "IPAInstallViewController.h"
 #import "Core/IPAExtractor.h"
 #import "Core/Logger.h"
+#import "GlassIPACell.h"
 
 @interface MainViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
@@ -23,7 +24,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.035 blue:0.075 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
@@ -55,8 +56,11 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 40, 0);
-    self.tableView.rowHeight = 80;
+    self.tableView.contentInset = UIEdgeInsetsMake(8, 0, 54, 0);
+    self.tableView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(8, 0, 20, 0);
+    self.tableView.rowHeight = 94;
+    self.tableView.showsVerticalScrollIndicator = NO;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [self.view addSubview:self.tableView];
 
     self.refreshControl = [[UIRefreshControl alloc] init];
@@ -80,7 +84,7 @@
     UIBarButtonItem *addBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                                               target:self
                                                                               action:@selector(addIPATapped:)];
-    addBtn.tintColor = [UIColor whiteColor];
+    addBtn.tintColor = [UIColor colorWithRed:0.48 green:0.82 blue:1.0 alpha:1.0];
     self.navigationItem.rightBarButtonItem = addBtn;
 }
 
@@ -359,44 +363,19 @@
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.ipaFiles.count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    static NSString *cellId = @"IPACell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
+    static NSString *cellId = @"GlassIPACell";
+    GlassIPACell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-        cell.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.13 alpha:1.0];
-        cell.layer.cornerRadius = 14;
-        cell.layer.masksToBounds = YES;
-        cell.textLabel.textColor = [UIColor whiteColor];
-        cell.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-        cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
-        cell.detailTextLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
-        cell.detailTextLabel.numberOfLines = 2;
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.imageView.layer.cornerRadius = 10;
-        cell.imageView.layer.masksToBounds = YES;
+        cell = [[GlassIPACell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellId];
     }
-
-    IPAExtractedInfo *info = self.ipaFiles[indexPath.row];
-    cell.textLabel.text = info.displayName ?: info.name ?: [info.filePath lastPathComponent];
-
-    NSString *versionStr = info.version ?: @"غير معروف";
-    NSString *bundleStr = info.bundleID ?: @"غير معروف";
-    NSString *sizeStr = info.formattedSize ?: @"غير معروف";
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@ • %@", versionStr, bundleStr, sizeStr];
-
-    UIImage *icon = info.icon;
-    if (icon) {
-        CGSize size = CGSizeMake(52, 52);
-        UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
-        [icon drawInRect:CGRectMake(0, 0, size.width, size.height)];
-        UIImage *scaled = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        cell.imageView.image = scaled;
-    } else {
-        cell.imageView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:0.4 alpha:1.0]];
-    }
-
+    [cell configureWithIPAInfo:self.ipaFiles[indexPath.row]];
     return cell;
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if ([cell isKindOfClass:[GlassIPACell class]]) {
+        [(GlassIPACell *)cell playEntranceAnimationWithDelay:MIN(indexPath.row * 0.045, 0.24)];
+    }
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {

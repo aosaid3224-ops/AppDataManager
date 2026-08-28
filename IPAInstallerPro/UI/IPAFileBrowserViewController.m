@@ -16,7 +16,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = self.currentPath.lastPathComponent ?: @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.035 blue:0.075 alpha:1.0];
     if (!self.currentPath) self.currentPath = @"/var/mobile";
     self.items = [NSMutableArray array];
     self.filteredItems = [NSMutableArray array];
@@ -45,7 +45,11 @@
     self.toolbar = [[UIToolbar alloc] init];
     self.toolbar.translatesAutoresizingMaskIntoConstraints = NO;
     self.toolbar.barStyle = UIBarStyleBlack;
-    self.toolbar.tintColor = [UIColor whiteColor];
+    self.toolbar.translucent = YES;
+    self.toolbar.barTintColor = [UIColor colorWithWhite:0.08 alpha:0.62];
+    self.toolbar.tintColor = [UIColor colorWithRed:0.48 green:0.82 blue:1.0 alpha:1.0];
+    self.toolbar.layer.borderWidth = 0.6;
+    self.toolbar.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
     [self.view addSubview:self.toolbar];
 
     UIBarButtonItem *backBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"chevron.backward"] style:UIBarButtonItemStylePlain target:self action:@selector(goBack:)];
@@ -70,7 +74,9 @@
     self.tableView.dataSource = self;
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.rowHeight = 64;
+    self.tableView.contentInset = UIEdgeInsetsMake(8, 0, 16, 0);
+    self.tableView.rowHeight = 76;
+    self.tableView.showsVerticalScrollIndicator = NO;
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.tableView];
 
@@ -260,7 +266,12 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-        cell.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.13 alpha:1.0];
+        cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.075];
+        cell.layer.cornerRadius = 18.0;
+        cell.layer.cornerCurve = kCACornerCurveContinuous;
+        cell.layer.borderWidth = 0.6;
+        cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
+        cell.layer.masksToBounds = YES;
         cell.textLabel.textColor = [UIColor whiteColor];
         cell.textLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
         cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
@@ -289,7 +300,17 @@
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@", [self formatSize:size], [self formatDate:date]];
     }
 
+    cell.contentView.layoutMargins = UIEdgeInsetsMake(4, 10, 4, 10);
     return cell;
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    cell.alpha = 0.0;
+    cell.transform = CGAffineTransformMakeTranslation(0, 12);
+    [UIView animateWithDuration:0.42 delay:MIN(indexPath.row * 0.035, 0.2) usingSpringWithDamping:0.86 initialSpringVelocity:0.2 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        cell.alpha = 1.0;
+        cell.transform = CGAffineTransformIdentity;
+    } completion:nil];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
