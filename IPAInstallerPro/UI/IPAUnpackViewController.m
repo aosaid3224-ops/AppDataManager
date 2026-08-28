@@ -2,6 +2,7 @@
 #import "Core/IPAArchiveExtractor.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "IPAArchiveBrowserViewController.h"
+#import "IPAFileCardCell.h"
 
 @interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating>
 @property (nonatomic, strong) UITableView *tableView;
@@ -130,7 +131,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     self.tableView.rowHeight = 84;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
+    [self.tableView registerClass:IPAFileCardCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
     [self.view addSubview:self.tableView];
 }
 
@@ -565,52 +566,50 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self displayRows].count; }
 
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"IPAUnpackCell" forIndexPath:indexPath];
+- (IPAFileCardCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    IPAFileCardCell *cell = [tableView dequeueReusableCellWithIdentifier:@"IPAUnpackCell" forIndexPath:indexPath];
     NSDictionary *descriptor = [self rowDescriptorAtIndexPath:indexPath];
     NSString *kind = descriptor[@"kind"];
     NSMutableDictionary *item = descriptor[@"item"];
     BOOL output = [kind isEqualToString:@"output"];
-    cell.indentationLevel = output ? 1 : 0;
     NSString *sourceTitle = item[@"displayName"] ?: item[@"name"] ?: @"IPA";
-    cell.textLabel.text = output ? [NSString stringWithFormat:@"↳ %@ — Extracted", sourceTitle] : [NSString stringWithFormat:@"%@.ipa", sourceTitle];
-    cell.textLabel.textColor = UIColor.whiteColor;
-    cell.textLabel.textAlignment = NSTextAlignmentRight;
-    cell.textLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    cell.textLabel.font = [UIFont systemFontOfSize:15 weight:output ? UIFontWeightMedium : UIFontWeightSemibold];
+    NSString *sourceName = item[@"name"] ?: [NSString stringWithFormat:@"%@.ipa", sourceTitle];
+    NSString *sourcePath = [self sourcePathForItem:item];
+    NSDictionary *sourceAttrs = sourcePath.length ? [[NSFileManager defaultManager] attributesOfItemAtPath:sourcePath error:nil] : @{};
+    unsigned long long sourceBytes = [sourceAttrs[NSFileSize] unsignedLongLongValue];
+    NSString *sizeText = sourceBytes > 0 ? [self formattedSize:sourceBytes] : @"الحجم غير متاح";
+    UIImage *icon = nil;
+    NSString *title = nil;
+    NSString *subtitle = nil;
+    NSString *meta = nil;
+    UIColor *statusColor = nil;
     if (output) {
         BOOL outputAvailable = [[NSFileManager defaultManager] fileExistsAtPath:item[@"outputPath"]];
         NSDictionary *attrs = outputAvailable ? [[NSFileManager defaultManager] attributesOfItemAtPath:item[@"outputPath"] error:nil] : @{};
-        cell.detailTextLabel.text = outputAvailable ? [NSString stringWithFormat:@"مستخرج • %@ • %@", [self formattedSize:[attrs[NSFileSize] unsignedLongLongValue]], [self formattedDate:attrs[NSFileModificationDate]]] : @"الناتج غير متاح";
-        cell.detailTextLabel.textColor = outputAvailable ? [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0] : [UIColor colorWithRed:0.95 green:0.65 blue:0.25 alpha:1.0];
-        cell.detailTextLabel.textAlignment = NSTextAlignmentRight;
-        cell.detailTextLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-        cell.imageView.image = [[UIImage systemImageNamed:@"folder.fill"] imageWithTintColor:[UIColor colorWithRed:0.4 green:0.55 blue:0.95 alpha:1.0]];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        NSString *outputSize = outputAvailable ? [self formattedSize:[attrs[NSFileSize] unsignedLongLongValue]] : @"غير متاح";
+        title = @"المجلد المستخرج";
+        subtitle = [NSString stringWithFormat:@"↳ %@ — Extracted", sourceTitle];
+        meta = outputAvailable ? [NSString stringWithFormat:@"%@ • %@", outputSize, [self formattedDate:attrs[NSFileModificationDate]]] : @"الناتج غير متاح";
+        icon = [[UIImage systemImageNamed:@"folder.fill"] imageWithTintColor:[UIColor colorWithRed:0.35 green:0.58 blue:0.98 alpha:1.0]];
+        statusColor = outputAvailable ? [UIColor colorWithRed:0.25 green:0.82 blue:0.55 alpha:1.0] : [UIColor colorWithRed:0.95 green:0.63 blue:0.25 alpha:1.0];
     } else {
         BOOL extracting = [item[@"extracting"] boolValue];
         BOOL unavailable = [item[@"unavailable"] boolValue];
         double progress = [item[@"progress"] doubleValue];
         NSString *status = item[@"status"] ?: @"جاهز";
-        cell.detailTextLabel.text = extracting ? [NSString stringWithFormat:@"%@ %.0f%%", status, progress * 100.0] : (unavailable ? @"غير متاح — الملف الأصلي غير موجود" : [NSString stringWithFormat:@"%@ • %@", status, item[@"name"] ?: @""]);
-        cell.detailTextLabel.textColor = extracting ? [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] : (unavailable ? [UIColor colorWithRed:0.95 green:0.65 blue:0.25 alpha:1.0] : [UIColor colorWithWhite:0.55 alpha:1.0]);
-        cell.detailTextLabel.textAlignment = NSTextAlignmentRight;
-        cell.detailTextLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-        cell.imageView.image = [self ipaFileIcon];
-        cell.accessoryType = UITableViewCellAccessoryNone;
-        cell.selectionStyle = extracting ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
+        title = sourceTitle;
+        subtitle = sourceName;
+        if (extracting) meta = [NSString stringWithFormat:@"%@ • %.0f%% • %@", status, progress * 100.0, sizeText];
+        else if (unavailable) meta = [NSString stringWithFormat:@"غير متاح • %@", sizeText];
+        else meta = [NSString stringWithFormat:@"%@ • %@ • IPA", sizeText, status];
+        icon = [self ipaFileIcon];
+        statusColor = extracting ? [UIColor colorWithRed:0.28 green:0.68 blue:1.0 alpha:1.0] : (unavailable ? [UIColor colorWithRed:0.95 green:0.63 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.28 green:0.82 blue:0.56 alpha:1.0]);
     }
-    cell.detailTextLabel.numberOfLines = 2;
-    UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
-    more.tag = indexPath.row;
-    more.frame = CGRectMake(0, 0, 44, 44);
-    [more setTitle:@"•••" forState:UIControlStateNormal];
-    more.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    more.tintColor = [UIColor colorWithWhite:0.85 alpha:1.0];
-    more.accessibilityLabel = @"إجراءات العنصر";
-    more.accessibilityHint = @"فتح قائمة الإجراءات";
-    [more addTarget:self action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
-    cell.accessoryView = more;
+    [cell configureWithTitle:title subtitle:subtitle meta:meta icon:icon statusColor:statusColor isChild:output];
+    cell.moreButton.tag = indexPath.row;
+    [cell.moreButton removeTarget:nil action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [cell.moreButton addTarget:self action:@selector(moreTapped:) forControlEvents:UIControlEventTouchUpInside];
+    cell.selectionStyle = (!output && [item[@"extracting"] boolValue]) ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     return cell;
 }
 
