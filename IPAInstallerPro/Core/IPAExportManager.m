@@ -313,8 +313,16 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 }
                 NSString *bundleName = bundlePath.lastPathComponent;
                 NSString *copiedBundle = [payloadDirectory stringByAppendingPathComponent:bundleName];
-                if (!error && ![self runCommand:self.cpPath args:@[@"-Rp", bundlePath, copiedBundle] workingDirectory:nil error:&error]) {
-                    if (!error) error = [self errorWithCode:6 description:@"فشل نسخ التطبيق إلى مساحة التصدير"];
+                if (!error) {
+                    BOOL copied = NO;
+                    // APFS clone/copyfile is substantially faster for large bundles.
+                    if (self.helperPath.length > 0) {
+                        copied = [self runPrivilegedCommand:@"--copy-tree" args:@[bundlePath, copiedBundle] error:nil];
+                    }
+                    if (!copied) {
+                        copied = [self runCommand:self.cpPath args:@[@"-Rp", bundlePath, copiedBundle] workingDirectory:nil error:&error];
+                    }
+                    if (!copied && !error) error = [self errorWithCode:6 description:@"فشل نسخ التطبيق إلى مساحة التصدير"];
                 }
 
                 NSMutableArray<NSString *> *encryptedPaths = [NSMutableArray array];
@@ -423,7 +431,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                     outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ (%lu).ipa", stem, (unsigned long)collision++]];
                 }
                 if (!error) {
-                    BOOL zipped = [self runCommand:self.zipPath args:@[@"-qry", outputPath, @"Payload"] workingDirectory:workDirectory error:&error];
+                    BOOL zipped = [self runCommand:self.zipPath args:@[@"-q", @"-r", @"-0", outputPath, @"Payload"] workingDirectory:workDirectory error:&error];
                     NSDictionary *attrs = [fm attributesOfItemAtPath:outputPath error:nil];
                     if (!zipped || ![fm isReadableFileAtPath:outputPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] < 22) {
                         if (!error) error = [self errorWithCode:8 description:@"تم إنشاء أرشيف غير صالح أو فارغ"];
@@ -569,7 +577,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                             NSString *candidate = [NSString stringWithFormat:@"%@ (%lu)", safe, (unsigned long)collision++];
                             outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[candidate stringByAppendingPathExtension:@"ipa"]];
                         }
-                        if (![self runCommand:self.zipPath args:@[@"-qry", outputPath, @"Payload"] workingDirectory:workDirectory error:&error]) {
+                        if (![self runCommand:self.zipPath args:@[@"-q", @"-r", @"-0", outputPath, @"Payload"] workingDirectory:workDirectory error:&error]) {
                             if (!error) error = [self errorWithCode:53 description:@"تعذر إعادة حزم IPA المكررة"];
                         } else {
                             cloneURL = [NSURL fileURLWithPath:outputPath];

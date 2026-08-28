@@ -173,6 +173,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 #pragma mark - ViewController
 
 @interface InstallationProgressViewController ()
+@property (nonatomic, strong) NSLayoutConstraint *phasesBottomConstraint;
 @property (nonatomic, strong) NSString *installedBundleID;
 @property (nonatomic, strong) NSString *currentTxnID;
 @property (nonatomic, assign) BOOL isDone;
@@ -630,6 +631,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [_phasesStack.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
         [_phasesStack.bottomAnchor constraintLessThanOrEqualToAnchor:_containerView.bottomAnchor]
     ]];
+    self.phasesBottomConstraint = [_phasesStack.bottomAnchor constraintEqualToAnchor:_containerView.bottomAnchor constant:-20];
+    self.phasesBottomConstraint.priority = UILayoutPriorityDefaultLow;
+    self.phasesBottomConstraint.active = YES;
 }
 
 - (void)setPhase:(NSInteger)index state:(PhaseVisualState)state {

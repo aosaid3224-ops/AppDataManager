@@ -233,13 +233,10 @@ extern char **environ;
             return;
         }
 
-        report(0.08, @"التحقق من سلامة أرشيف ZIP...");
-        NSString *testOutput = nil;
-        int testExit = [self runExecutable:unzip arguments:@[@"-tq", source] task:task captureOutput:YES output:&testOutput error:nil];
-        if (testExit != 0) {
-            fail(testOutput.length > 0 ? testOutput : @"أرشيف IPA غير صالح أو تالف");
-            return;
-        }
+        // Reading the central directory once is enough to validate entry paths.
+        // The extraction pass below also validates archive readability, avoiding
+        // a second full ZIP traversal on large applications.
+        report(0.08, @"التحقق من مسارات أرشيف IPA...");
         NSString *listingOutput = nil;
         int listingExit = [self runExecutable:unzip arguments:@[@"-Z1", source] task:task captureOutput:YES output:&listingOutput error:nil];
         if (listingExit != 0 || listingOutput.length == 0) {
