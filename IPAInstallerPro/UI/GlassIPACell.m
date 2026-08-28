@@ -45,7 +45,6 @@
     self.ipaIconView.contentMode = UIViewContentModeScaleAspectFill;
     self.ipaIconView.clipsToBounds = YES;
     self.ipaIconView.layer.cornerRadius = 15;
-    self.ipaIconView.layer.cornerCurve = kCACornerCurveContinuous;
     self.ipaIconView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
     [self.glassView.contentView addSubview:self.ipaIconView];
 
