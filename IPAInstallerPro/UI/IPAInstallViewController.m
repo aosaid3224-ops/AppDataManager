@@ -4,6 +4,7 @@
 #import "Core/CapabilityManager.h"
 #import "Core/Logger.h"
 #import "Core/IPAValidator.h"
+#import "Core/IPAMultiInstancePreparer.h"
 
 @interface IPAInstallViewController ()
 @property (nonatomic, strong) IPAExtractedInfo *ipaInfo;
@@ -16,6 +17,8 @@
 @property (nonatomic, strong) UIActivityIndicatorView *validationSpinner;
 @property (nonatomic, assign) BOOL isValidated;
 @property (nonatomic, assign) BOOL isValid;
+@property (nonatomic, strong) UISwitch *multiInstanceSwitch;
+@property (nonatomic, strong) UILabel *multiInstanceLabel;
 @end
 
 @implementation IPAInstallViewController
@@ -118,6 +121,31 @@
 
     y += 220;
 
+    // Isolated multi-instance option. OFF is the default and preserves the normal path.
+    UIView *multiRow = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 54)];
+    multiRow.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.11 alpha:1.0];
+    multiRow.layer.cornerRadius = 16.0;
+    multiRow.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [self.view addSubview:multiRow];
+    self.multiInstanceLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, multiRow.bounds.size.width - 92, 38)];
+    self.multiInstanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.multiInstanceLabel.text = @"نسخ متعددة";
+    self.multiInstanceLabel.textColor = UIColor.whiteColor;
+    self.multiInstanceLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    self.multiInstanceLabel.textAlignment = NSTextAlignmentRight;
+    self.multiInstanceLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [multiRow addSubview:self.multiInstanceLabel];
+    self.multiInstanceSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+    self.multiInstanceSwitch.on = NO;
+    self.multiInstanceSwitch.onTintColor = [UIColor colorWithRed:0.25 green:0.75 blue:0.42 alpha:1.0];
+    self.multiInstanceSwitch.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.multiInstanceSwitch.accessibilityLabel = @"نسخ متعددة";
+    self.multiInstanceSwitch.accessibilityHint = @"عند التفعيل سيتم تجهيز نسخة مستقلة بمعرّف حزمة مختلف";
+    [multiRow addSubview:self.multiInstanceSwitch];
+    self.multiInstanceSwitch.center = CGPointMake(multiRow.bounds.size.width - 48.0, multiRow.bounds.size.height / 2.0);
+    self.multiInstanceSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    y += 70;
+
     // Install button
     self.installButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.installButton.frame = CGRectMake(margin, y, w - margin * 2, 54);
@@ -180,20 +208,36 @@
 
 - (void)installTapped:(UIButton *)sender {
     if (!self.isValid) return;
-
-    // Check installation readiness
     CapabilityManager *capMgr = [CapabilityManager sharedManager];
     [capMgr scanCapabilities];
-
     if (!capMgr.canInstallIPA) {
         [self showReadinessAlert:capMgr];
         return;
     }
+    if (self.multiInstanceSwitch.isOn) {
+        sender.enabled = NO;
+        [sender setTitle:@"جاري تجهيز النسخة..." forState:UIControlStateNormal];
+        NSString *displayName = self.ipaInfo.displayName ?: self.ipaInfo.name ?: @"التطبيق";
+        [[IPAMultiInstancePreparer sharedPreparer] prepareIPAAtPath:self.ipaInfo.filePath displayName:displayName completion:^(NSString *preparedIPAPath, NSString *instanceBundleID, NSString *instanceName, NSError *error) {
+            sender.enabled = YES;
+            [sender setTitle:@"تثبيت التطبيق" forState:UIControlStateNormal];
+            if (error || preparedIPAPath.length == 0) {
+                [self showReadinessAlertWithMessage:error.localizedDescription ?: @"تعذر إنشاء نسخة مستقلة؛ لم يتم تسجيل أي تطبيق ولم تتأثر النسخة الأصلية."];
+                return;
+            }
+            NSLog(@"[IPAInstallerPro] multi-instance prepared bundleID=%@ path=%@", instanceBundleID, preparedIPAPath);
+            [self presentProgressForIPAPath:preparedIPAPath name:[NSString stringWithFormat:@"%@ نسخة", instanceName ?: displayName]];
+        }];
+        return;
+    }
+    // OFF: this is the existing installation path, unchanged.
+    [self presentProgressForIPAPath:self.ipaInfo.filePath name:self.ipaInfo.displayName ?: self.ipaInfo.name];
+}
 
-    // Show progress
+- (void)presentProgressForIPAPath:(NSString *)ipaPath name:(NSString *)name {
     InstallationProgressViewController *progressVC = [[InstallationProgressViewController alloc] init];
-    progressVC.ipaName = self.ipaInfo.displayName ?: self.ipaInfo.name;
-    progressVC.ipaPath = self.ipaInfo.filePath;
+    progressVC.ipaName = name;
+    progressVC.ipaPath = ipaPath;
     progressVC.modalPresentationStyle = UIModalPresentationFullScreen;
     if (self.launchedFromDuplicate) {
         progressVC.dismissOnDuplicateSuccess = YES;
@@ -207,15 +251,19 @@
             dispatch_async(dispatch_get_main_queue(), ^{
                 [strongProgressVC dismissViewControllerAnimated:YES completion:^{
                     [strongSelf dismissViewControllerAnimated:YES completion:^{
-                        if (strongSelf.duplicateCompletionHandler) {
-                            strongSelf.duplicateCompletionHandler(YES);
-                        }
+                        if (strongSelf.duplicateCompletionHandler) strongSelf.duplicateCompletionHandler(YES);
                     }];
                 }];
             });
         };
     }
     [self presentViewController:progressVC animated:YES completion:nil];
+}
+
+- (void)showReadinessAlertWithMessage:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تعذر تجهيز النسخة" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showReadinessAlert:(CapabilityManager *)capMgr {
