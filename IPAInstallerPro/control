@@ -1,6 +1,6 @@
 Package: com.aosaid.ipainstallerpro
 Name: Spider
-Version: 2.2.56
+Version: 2.2.57
 Architecture: iphoneos-arm64
 Description: Spider official standalone IPA installer with analysis and signing orchestration using system primitives
 Maintainer: aosaid <aosaid@proton.me>
