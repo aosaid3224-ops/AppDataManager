@@ -116,7 +116,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     UIBarButtonItem *add = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addIPATapped:)];
     UIBarButtonItem *sort = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.arrow.down"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleSort:)];
     self.navigationItem.rightBarButtonItems = @[add, sort];
-    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems) item.tintColor = UIColor.whiteColor;
+    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems) item.tintColor = [IPTheme accentColor];
     self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
@@ -148,11 +148,11 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         [self.tableView.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor]
     ]];
 
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.bounds.size.width, 122.0)];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.bounds.size.width, 96.0)];
     header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     header.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     header.backgroundColor = UIColor.clearColor;
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 18.0, header.bounds.size.width - 40.0, 30.0)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16.0, 14.0, header.bounds.size.width - 32.0, 28.0)];
     title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     title.text = @"فك حزمة IPA";
     title.textColor = UIColor.whiteColor;
@@ -160,7 +160,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     title.textAlignment = NSTextAlignmentRight;
     title.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     [header addSubview:title];
-    UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 53.0, header.bounds.size.width - 100.0, 22.0)];
+    UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(16.0, 48.0, header.bounds.size.width - 32.0, 20.0)];
     subtitle.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     subtitle.text = @"ملفاتك الأصلية ونتائج الاستخراج داخل مساحة العمل الخاصة بالأداة";
     subtitle.textColor = [IPTheme mutedTextColor];
@@ -169,16 +169,6 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     subtitle.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
     [header addSubview:subtitle];
-    UIButton *headerAdd = [UIButton buttonWithType:UIButtonTypeSystem];
-    headerAdd.frame = CGRectMake(header.bounds.size.width - 72.0, 18.0, 48.0, 48.0);
-    headerAdd.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    headerAdd.backgroundColor = [IPTheme cardColor]; headerAdd.layer.borderWidth = 0.7; headerAdd.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    headerAdd.layer.cornerRadius = 16.0;
-    [headerAdd setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal];
-    headerAdd.tintColor = [IPTheme accentColor];
-    headerAdd.accessibilityLabel = @"إضافة ملف IPA";
-    [headerAdd addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside];
-    [header addSubview:headerAdd];
     self.tableView.tableHeaderView = header;
 }
 
