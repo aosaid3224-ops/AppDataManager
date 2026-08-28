@@ -194,56 +194,88 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    void (^consumeURLs)(void) = ^{
-        NSUInteger added = 0;
-        for (NSURL *url in urls) {
-            if (![url isKindOfClass:NSURL.class] || url.path.length == 0) {
-                NSLog(@"[IPAExtractor] post-selection rejected URL without path: %@", url);
-                continue;
-            }
-            NSString *extension = url.pathExtension.lowercaseString ?: @"";
-            if (![extension isEqualToString:@"ipa"]) {
-                NSLog(@"[IPAExtractor] post-selection rejected non-IPA URL: %@", url);
-                continue;
-            }
-            NSString *path = url.path;
-            BOOL duplicate = NO;
-            for (NSDictionary *existing in self.items) {
-                NSString *existingPath = [self sourcePathForItem:existing];
-                if (existingPath.length > 0 && [existingPath isEqualToString:path]) { duplicate = YES; break; }
-            }
-            if (duplicate) {
-                NSLog(@"[IPAExtractor] post-selection ignored duplicate: %@", path);
-                continue;
-            }
+    NSArray<NSURL *> *pickedURLs = [urls copy] ?: @[];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray<NSString *> *supportPaths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+        NSString *workspace = [[(supportPaths.firstObject ?: NSTemporaryDirectory()) stringByAppendingPathComponent:@"IPAInstallerPro"] stringByAppendingPathComponent:@"IPAExtractor"];
+        NSString *importDirectory = [workspace stringByAppendingPathComponent:@"Imported"];
+        [fm createDirectoryAtPath:importDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+        NSMutableArray<NSDictionary *> *imported = [NSMutableArray array];
+        NSUInteger rejected = 0;
+        for (NSURL *url in pickedURLs) {
+            if (![url isKindOfClass:NSURL.class]) { rejected++; continue; }
             BOOL accessed = [url startAccessingSecurityScopedResource];
-            NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
-            NSMutableDictionary *item = [@{
-                @"url": url,
-                @"name": url.lastPathComponent ?: @"IPA",
-                @"displayName": [url.lastPathComponent stringByDeletingPathExtension] ?: @"IPA",
-                @"status": @"جاهز",
-                @"progress": @0.0,
-                @"extracting": @NO,
-                @"securityScopeActive": @(accessed),
-                @"bookmarkData": bookmark ?: [NSData data],
-                @"originalPath": path,
-                @"state": @"ready",
-                @"unavailable": @NO,
-                @"addedAt": [NSDate date],
-                @"updatedAt": [NSDate date],
-            } mutableCopy];
-            [self.items addObject:item];
-            added++;
-            NSLog(@"[IPAExtractor] post-selection accepted IPA: %@ bookmark=%@ securityScope=%@", path, bookmark.length > 0 ? @"YES" : @"NO", accessed ? @"YES" : @"NO");
+            __block NSString *fileName = url.lastPathComponent;
+            if (fileName.length == 0) {
+                [url getResourceValue:&fileName forKey:NSURLNameKey error:nil];
+            }
+            NSString *extension = fileName.pathExtension.lowercaseString ?: @"";
+            if (![extension isEqualToString:@"ipa"]) {
+                NSLog(@"[IPAExtractor] post-selection rejected non-IPA filename=%@ url=%@", fileName, url);
+                rejected++;
+                if (accessed) [url stopAccessingSecurityScopedResource];
+                continue;
+            }
+            NSString *safeName = fileName.length > 0 ? fileName : @"Imported.ipa";
+            NSString *temporary = [importDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@".importing-%@.ipa", NSUUID.UUID.UUIDString]];
+            __block NSError *coordinationError = nil;
+            __block BOOL copied = NO;
+            NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+            [coordinator coordinateReadingItemAtURL:url options:0 error:&coordinationError byAccessor:^(NSURL *coordinatedURL) {
+                NSError *copyError = nil;
+                copied = [fm copyItemAtPath:coordinatedURL.path toPath:temporary error:&copyError];
+                if (!copied) coordinationError = copyError;
+            }];
+            if (accessed) [url stopAccessingSecurityScopedResource];
+            if (!copied) {
+                NSLog(@"[IPAExtractor] import failed filename=%@ error=%@", safeName, coordinationError);
+                [fm removeItemAtPath:temporary error:nil];
+                continue;
+            }
+            NSString *destination = [importDirectory stringByAppendingPathComponent:safeName];
+            if ([fm fileExistsAtPath:destination]) {
+                NSString *base = [safeName stringByDeletingPathExtension];
+                NSUInteger suffix = 2;
+                do { destination = [importDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ (%lu).ipa", base, (unsigned long)suffix++]]; } while ([fm fileExistsAtPath:destination]);
+            }
+            NSError *moveError = nil;
+            if (![fm moveItemAtPath:temporary toPath:destination error:&moveError]) {
+                NSLog(@"[IPAExtractor] import promote failed filename=%@ error=%@", safeName, moveError);
+                [fm removeItemAtPath:temporary error:nil];
+                continue;
+            }
+            NSURL *internalURL = [NSURL fileURLWithPath:destination];
+            NSData *bookmark = [internalURL bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
+            [imported addObject:@{ @"url": internalURL, @"path": destination, @"name": destination.lastPathComponent ?: safeName, @"bookmark": bookmark ?: [NSData data] }];
         }
-        if (added > 0) [self persistItems];
-        self.emptyLabel.hidden = self.items.count > 0;
-        [self.tableView reloadData];
-        if (added == 0 && urls.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
-    };
-    if ([NSThread isMainThread]) consumeURLs();
-    else dispatch_async(dispatch_get_main_queue(), consumeURLs);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSUInteger added = 0;
+            for (NSDictionary *record in imported) {
+                NSString *path = record[@"path"];
+                BOOL duplicate = NO;
+                for (NSDictionary *existing in self.items) {
+                    if ([[self sourcePathForItem:existing] isEqualToString:path]) { duplicate = YES; break; }
+                }
+                if (duplicate) continue;
+                NSString *name = record[@"name"] ?: [path lastPathComponent];
+                NSMutableDictionary *item = [@{
+                    @"url": record[@"url"], @"name": name,
+                    @"displayName": [name stringByDeletingPathExtension], @"status": @"جاهز",
+                    @"progress": @0.0, @"extracting": @NO, @"securityScopeActive": @NO,
+                    @"bookmarkData": record[@"bookmark"] ?: [NSData data], @"originalPath": path,
+                    @"state": @"ready", @"unavailable": @NO, @"addedAt": [NSDate date], @"updatedAt": [NSDate date]
+                } mutableCopy];
+                [self.items addObject:item];
+                added++;
+            }
+            if (added > 0) [self persistItems];
+            self.emptyLabel.hidden = self.items.count > 0;
+            [self.tableView reloadData];
+            NSLog(@"[IPAExtractor] post-selection import complete accepted=%lu rejected=%lu", (unsigned long)added, (unsigned long)rejected);
+            if (added == 0 && pickedURLs.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
+        });
+    });
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
