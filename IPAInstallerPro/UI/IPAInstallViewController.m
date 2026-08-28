@@ -30,8 +30,9 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"تثبيت IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.title = @"تفاصيل IPA";
+    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.027 blue:0.05 alpha:1.0];
 
     [self setupViews];
     [self validateIPA];
@@ -86,7 +87,9 @@
 
     // Details container
     self.detailsContainer = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 200)];
-    self.detailsContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.11 alpha:1.0];
+    self.detailsContainer.backgroundColor = [UIColor colorWithRed:0.07 green:0.075 blue:0.13 alpha:1.0];
+    self.detailsContainer.layer.borderWidth = 1.0;
+    self.detailsContainer.layer.borderColor = [UIColor colorWithWhite:0.18 alpha:1.0].CGColor;
     self.detailsContainer.layer.cornerRadius = 18;
     [self.view addSubview:self.detailsContainer];
 
@@ -102,15 +105,17 @@
     for (NSDictionary *detail in details) {
         UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, detailY, 140, 22)];
         titleLabel.text = detail[@"title"];
-        titleLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
+        titleLabel.textColor = [UIColor colorWithWhite:0.55 alpha:1.0];
         titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        titleLabel.textAlignment = NSTextAlignmentRight;
         [self.detailsContainer addSubview:titleLabel];
 
         UILabel *valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(160, detailY, self.detailsContainer.bounds.size.width - 176, 22)];
         valueLabel.text = detail[@"value"];
         valueLabel.textColor = [UIColor whiteColor];
         valueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-        valueLabel.textAlignment = NSTextAlignmentRight;
+        valueLabel.textAlignment = NSTextAlignmentLeft;
+        valueLabel.semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
         [self.detailsContainer addSubview:valueLabel];
 
         detailY += 34;
@@ -124,7 +129,9 @@
     [self.installButton setTitle:@"تثبيت التطبيق" forState:UIControlStateNormal];
     [self.installButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.installButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.installButton.backgroundColor = [UIColor colorWithRed:0.3 green:0.7 blue:0.5 alpha:1.0];
+    self.installButton.backgroundColor = [UIColor colorWithRed:0.42 green:0.45 blue:0.95 alpha:1.0];
+    self.installButton.layer.borderWidth = 1.0;
+    self.installButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
     self.installButton.layer.cornerRadius = 14;
     self.installButton.enabled = NO;
     self.installButton.alpha = 0.5;

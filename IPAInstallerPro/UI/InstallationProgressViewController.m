@@ -51,6 +51,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
         _titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
         _titleLabel.textColor = [UIColor whiteColor];
+        _titleLabel.textAlignment = NSTextAlignmentRight;
         _titleLabel.text = title;
         [self addSubview:_titleLabel];
 
@@ -58,6 +59,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         _subtitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
         _subtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
         _subtitleLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+        _subtitleLabel.textAlignment = NSTextAlignmentRight;
         _subtitleLabel.text = subtitle;
         [self addSubview:_subtitleLabel];
 
@@ -69,20 +71,20 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [self addSubview:_pulsingDot];
 
         [NSLayoutConstraint activateConstraints:@[
-            [_iconLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:16],
+            [_iconLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-16],
             [_iconLabel.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
             [_iconLabel.widthAnchor constraintEqualToConstant:28],
 
-            [_titleLabel.leadingAnchor constraintEqualToAnchor:_iconLabel.trailingAnchor constant:12],
+            [_titleLabel.trailingAnchor constraintEqualToAnchor:_iconLabel.leadingAnchor constant:-12],
             [_titleLabel.topAnchor constraintEqualToAnchor:self.topAnchor constant:10],
-            [_titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor constant:-16],
+            [_titleLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.leadingAnchor constant:16],
 
-            [_subtitleLabel.leadingAnchor constraintEqualToAnchor:_titleLabel.leadingAnchor],
+            [_subtitleLabel.trailingAnchor constraintEqualToAnchor:_titleLabel.trailingAnchor],
             [_subtitleLabel.topAnchor constraintEqualToAnchor:_titleLabel.bottomAnchor constant:2],
             [_subtitleLabel.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-10],
-            [_subtitleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.trailingAnchor constant:-16],
+            [_subtitleLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.leadingAnchor constant:16],
 
-            [_pulsingDot.leadingAnchor constraintEqualToAnchor:_titleLabel.trailingAnchor constant:8],
+            [_pulsingDot.trailingAnchor constraintEqualToAnchor:_titleLabel.leadingAnchor constant:-8],
             [_pulsingDot.centerYAnchor constraintEqualToAnchor:_titleLabel.centerYAnchor],
             [_pulsingDot.widthAnchor constraintEqualToConstant:6],
             [_pulsingDot.heightAnchor constraintEqualToConstant:6],
@@ -181,6 +183,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UILabel *headerLabel;
 @property (nonatomic, strong) UILabel *appNameLabel;
 @property (nonatomic, strong) UIProgressView *progressView;
+@property (nonatomic, strong) UIActivityIndicatorView *indeterminateIndicator;
 @property (nonatomic, strong) UIStackView *phasesStack;
 @property (nonatomic, strong) NSMutableArray<InstallPhaseView *> *phaseViews;
 @property (nonatomic, strong) UIView *reportCard;
@@ -217,7 +220,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
+    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.027 blue:0.05 alpha:1.0];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     _rawLog = [NSMutableString string];
     _pendingLiveCriticalEvents = [NSMutableArray array];
@@ -313,6 +317,28 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     // LiveOperationStream is the only live source for this screen. The old
     // OperationRecord notifications remain available to other screens, but
     // are intentionally not subscribed here to prevent a second UI backlog.
+}
+
+- (NSString *)arabicStageForEvent:(NSString *)stage {
+    NSString *key = stage.uppercaseString ?: @"";
+    NSDictionary *mapping = @{
+        @"START": @"التحضير", @"IPA_OPEN": @"فحص ملف IPA", @"IPA_EXTRACT": @"استخراج التطبيق",
+        @"APP_IDENTIFY": @"قراءة بيانات التطبيق", @"FILE_COPY": @"تثبيت الملفات", @"FRAMEWORK": @"تثبيت الملفات",
+        @"DYLIB": @"تثبيت الملفات", @"SIGN": @"توقيع التطبيق", @"PERMISSION": @"ضبط الصلاحيات",
+        @"UICACHE": @"تسجيل التطبيق", @"VERIFY": @"التحقق النهائي", @"COMPLETE": @"اكتمل التثبيت",
+        @"LAUNCH": @"تشغيل التطبيق", @"RUNTIME_MONITOR": @"مراقبة التشغيل", @"CRASH_DIAGNOSTICS": @"تشخيص التشغيل"
+    };
+    return mapping[key] ?: @"جاري تنفيذ العملية";
+}
+
+- (NSString *)arabicStatusForEvent:(LiveOperationEvent *)event {
+    NSString *status = event.status.uppercaseString ?: @"PENDING";
+    if ([status isEqualToString:@"SUCCESS"]) return @"تم بنجاح";
+    if ([status isEqualToString:@"FAILED"]) return @"فشل التنفيذ";
+    if ([status isEqualToString:@"PARTIAL"]) return @"اكتمل جزئياً";
+    if ([status isEqualToString:@"SKIPPED"]) return @"تم تجاوزه";
+    if ([status isEqualToString:@"RUNNING"]) return @"قيد التنفيذ";
+    return @"بانتظار التنفيذ";
 }
 
 - (NSInteger)uiPhaseIndexForOperationPhase:(OperationPhase)opPhase {
@@ -437,14 +463,14 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         self.lastRenderedLiveSequence = event.sequence;
         UIColor *color = [event.status isEqualToString:@"FAILED"] ? [UIColor colorWithRed:1.0 green:0.3 blue:0.3 alpha:1.0] : [UIColor colorWithRed:0.35 green:0.9 blue:0.55 alpha:1.0];
         self.liveStateLabel.textColor = color;
-        self.liveStateLabel.text = event.finalEvent ? [NSString stringWithFormat:@"الحالة النهائية: %@ #%03lu — انتهى البث", event.status ?: @"FINAL", (unsigned long)event.sequence] : [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", event.stage ?: @"UNKNOWN", event.status ?: @"PENDING", (unsigned long)event.sequence];
+        self.liveStateLabel.text = event.finalEvent ? [NSString stringWithFormat:@"الحالة النهائية: %@ — انتهى البث", [self arabicStatusForEvent:event]] : [NSString stringWithFormat:@"%@ — %@", [self arabicStageForEvent:event.stage], [self arabicStatusForEvent:event]];
         if (event.finalEvent) self.liveFinalRendered = YES;
     }
     if (!self.liveFinalRendered && normalCount > 0 && normalLast) {
         NSString *note = [NSString stringWithFormat:@" (تم تجميع %lu حدث عرض عادي)", (unsigned long)normalCount];
         [self appendRenderedLiveLineForEvent:normalLast note:note];
         self.lastRenderedLiveSequence = normalLast.sequence;
-        self.liveStateLabel.text = [NSString stringWithFormat:@"الحالة الحية: %@ — %@ #%03lu", normalLast.stage ?: @"UNKNOWN", normalLast.status ?: @"PENDING", (unsigned long)normalLast.sequence];
+        self.liveStateLabel.text = [NSString stringWithFormat:@"%@ — %@", [self arabicStageForEvent:normalLast.stage], [self arabicStatusForEvent:normalLast]];
     }
 }
 
@@ -525,7 +551,14 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     _progressView.trackTintColor = [UIColor colorWithWhite:0.15 alpha:1.0];
     _progressView.layer.cornerRadius = 2;
     _progressView.clipsToBounds = YES;
+    _progressView.hidden = YES; // لا نعرض نسبة وهمية؛ المصدر لا يقدم تقدماً رقمياً دقيقاً
     [_containerView addSubview:_progressView];
+
+    _indeterminateIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    _indeterminateIndicator.translatesAutoresizingMaskIntoConstraints = NO;
+    _indeterminateIndicator.color = [UIColor colorWithRed:0.48 green:0.52 blue:1.0 alpha:1.0];
+    [_containerView addSubview:_indeterminateIndicator];
+    [_indeterminateIndicator startAnimating];
 
     _liveOutputCard = [[UIView alloc] init];
     _liveOutputCard.translatesAutoresizingMaskIntoConstraints = NO;
@@ -605,6 +638,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         [_progressView.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor],
         [_progressView.trailingAnchor constraintEqualToAnchor:_containerView.trailingAnchor],
         [_progressView.heightAnchor constraintEqualToConstant:4],
+        [_indeterminateIndicator.centerYAnchor constraintEqualToAnchor:_appNameLabel.bottomAnchor constant:27],
+        [_indeterminateIndicator.centerXAnchor constraintEqualToAnchor:_containerView.centerXAnchor],
 
         [_liveOutputCard.topAnchor constraintEqualToAnchor:_progressView.bottomAnchor constant:16],
         [_liveOutputCard.leadingAnchor constraintEqualToAnchor:_containerView.leadingAnchor],
@@ -662,6 +697,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         self.showLogButton = nil;
     }
 
+    [self.indeterminateIndicator startAnimating];
     self.headerLabel.text = @"\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062b\u0628\u064a\u062a...";
     self.headerLabel.textColor = [UIColor whiteColor];
     self.appNameLabel.text = [self.ipaPath lastPathComponent] ?: @"";
@@ -685,7 +721,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     self.lastRenderedLiveSequence = 0;
     self.liveOutputView.text = @"";
-    self.liveStateLabel.text = @"الحالة الحية: BEGIN — انتظار أول حدث";
+    self.liveStateLabel.text = @"الحالة الحية: بانتظار أول حدث";
     self.liveStateLabel.textColor = [UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0];
     self.liveStream = [[LiveOperationStream alloc] init];
     __weak typeof(self) weakLiveSelf = self;
@@ -712,6 +748,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)handleCompletionSuccess:(InstallationResult *)result {
     dispatch_async(dispatch_get_main_queue(), ^{
+        [self.indeterminateIndicator stopAnimating];
         for (InstallPhaseView *pv in self.phaseViews) {
             if (pv.phaseState == PhaseVisualStateActive || pv.phaseState == PhaseVisualStatePending) {
                 [pv setState:PhaseVisualStateSuccess animated:YES];
@@ -725,6 +762,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)handleCompletionFailure:(InstallationResult *)result {
     dispatch_async(dispatch_get_main_queue(), ^{
+        [self.indeterminateIndicator stopAnimating];
         NSInteger failIdx = self.currentPhaseIndex >= 0 ? self.currentPhaseIndex : 0;
         if (failIdx < (NSInteger)self.phaseViews.count) {
             [self.phaseViews[failIdx] setState:PhaseVisualStateFailed animated:YES];
