@@ -268,7 +268,6 @@
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
         cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.075];
         cell.layer.cornerRadius = 18.0;
-        cell.layer.cornerCurve = kCACornerCurveContinuous;
         cell.layer.borderWidth = 0.6;
         cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
         cell.layer.masksToBounds = YES;

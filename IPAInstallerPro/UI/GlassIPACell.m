@@ -29,7 +29,6 @@
     self.glassView = [[UIVisualEffectView alloc] initWithEffect:blur];
     self.glassView.translatesAutoresizingMaskIntoConstraints = NO;
     self.glassView.layer.cornerRadius = 22.0;
-    self.glassView.layer.cornerCurve = kCACornerCurveContinuous;
     self.glassView.layer.masksToBounds = YES;
     self.glassView.layer.borderWidth = 0.8;
     self.glassView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.14].CGColor;
