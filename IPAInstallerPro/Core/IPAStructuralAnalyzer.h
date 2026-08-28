@@ -21,4 +21,8 @@
 /// Analyze IPA with option to keep extracted files for inspection.
 - (IPAStructuralResult *)analyzeIPAAtPath:(NSString *)ipaPath keepExtracted:(BOOL)keep;
 
+/// Analyze an already extracted Payload tree without extracting the IPA again.
+/// The caller owns the extraction directory and must keep it alive until analysis returns.
+- (IPAStructuralResult *)analyzeExtractedPayloadAtPath:(NSString *)payloadPath sourceIPAPath:(NSString *)ipaPath;
+
 @end

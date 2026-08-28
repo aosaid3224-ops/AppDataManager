@@ -49,8 +49,21 @@ int main(int argc, char *argv[], char *envp[]) {
     // relying on platform-specific cp recursion behavior for framework
     // metadata/resources while keeping the operation inside the root helper.
     if (argc == 4 && strcmp(argv[1], "--copy-tree") == 0) {
-        int copyResult = copyfile(argv[2], argv[3], NULL,
-                                  COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
+        int copyFlags = COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC;
+#ifdef COPYFILE_CLONE
+        copyFlags |= COPYFILE_CLONE;
+#endif
+        int copyResult = copyfile(argv[2], argv[3], NULL, copyFlags);
+        if (copyResult != 0) {
+            int cloneError = errno;
+            // APFS clone is an optimization only. If the source/destination
+            // filesystem cannot clone, preserve the proven copyfile path.
+            if (cloneError == ENOTSUP || cloneError == EINVAL || cloneError == EXDEV) {
+                fprintf(stderr, "copyfile clone unavailable; using regular copy errno=%d\n", cloneError);
+                copyResult = copyfile(argv[2], argv[3], NULL,
+                                      COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
+            }
+        }
         if (copyResult != 0) {
             fprintf(stderr, "copyfile failed: %s -> %s errno=%d\n", argv[2], argv[3], errno);
             return 1;

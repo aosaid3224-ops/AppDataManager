@@ -292,6 +292,17 @@
                 }
                 IPAInstallViewController *installVC = [[IPAInstallViewController alloc] initWithIPAInfo:info];
                 installVC.modalPresentationStyle = UIModalPresentationFullScreen;
+                installVC.launchedFromDuplicate = YES;
+                __weak typeof(self) weakSelf = self;
+                installVC.duplicateCompletionHandler = ^(BOOL success) {
+                    if (!success) return;
+                    __strong typeof(weakSelf) strongSelf = weakSelf;
+                    if (!strongSelf) return;
+                    [[NSNotificationCenter defaultCenter] postNotificationName:@"IPAInstallerProDuplicateDidComplete"
+                                                                        object:strongSelf
+                                                                      userInfo:@{ @"success": @YES,
+                                                                                  @"bundleID": requestedID ?: @"" }];
+                };
                 [self presentViewController:installVC animated:YES completion:nil];
             });
         }];

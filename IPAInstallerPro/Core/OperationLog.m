@@ -316,15 +316,21 @@ static NSString * const kLogFileName = @"IPAInstallerPro_OperationLog.plist";
     NSUInteger total = records.count;
     NSUInteger failed = 0;
     NSTimeInterval totalDuration = 0;
+    NSDate *firstTimestamp = nil;
+    NSDate *lastTimestamp = nil;
     for (OperationRecord *rec in records) {
         if (rec.result == OperationResultFailed) failed++;
         totalDuration += rec.duration;
+        if (!firstTimestamp || [rec.timestamp compare:firstTimestamp] == NSOrderedAscending) firstTimestamp = rec.timestamp;
+        if (!lastTimestamp || [rec.timestamp compare:lastTimestamp] == NSOrderedDescending) lastTimestamp = rec.timestamp;
     }
+    NSTimeInterval wallClockDuration = (firstTimestamp && lastTimestamp) ? [lastTimestamp timeIntervalSinceDate:firstTimestamp] : 0;
     return @{
         @"totalRecords": @(total),
         @"failedRecords": @(failed),
         @"successRate": @(total > 0 ? (total - failed) / (double)total : 0),
-        @"totalDuration": @(totalDuration)
+        @"totalDuration": @(totalDuration),
+        @"wallClockDuration": @(wallClockDuration)
     };
 }
 

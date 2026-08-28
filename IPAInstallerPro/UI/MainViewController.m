@@ -13,8 +13,6 @@
 @property (nonatomic, strong) UILabel *toastLabel;
 @property (nonatomic, strong) UIActivityIndicatorView *loadingIndicator;
 @property (nonatomic, assign) BOOL isLoading;
-@property (nonatomic, strong) UIView *workspaceHeader;
-@property (nonatomic, strong) UILabel *workspaceCountLabel;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *ipaMetadataCache;
 @property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
 @property (nonatomic, assign) NSUInteger ipaLoadGeneration;
@@ -24,17 +22,14 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"مساحة IPA";
-    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.navigationController.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.027 blue:0.05 alpha:1.0];
+    self.title = @"ملفات IPA";
+    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
     self.ipaCacheQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.ipa-metadata-cache", DISPATCH_QUEUE_SERIAL);
 
     [self setupNavigationBar];
-    [self setupWorkspaceHeader];
     [self setupTableView];
     [self setupEmptyState];
     [self setupAddButton];
@@ -51,56 +46,6 @@
 - (void)setupNavigationBar {
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
-    self.navigationController.navigationBar.tintColor = [UIColor colorWithRed:0.48 green:0.52 blue:1.0 alpha:1.0];
-    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
-    [appearance configureWithOpaqueBackground];
-    appearance.backgroundColor = [UIColor colorWithRed:0.025 green:0.027 blue:0.05 alpha:1.0];
-    appearance.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor]};
-    appearance.largeTitleTextAttributes = @{NSForegroundColorAttributeName: [UIColor whiteColor]};
-    self.navigationController.navigationBar.standardAppearance = appearance;
-    self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
-}
-
-- (void)setupWorkspaceHeader {
-    self.workspaceHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 92)];
-    self.workspaceHeader.backgroundColor = [UIColor colorWithRed:0.07 green:0.075 blue:0.13 alpha:1.0];
-    self.workspaceHeader.layer.cornerRadius = 20;
-    self.workspaceHeader.layer.masksToBounds = YES;
-
-    UILabel *eyebrow = [[UILabel alloc] initWithFrame:CGRectZero];
-    eyebrow.translatesAutoresizingMaskIntoConstraints = NO;
-    eyebrow.text = @"مساحة العمل";
-    eyebrow.textColor = [UIColor colorWithRed:0.55 green:0.58 blue:1.0 alpha:1.0];
-    eyebrow.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    eyebrow.textAlignment = NSTextAlignmentRight;
-    [self.workspaceHeader addSubview:eyebrow];
-
-    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectZero];
-    hint.translatesAutoresizingMaskIntoConstraints = NO;
-    hint.text = @"أضف ملفات IPA لإدارتها والتحقق منها وتثبيتها";
-    hint.textColor = [UIColor colorWithWhite:0.62 alpha:1.0];
-    hint.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
-    hint.textAlignment = NSTextAlignmentRight;
-    [self.workspaceHeader addSubview:hint];
-
-    self.workspaceCountLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.workspaceCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.workspaceCountLabel.text = @"0 ملف";
-    self.workspaceCountLabel.textColor = [UIColor whiteColor];
-    self.workspaceCountLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    self.workspaceCountLabel.textAlignment = NSTextAlignmentLeft;
-    [self.workspaceHeader addSubview:self.workspaceCountLabel];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [eyebrow.topAnchor constraintEqualToAnchor:self.workspaceHeader.topAnchor constant:16],
-        [eyebrow.trailingAnchor constraintEqualToAnchor:self.workspaceHeader.trailingAnchor constant:-18],
-        [eyebrow.leadingAnchor constraintEqualToAnchor:self.workspaceHeader.leadingAnchor constant:18],
-        [hint.topAnchor constraintEqualToAnchor:eyebrow.bottomAnchor constant:5],
-        [hint.trailingAnchor constraintEqualToAnchor:eyebrow.trailingAnchor],
-        [hint.leadingAnchor constraintEqualToAnchor:eyebrow.leadingAnchor],
-        [self.workspaceCountLabel.centerYAnchor constraintEqualToAnchor:self.workspaceHeader.centerYAnchor],
-        [self.workspaceCountLabel.leadingAnchor constraintEqualToAnchor:self.workspaceHeader.leadingAnchor constant:18]
-    ]];
 }
 
 - (void)setupTableView {
@@ -109,9 +54,7 @@
     self.tableView.dataSource = self;
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [UIColor clearColor];
-    self.tableView.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.tableHeaderView = self.workspaceHeader;
     self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 40, 0);
     self.tableView.rowHeight = 80;
     [self.view addSubview:self.tableView];
@@ -276,7 +219,6 @@
             [self.ipaFiles removeAllObjects];
             [self.ipaFiles addObjectsFromArray:foundFiles];
             [self.tableView reloadData];
-            self.workspaceCountLabel.text = [NSString stringWithFormat:@"%lu ملف%@", (unsigned long)self.ipaFiles.count, self.ipaFiles.count == 1 ? @"" : @"ات"];
             self.emptyLabel.hidden = (self.ipaFiles.count > 0);
             self.emptyLabel.frame = CGRectMake(20, self.view.bounds.size.height / 2 - 40, self.view.bounds.size.width - 40, 80);
             [self.refreshControl endRefreshing];
@@ -421,13 +363,10 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-        cell.backgroundColor = [UIColor clearColor];
-        cell.contentView.backgroundColor = [UIColor colorWithRed:0.075 green:0.08 blue:0.13 alpha:1.0];
-        cell.layer.cornerRadius = 16;
+        cell.backgroundColor = [UIColor colorWithRed:0.10 green:0.10 blue:0.13 alpha:1.0];
+        cell.layer.cornerRadius = 14;
         cell.layer.masksToBounds = YES;
-        cell.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
         cell.textLabel.textColor = [UIColor whiteColor];
-        cell.textLabel.textAlignment = NSTextAlignmentRight;
         cell.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
         cell.detailTextLabel.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
         cell.detailTextLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
@@ -457,12 +396,6 @@
         cell.imageView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:0.4 alpha:1.0]];
     }
 
-    cell.transform = CGAffineTransformMakeTranslation(0, 6);
-    cell.alpha = 0.0;
-    [UIView animateWithDuration:0.28 delay:MIN(indexPath.row * 0.025, 0.18) usingSpringWithDamping:0.88 initialSpringVelocity:0.2 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-        cell.transform = CGAffineTransformIdentity;
-        cell.alpha = 1.0;
-    } completion:nil];
     return cell;
 }
 

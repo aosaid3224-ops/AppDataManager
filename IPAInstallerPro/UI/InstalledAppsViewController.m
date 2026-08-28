@@ -28,6 +28,16 @@
     [self setupTableView];
     [self setupActivityIndicator];
     [self setupErrorUI];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(duplicateDidComplete:) name:@"IPAInstallerProDuplicateDidComplete" object:nil];
+    [self loadApps];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"IPAInstallerProDuplicateDidComplete" object:nil];
+}
+
+- (void)duplicateDidComplete:(NSNotification *)note {
+    if (![note.userInfo[@"success"] boolValue]) return;
     [self loadApps];
 }
 

@@ -315,6 +315,7 @@ extern char **environ;
 #pragma mark - Command Execution with OperationLog
 
 - (BOOL)runCmd:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recID {
+    NSDate *started = [NSDate date];
     if (!cmd.length) {
         if (recID && opLog) [opLog endPhase:recID exitCode:1 rawOutput:@"" rawError:@"Command path is empty" verification:@"Invalid command path" verified:NO duration:0];
         return NO;
@@ -337,12 +338,13 @@ extern char **environ;
     BOOL ok = exited && exitCode == 0;
     if (recID && opLog) {
         NSString *failure = ok ? @"" : (reaped ? [NSString stringWithFormat:@"Command failed with exit code %d", exitCode] : @"Command timed out or was terminated");
-        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
+        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:-[started timeIntervalSinceNow] context:@{ @"wallClockSeconds": @(-[started timeIntervalSinceNow]), @"command": cmd ?: @"" }];
     }
     return ok;
 }
 
 - (BOOL)runRoot:(NSString *)cmd args:(NSArray *)args opLog:(OperationLog *)opLog recordID:(NSString *)recID {
+    NSDate *started = [NSDate date];
     if (![self hasRootHelper]) {
         NSLog(@"[IPAInstallerPro] No helper, running as current user: %@", cmd);
         return [self runCmd:cmd args:args opLog:opLog recordID:recID];
@@ -368,7 +370,7 @@ extern char **environ;
     BOOL ok = exited && exitCode == 0;
     if (recID && opLog) {
         NSString *failure = ok ? @"" : (reaped ? [NSString stringWithFormat:@"Root helper failed with exit code %d", exitCode] : @"Root helper timed out or was terminated");
-        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"root cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:0];
+        [opLog endPhase:recID exitCode:exitCode rawOutput:@"" rawError:failure verification:[NSString stringWithFormat:@"root cmd=%@ args=%@", cmd, [args componentsJoinedByString:@" "]] verified:ok duration:-[started timeIntervalSinceNow] context:@{ @"wallClockSeconds": @(-[started timeIntervalSinceNow]), @"command": cmd ?: @"", @"rootHelper": @YES }];
     }
     return ok;
 }
@@ -556,6 +558,7 @@ extern char **environ;
 }
 
 - (BOOL)verifyDeepCopy:(NSString *)src dst:(NSString *)dst opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSDate *started = [NSDate date];
     NSFileManager *fm = [NSFileManager defaultManager];
     NSArray<NSString *> *srcItems = [fm subpathsAtPath:src] ?: @[];
     NSArray<NSString *> *dstItems = [fm subpathsAtPath:dst] ?: @[];
@@ -612,7 +615,8 @@ extern char **environ;
     self.diagDeepCopyDetail = [detail copy];
 
     NSString *rec = [opLog beginPhase:OperationPhaseFileCopy operation:@"deepCopyVerification" target:dst input:@"lstat topology + symlink + regular-file size" transactionID:txnID];
-    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:detail rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:0];
+    NSTimeInterval elapsed = -[started timeIntervalSinceNow];
+    [opLog endPhase:rec exitCode:ok ? 0 : 1 rawOutput:detail rawError:ok ? @"" : @"Copied bundle does not match source" verification:detail verified:ok duration:elapsed context:@{ @"wallClockSeconds": @(elapsed), @"sourceItems": @(srcItems.count), @"destinationItems": @(dstItems.count) }];
     self.diagDeepCopyTotal = srcItems.count;
     self.diagDeepCopyMissing = missing + extra;
     self.diagDeepCopySizeMismatch = sizeMismatch + typeMismatch + linkMismatch;
@@ -1073,7 +1077,7 @@ extern char **environ;
  self.activeSigningPlan = nil;
  BOOL planGenerated = NO;
  @try {
- IPAStructuralResult *structResult = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeIPAAtPath:ipaPath keepExtracted:NO];
+ IPAStructuralResult *structResult = [[IPAStructuralAnalyzer sharedAnalyzer] analyzeExtractedPayloadAtPath:payload sourceIPAPath:ipaPath];
  SpiderInstallationGraph *spiderGraph = [SpiderInstallationGraph graphFromStructuralResult:structResult];
  NSString *spiderRecord = [opLog beginPhase:OperationPhaseAppIdentify operation:@"spider-bundle-graph" target:srcApp input:@"role-aware structural graph" transactionID:txnID];
  NSString *spiderSummary = [spiderGraph summary];
@@ -1664,6 +1668,7 @@ extern char **environ;
 }
 
 - (BOOL)postSignVerification:(NSString *)destApp opLog:(OperationLog *)opLog txnID:(NSString *)txnID {
+    NSDate *started = [NSDate date];
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *rec = [opLog beginPhase:OperationPhaseVerify operation:@"POST-SIGN VERIFICATION" target:destApp input:@"" transactionID:txnID];
     NSMutableString *r = [NSMutableString string];
@@ -1748,7 +1753,8 @@ extern char **environ;
     [r appendString:@"═══════════════════════════════════════════════════════════════\n"];
 
     BOOL allOk = runnerSigned && nestedMachOOk;
-    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:allOk ? @"" : @"Post-sign Mach-O verification failed; see MACH-O TARGET RESULTS for exact target" verification:@"post-sign verification complete" verified:allOk duration:0 context:@{@"runnerSigned": @(runnerSigned), @"nestedMachOTargets": @(nestedMachOOk), @"machOVerification": self.lastMachOVerificationDetail ?: @""}];
+    NSTimeInterval elapsed = -[started timeIntervalSinceNow];
+    [opLog endPhase:rec exitCode:allOk ? 0 : 1 rawOutput:r rawError:allOk ? @"" : @"Post-sign Mach-O verification failed; see MACH-O TARGET RESULTS for exact target" verification:@"post-sign verification complete" verified:allOk duration:elapsed context:@{@"runnerSigned": @(runnerSigned), @"nestedMachOTargets": @(nestedMachOOk), @"machOVerification": self.lastMachOVerificationDetail ?: @"", @"wallClockSeconds": @(elapsed)}];
     return allOk;
 }
 

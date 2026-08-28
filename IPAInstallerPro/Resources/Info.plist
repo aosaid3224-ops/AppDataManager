@@ -20,6 +20,32 @@
     <string>2.2.44</string>
     <key>CFBundleVersion</key>
     <string>2.2.44</string>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.aosaid.ipainstallerpro.ipa</string>
+            <key>UTTypeReferenceURL</key>
+            <string>https://developer.apple.com/documentation/uniformtypeidentifiers</string>
+            <key>UTTypeDescription</key>
+            <string>iOS Application Archive</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.archive</string>
+                <string>public.zip-archive</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ipa</string>
+                </array>
+                <key>public.mime-type</key>
+                <string>application/octet-stream</string>
+            </dict>
+        </dict>
+    </array>
     <key>CFBundleIconName</key>
     <string>SpiderIcon</string>
     <key>CFBundleIconFiles</key>
@@ -31,13 +57,9 @@
         <key>CFBundlePrimaryIcon</key>
         <dict>
             <key>CFBundleIconFiles</key>
-            <array>
-                <string>SpiderIcon.png</string>
-            </array>
-            <key>CFBundleIconName</key>
-            <string>SpiderIcon</string>
-            <key>CFBundleIconIsPrerendered</key>
-            <true/>
+            <array><string>SpiderIcon.png</string></array>
+            <key>CFBundleIconName</key><string>SpiderIcon</string>
+            <key>CFBundleIconIsPrerendered</key><true/>
         </dict>
     </dict>
     <key>LSRequiresIPhoneOS</key>

@@ -1,5 +1,6 @@
 #import "AppDelegate.h"
 #import "UI/MainViewController.h"
+#import "UI/IPAUnpackViewController.h"
 #import "UI/InstalledAppsViewController.h"
 #import "UI/SettingsViewController.h"
 #import "Core/Logger.h"
@@ -31,13 +32,19 @@
                                                             image:[UIImage systemImageNamed:@"apps.iphone"]
                                                     selectedImage:[UIImage systemImageNamed:@"apps.iphone"]];
 
+    IPAUnpackViewController *unpackVC = [[IPAUnpackViewController alloc] init];
+    UINavigationController *unpackNav = [[UINavigationController alloc] initWithRootViewController:unpackVC];
+    unpackNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"فك الحزمة"
+                                                         image:[UIImage systemImageNamed:@"archivebox"]
+                                                 selectedImage:[UIImage systemImageNamed:@"archivebox.fill"]];
+
     SettingsViewController *settingsVC = [[SettingsViewController alloc] init];
     UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settingsVC];
     settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"الإعدادات"
                                                            image:[UIImage systemImageNamed:@"gearshape"]
                                                    selectedImage:[UIImage systemImageNamed:@"gearshape.fill"]];
 
-    tabBarController.viewControllers = @[mainNav, installedNav, settingsNav];
+    tabBarController.viewControllers = @[mainNav, installedNav, unpackNav, settingsNav];
     tabBarController.tabBar.tintColor = [UIColor colorWithRed:0.55 green:0.45 blue:0.95 alpha:1.0];
     tabBarController.tabBar.barTintColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
     tabBarController.tabBar.unselectedItemTintColor = [UIColor colorWithWhite:0.3 alpha:1.0];
