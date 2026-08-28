@@ -18,7 +18,6 @@
         self.backgroundColor = UIColor.clearColor;
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.contentView.backgroundColor = UIColor.clearColor;
-        self.contentView.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(7, 18, 7, 18);
         [self buildGlassLayout];
     }
     return self;
@@ -28,15 +27,14 @@
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
     self.glassView = [[UIVisualEffectView alloc] initWithEffect:blur];
     self.glassView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.glassView.layer.cornerRadius = 22.0;
+    self.glassView.layer.cornerRadius = 24.0;
     self.glassView.layer.masksToBounds = YES;
-    self.glassView.layer.borderWidth = 0.8;
-    self.glassView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.14].CGColor;
+    self.glassView.layer.borderWidth = 0.0;
     [self.contentView addSubview:self.glassView];
 
     self.accentView = [[UIView alloc] init];
     self.accentView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.accentView.backgroundColor = [UIColor colorWithRed:0.25 green:0.72 blue:1.0 alpha:0.9];
+    self.accentView.backgroundColor = [UIColor colorWithRed:0.27 green:0.82 blue:1.0 alpha:0.95];
     self.accentView.layer.cornerRadius = 2.5;
     [self.glassView.contentView addSubview:self.accentView];
 
@@ -45,7 +43,7 @@
     self.ipaIconView.contentMode = UIViewContentModeScaleAspectFill;
     self.ipaIconView.clipsToBounds = YES;
     self.ipaIconView.layer.cornerRadius = 15;
-    self.ipaIconView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+    self.ipaIconView.backgroundColor = [UIColor colorWithRed:0.35 green:0.30 blue:0.92 alpha:0.20];
     [self.glassView.contentView addSubview:self.ipaIconView];
 
     self.titleLabel = [[UILabel alloc] init];
@@ -60,27 +58,27 @@
     self.metadataLabel = [[UILabel alloc] init];
     self.metadataLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.metadataLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
-    self.metadataLabel.textColor = [UIColor colorWithWhite:0.82 alpha:0.78];
+    self.metadataLabel.textColor = [UIColor colorWithRed:0.78 green:0.84 blue:1.0 alpha:0.78];
     self.metadataLabel.textAlignment = NSTextAlignmentNatural;
     self.metadataLabel.numberOfLines = 2;
     [self.glassView.contentView addSubview:self.metadataLabel];
 
     self.chevronView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.forward"]];
     self.chevronView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.chevronView.tintColor = [UIColor colorWithWhite:1.0 alpha:0.42];
+    self.chevronView.tintColor = [UIColor colorWithRed:0.55 green:0.86 blue:1.0 alpha:0.62];
     self.chevronView.contentMode = UIViewContentModeScaleAspectFit;
     [self.glassView.contentView addSubview:self.chevronView];
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.glassView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:6],
-        [self.glassView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:14],
-        [self.glassView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
-        [self.glassView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-6],
+        [self.glassView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:4],
+        [self.glassView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor],
+        [self.glassView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
+        [self.glassView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-4],
         [self.accentView.leadingAnchor constraintEqualToAnchor:self.glassView.contentView.leadingAnchor],
         [self.accentView.topAnchor constraintEqualToAnchor:self.glassView.contentView.topAnchor constant:18],
         [self.accentView.bottomAnchor constraintEqualToAnchor:self.glassView.contentView.bottomAnchor constant:-18],
-        [self.accentView.widthAnchor constraintEqualToConstant:5],
-        [self.ipaIconView.leadingAnchor constraintEqualToAnchor:self.glassView.contentView.leadingAnchor constant:18],
+        [self.accentView.widthAnchor constraintEqualToConstant:4],
+        [self.ipaIconView.leadingAnchor constraintEqualToAnchor:self.glassView.contentView.leadingAnchor constant:20],
         [self.ipaIconView.centerYAnchor constraintEqualToAnchor:self.glassView.contentView.centerYAnchor],
         [self.ipaIconView.widthAnchor constraintEqualToConstant:58],
         [self.ipaIconView.heightAnchor constraintEqualToConstant:58],

@@ -24,7 +24,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.035 blue:0.075 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.03 blue:0.095 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
@@ -56,7 +56,7 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(8, 0, 54, 0);
+    self.tableView.contentInset = UIEdgeInsetsMake(6, 0, 54, 0);
     self.tableView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(8, 0, 20, 0);
     self.tableView.rowHeight = 94;
     self.tableView.showsVerticalScrollIndicator = NO;
