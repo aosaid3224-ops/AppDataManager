@@ -194,38 +194,56 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSUInteger added = 0;
-    for (NSURL *url in urls) {
-        if (!url.isFileURL || ![url.pathExtension.lowercaseString isEqualToString:@"ipa"]) continue;
-        BOOL duplicate = NO;
-        for (NSDictionary *existing in self.items) {
-            if ([existing[@"url"] isEqual:url]) { duplicate = YES; break; }
+    void (^consumeURLs)(void) = ^{
+        NSUInteger added = 0;
+        for (NSURL *url in urls) {
+            if (![url isKindOfClass:NSURL.class] || url.path.length == 0) {
+                NSLog(@"[IPAExtractor] post-selection rejected URL without path: %@", url);
+                continue;
+            }
+            NSString *extension = url.pathExtension.lowercaseString ?: @"";
+            if (![extension isEqualToString:@"ipa"]) {
+                NSLog(@"[IPAExtractor] post-selection rejected non-IPA URL: %@", url);
+                continue;
+            }
+            NSString *path = url.path;
+            BOOL duplicate = NO;
+            for (NSDictionary *existing in self.items) {
+                NSString *existingPath = [self sourcePathForItem:existing];
+                if (existingPath.length > 0 && [existingPath isEqualToString:path]) { duplicate = YES; break; }
+            }
+            if (duplicate) {
+                NSLog(@"[IPAExtractor] post-selection ignored duplicate: %@", path);
+                continue;
+            }
+            BOOL accessed = [url startAccessingSecurityScopedResource];
+            NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
+            NSMutableDictionary *item = [@{
+                @"url": url,
+                @"name": url.lastPathComponent ?: @"IPA",
+                @"displayName": [url.lastPathComponent stringByDeletingPathExtension] ?: @"IPA",
+                @"status": @"جاهز",
+                @"progress": @0.0,
+                @"extracting": @NO,
+                @"securityScopeActive": @(accessed),
+                @"bookmarkData": bookmark ?: [NSData data],
+                @"originalPath": path,
+                @"state": @"ready",
+                @"unavailable": @NO,
+                @"addedAt": [NSDate date],
+                @"updatedAt": [NSDate date],
+            } mutableCopy];
+            [self.items addObject:item];
+            added++;
+            NSLog(@"[IPAExtractor] post-selection accepted IPA: %@ bookmark=%@ securityScope=%@", path, bookmark.length > 0 ? @"YES" : @"NO", accessed ? @"YES" : @"NO");
         }
-        if (duplicate) continue;
-        BOOL accessed = [url startAccessingSecurityScopedResource];
-        NSData *bookmark = [url bookmarkDataWithOptions:0 includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
-        NSMutableDictionary *item = [@{
-            @"url": url,
-            @"name": url.lastPathComponent ?: @"IPA",
-            @"displayName": [url.lastPathComponent stringByDeletingPathExtension] ?: @"IPA",
-            @"status": @"جاهز",
-            @"progress": @0.0,
-            @"extracting": @NO,
-            @"securityScopeActive": @(accessed),
-            @"bookmarkData": bookmark ?: [NSData data],
-            @"originalPath": url.path ?: @"",
-            @"state": @"ready",
-            @"unavailable": @NO,
-            @"addedAt": [NSDate date],
-            @"updatedAt": [NSDate date],
-        } mutableCopy];
-        [self.items addObject:item];
-        added++;
-    }
-    if (added > 0) [self persistItems];
-    self.emptyLabel.hidden = self.items.count > 0;
-    [self.tableView reloadData];
-    if (added == 0 && urls.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
+        if (added > 0) [self persistItems];
+        self.emptyLabel.hidden = self.items.count > 0;
+        [self.tableView reloadData];
+        if (added == 0 && urls.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
+    };
+    if ([NSThread isMainThread]) consumeURLs();
+    else dispatch_async(dispatch_get_main_queue(), consumeURLs);
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
