@@ -2,124 +2,48 @@
 #import "Core/IPAExtractor.h"
 
 @interface GlassIPACell ()
-@property (nonatomic, strong) UIVisualEffectView *glassView;
+@property (nonatomic, strong) UIView *glassView;
 @property (nonatomic, strong) UIView *accentView;
 @property (nonatomic, strong) UIImageView *ipaIconView;
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *metadataLabel;
 @property (nonatomic, strong) UIImageView *chevronView;
+@property (nonatomic, strong) UIImageView *moreView;
 @end
 
 @implementation GlassIPACell
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseIdentifier];
-    if (self) {
-        self.backgroundColor = UIColor.clearColor;
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-        self.contentView.backgroundColor = UIColor.clearColor;
-        [self buildGlassLayout];
-    }
+    if (self) { self.backgroundColor = UIColor.clearColor; self.selectionStyle = UITableViewCellSelectionStyleNone; self.contentView.backgroundColor = UIColor.clearColor; [self buildGlassLayout]; }
     return self;
 }
 
 - (void)buildGlassLayout {
-    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
-    self.glassView = [[UIVisualEffectView alloc] initWithEffect:blur];
-    self.glassView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.glassView.layer.cornerRadius = 24.0;
-    self.glassView.layer.masksToBounds = YES;
-    self.glassView.layer.borderWidth = 0.0;
-    [self.contentView addSubview:self.glassView];
-
-    self.accentView = [[UIView alloc] init];
-    self.accentView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.accentView.backgroundColor = [UIColor colorWithRed:0.82 green:0.10 blue:0.13 alpha:0.90];
-    self.accentView.layer.cornerRadius = 2.5;
-    [self.glassView.contentView addSubview:self.accentView];
-
-    self.ipaIconView = [[UIImageView alloc] init];
-    self.ipaIconView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.ipaIconView.contentMode = UIViewContentModeScaleAspectFill;
-    self.ipaIconView.clipsToBounds = YES;
-    self.ipaIconView.layer.cornerRadius = 15;
-    self.ipaIconView.backgroundColor = [UIColor colorWithRed:0.60 green:0.06 blue:0.09 alpha:0.16];
-    [self.glassView.contentView addSubview:self.ipaIconView];
-
-    self.titleLabel = [[UILabel alloc] init];
-    self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.titleLabel.textColor = UIColor.whiteColor;
-    self.titleLabel.textAlignment = NSTextAlignmentNatural;
-    self.titleLabel.adjustsFontSizeToFitWidth = YES;
-    self.titleLabel.minimumScaleFactor = 0.82;
-    [self.glassView.contentView addSubview:self.titleLabel];
-
-    self.metadataLabel = [[UILabel alloc] init];
-    self.metadataLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.metadataLabel.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
-    self.metadataLabel.textColor = [UIColor colorWithRed:0.78 green:0.79 blue:0.82 alpha:0.82];
-    self.metadataLabel.textAlignment = NSTextAlignmentNatural;
-    self.metadataLabel.numberOfLines = 2;
-    [self.glassView.contentView addSubview:self.metadataLabel];
-
-    self.chevronView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.forward"]];
-    self.chevronView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.chevronView.tintColor = [UIColor colorWithRed:0.82 green:0.16 blue:0.19 alpha:0.72];
-    self.chevronView.contentMode = UIViewContentModeScaleAspectFit;
-    [self.glassView.contentView addSubview:self.chevronView];
-
+    self.glassView = [[UIView alloc] init]; self.glassView.translatesAutoresizingMaskIntoConstraints = NO; self.glassView.backgroundColor = [UIColor colorWithRed:.060 green:.062 blue:.068 alpha:1]; self.glassView.layer.cornerRadius = 22; self.glassView.layer.borderWidth = 1; self.glassView.layer.borderColor = [UIColor colorWithWhite:.18 alpha:.9].CGColor; self.glassView.layer.masksToBounds = YES; [self.contentView addSubview:self.glassView];
+    self.accentView = [[UIView alloc] init]; self.accentView.translatesAutoresizingMaskIntoConstraints = NO; self.accentView.backgroundColor = [UIColor colorWithRed:1 green:.16 blue:.14 alpha:.95]; [self.glassView addSubview:self.accentView];
+    self.ipaIconView = [[UIImageView alloc] init]; self.ipaIconView.translatesAutoresizingMaskIntoConstraints = NO; self.ipaIconView.contentMode = UIViewContentModeScaleAspectFill; self.ipaIconView.clipsToBounds = YES; self.ipaIconView.layer.cornerRadius = 15; self.ipaIconView.backgroundColor = [UIColor colorWithWhite:1 alpha:.08]; [self.glassView addSubview:self.ipaIconView];
+    self.titleLabel = [[UILabel alloc] init]; self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO; self.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold]; self.titleLabel.textColor = UIColor.whiteColor; self.titleLabel.textAlignment = NSTextAlignmentRight; self.titleLabel.adjustsFontSizeToFitWidth = YES; self.titleLabel.minimumScaleFactor = .78; [self.glassView addSubview:self.titleLabel];
+    self.metadataLabel = [[UILabel alloc] init]; self.metadataLabel.translatesAutoresizingMaskIntoConstraints = NO; self.metadataLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium]; self.metadataLabel.textColor = [UIColor colorWithWhite:.70 alpha:1]; self.metadataLabel.textAlignment = NSTextAlignmentRight; self.metadataLabel.numberOfLines = 2; [self.glassView addSubview:self.metadataLabel];
+    self.chevronView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.left"]]; self.chevronView.translatesAutoresizingMaskIntoConstraints = NO; self.chevronView.tintColor = [UIColor colorWithRed:1 green:.20 blue:.17 alpha:1]; self.chevronView.contentMode = UIViewContentModeScaleAspectFit; [self.glassView addSubview:self.chevronView];
+    self.moreView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"ellipsis.vertical"]]; self.moreView.translatesAutoresizingMaskIntoConstraints = NO; self.moreView.tintColor = [UIColor colorWithRed:1 green:.20 blue:.17 alpha:1]; self.moreView.contentMode = UIViewContentModeScaleAspectFit; [self.glassView addSubview:self.moreView];
     [NSLayoutConstraint activateConstraints:@[
-        [self.glassView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:4],
-        [self.glassView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor],
-        [self.glassView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor],
-        [self.glassView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-4],
-        [self.accentView.leadingAnchor constraintEqualToAnchor:self.glassView.contentView.leadingAnchor],
-        [self.accentView.topAnchor constraintEqualToAnchor:self.glassView.contentView.topAnchor constant:18],
-        [self.accentView.bottomAnchor constraintEqualToAnchor:self.glassView.contentView.bottomAnchor constant:-18],
-        [self.accentView.widthAnchor constraintEqualToConstant:4],
-        [self.ipaIconView.leadingAnchor constraintEqualToAnchor:self.glassView.contentView.leadingAnchor constant:20],
-        [self.ipaIconView.centerYAnchor constraintEqualToAnchor:self.glassView.contentView.centerYAnchor],
-        [self.ipaIconView.widthAnchor constraintEqualToConstant:58],
-        [self.ipaIconView.heightAnchor constraintEqualToConstant:58],
-        [self.chevronView.trailingAnchor constraintEqualToAnchor:self.glassView.contentView.trailingAnchor constant:-17],
-        [self.chevronView.centerYAnchor constraintEqualToAnchor:self.glassView.contentView.centerYAnchor],
-        [self.chevronView.widthAnchor constraintEqualToConstant:13],
-        [self.chevronView.heightAnchor constraintEqualToConstant:18],
-        [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.ipaIconView.trailingAnchor constant:14],
-        [self.titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.chevronView.leadingAnchor constant:-12],
-        [self.titleLabel.topAnchor constraintEqualToAnchor:self.glassView.contentView.topAnchor constant:15],
-        [self.metadataLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
-        [self.metadataLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.chevronView.leadingAnchor constant:-12],
-        [self.metadataLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:3],
-        [self.metadataLabel.bottomAnchor constraintLessThanOrEqualToAnchor:self.glassView.contentView.bottomAnchor constant:-13]
+        [self.glassView.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:5], [self.glassView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:4], [self.glassView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-4], [self.glassView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-5],
+        [self.accentView.leadingAnchor constraintEqualToAnchor:self.glassView.leadingAnchor], [self.accentView.topAnchor constraintEqualToAnchor:self.glassView.topAnchor constant:16], [self.accentView.bottomAnchor constraintEqualToAnchor:self.glassView.bottomAnchor constant:-16], [self.accentView.widthAnchor constraintEqualToConstant:2],
+        [self.ipaIconView.trailingAnchor constraintEqualToAnchor:self.glassView.trailingAnchor constant:-18], [self.ipaIconView.centerYAnchor constraintEqualToAnchor:self.glassView.centerYAnchor], [self.ipaIconView.widthAnchor constraintEqualToConstant:62], [self.ipaIconView.heightAnchor constraintEqualToConstant:62],
+        [self.moreView.trailingAnchor constraintEqualToAnchor:self.ipaIconView.leadingAnchor constant:-14], [self.moreView.centerYAnchor constraintEqualToAnchor:self.glassView.centerYAnchor], [self.moreView.widthAnchor constraintEqualToConstant:16], [self.moreView.heightAnchor constraintEqualToConstant:28],
+        [self.chevronView.leadingAnchor constraintEqualToAnchor:self.glassView.leadingAnchor constant:36], [self.chevronView.centerYAnchor constraintEqualToAnchor:self.glassView.centerYAnchor], [self.chevronView.widthAnchor constraintEqualToConstant:14], [self.chevronView.heightAnchor constraintEqualToConstant:20],
+        [self.titleLabel.trailingAnchor constraintEqualToAnchor:self.moreView.leadingAnchor constant:-12], [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.chevronView.trailingAnchor constant:20], [self.titleLabel.topAnchor constraintEqualToAnchor:self.glassView.topAnchor constant:13], [self.titleLabel.heightAnchor constraintEqualToConstant:25],
+        [self.metadataLabel.trailingAnchor constraintEqualToAnchor:self.titleLabel.trailingAnchor], [self.metadataLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor], [self.metadataLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:1], [self.metadataLabel.bottomAnchor constraintLessThanOrEqualToAnchor:self.glassView.bottomAnchor constant:-11]
     ]];
 }
 
 - (void)configureWithIPAInfo:(IPAExtractedInfo *)info {
     self.titleLabel.text = info.displayName ?: info.name ?: [info.filePath lastPathComponent];
-    self.metadataLabel.text = [NSString stringWithFormat:@"%@  •  %@\n%@", info.version ?: @"غير معروف", info.bundleID ?: @"غير معروف", info.formattedSize ?: @"غير معروف"];
-    self.ipaIconView.image = info.icon ?: [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:1.0 alpha:0.70]];
+    NSString *date = @""; NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:info.filePath error:nil]; NSDate *modified = attrs[NSFileModificationDate]; if (modified) { NSDateFormatter *formatter = [[NSDateFormatter alloc] init]; formatter.dateFormat = @"dd/MM/yyyy"; date = [formatter stringFromDate:modified]; }
+    NSString *first = [NSString stringWithFormat:@"%@  •  %@", info.version ?: @"غير معروف", info.formattedSize ?: @"غير معروف"]; self.metadataLabel.text = date.length ? [NSString stringWithFormat:@"%@\n%@  •", first, date] : first;
+    self.ipaIconView.image = info.icon ?: [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:1 alpha:.7]];
 }
-
-- (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
-    [super setHighlighted:highlighted animated:animated];
-    void (^changes)(void) = ^{
-        self.glassView.transform = highlighted ? CGAffineTransformMakeScale(0.975, 0.975) : CGAffineTransformIdentity;
-        self.glassView.alpha = highlighted ? 0.72 : 1.0;
-    };
-    if (animated) {
-        [UIView animateWithDuration:0.26 delay:0 usingSpringWithDamping:0.72 initialSpringVelocity:0.2 options:UIViewAnimationOptionAllowUserInteraction animations:changes completion:nil];
-    } else { changes(); }
-}
-
-- (void)playEntranceAnimationWithDelay:(NSTimeInterval)delay {
-    self.glassView.alpha = 0.0;
-    self.glassView.transform = CGAffineTransformMakeTranslation(0, 18);
-    [UIView animateWithDuration:0.58 delay:delay usingSpringWithDamping:0.82 initialSpringVelocity:0.25 options:UIViewAnimationOptionAllowUserInteraction animations:^{
-        self.glassView.alpha = 1.0;
-        self.glassView.transform = CGAffineTransformIdentity;
-    } completion:nil];
-}
-
+- (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated { [super setHighlighted:highlighted animated:animated]; void (^changes)(void) = ^{ self.glassView.transform = highlighted ? CGAffineTransformMakeScale(.975, .975) : CGAffineTransformIdentity; self.glassView.alpha = highlighted ? .72 : 1.0; }; if (animated) [UIView animateWithDuration:.26 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.2 options:UIViewAnimationOptionAllowUserInteraction animations:changes completion:nil]; else changes(); }
+- (void)playEntranceAnimationWithDelay:(NSTimeInterval)delay { self.glassView.alpha = 0; self.glassView.transform = CGAffineTransformMakeTranslation(0, 18); [UIView animateWithDuration:.58 delay:delay usingSpringWithDamping:.82 initialSpringVelocity:.25 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.glassView.alpha = 1; self.glassView.transform = CGAffineTransformIdentity; } completion:nil]; }
 @end

@@ -28,7 +28,7 @@
 
     InstalledAppsViewController *installedVC = [[InstalledAppsViewController alloc] init];
     UINavigationController *installedNav = [[UINavigationController alloc] initWithRootViewController:installedVC];
-    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"التطبيقات"
+    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"التطبيقات المثبتة"
                                                             image:[UIImage systemImageNamed:@"apps.iphone"]
                                                     selectedImage:[UIImage systemImageNamed:@"apps.iphone"]];
 

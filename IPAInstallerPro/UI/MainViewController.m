@@ -17,14 +17,21 @@
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *ipaMetadataCache;
 @property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
 @property (nonatomic, assign) NSUInteger ipaLoadGeneration;
+@property (nonatomic, strong) UIView *dashboardHeader;
+@property (nonatomic, strong) UILabel *appsCountLabel;
+@property (nonatomic, strong) UILabel *totalSizeLabel;
+@property (nonatomic, strong) UILabel *trustedCountLabel;
+@property (nonatomic, strong) UILabel *installedCountLabel;
+@property (nonatomic, strong) UISearchBar *searchBar;
 @end
 
 @implementation MainViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.012 green:0.014 blue:0.018 alpha:1.0];
+    self.title = @"";
+    self.navigationItem.title = @"";
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.026 blue:0.030 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
@@ -32,6 +39,7 @@
 
     [self setupNavigationBar];
     [self setupTableView];
+    [self setupDashboardHeader];
     [self setupEmptyState];
     [self setupAddButton];
     [self setupToast];
@@ -41,12 +49,19 @@
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    self.navigationController.navigationBarHidden = YES;
     // Don't reload here to avoid lag — use pull-to-refresh instead
 }
 
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    self.navigationController.navigationBarHidden = NO;
+}
+
 - (void)setupNavigationBar {
-    self.navigationController.navigationBar.prefersLargeTitles = YES;
-    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
+    self.navigationController.navigationBar.prefersLargeTitles = NO;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationController.navigationBarHidden = YES;
 }
 
 - (void)setupTableView {
@@ -56,8 +71,8 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(6, 0, 54, 0);
-    self.tableView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(8, 0, 20, 0);
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 22, 0);
+    self.tableView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(0, 0, 20, 0);
     self.tableView.rowHeight = 94;
     self.tableView.showsVerticalScrollIndicator = NO;
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
@@ -67,6 +82,29 @@
     self.refreshControl.tintColor = [UIColor colorWithWhite:0.5 alpha:1.0];
     [self.refreshControl addTarget:self action:@selector(refreshPulled:) forControlEvents:UIControlEventValueChanged];
     self.tableView.refreshControl = self.refreshControl;
+}
+
+- (void)setupDashboardHeader {
+    CGFloat width = MAX(self.view.bounds.size.width, 320.0);
+    self.dashboardHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 286.0)];
+    self.dashboardHeader.backgroundColor = UIColor.clearColor;
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(24, 24, width - 48, 48)];
+    NSMutableAttributedString *styledTitle = [[NSMutableAttributedString alloc] initWithString:@"ملفات IPA" attributes:@{NSFontAttributeName:[UIFont systemFontOfSize:31 weight:UIFontWeightBold], NSForegroundColorAttributeName:UIColor.whiteColor}];
+    [styledTitle addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.22 blue:0.18 alpha:1.0] range:NSMakeRange(6, 3)]; title.attributedText = styledTitle; title.textAlignment = NSTextAlignmentCenter; [self.dashboardHeader addSubview:title];
+    UIButton *add = [UIButton buttonWithType:UIButtonTypeSystem]; add.frame = CGRectMake(width - 78, 26, 52, 52); add.layer.cornerRadius = 17; add.layer.borderWidth = 1; add.layer.borderColor = [UIColor colorWithWhite:1 alpha:.14].CGColor; [add setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal]; add.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [add addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside]; [self.dashboardHeader addSubview:add];
+    UIButton *viewMode = [UIButton buttonWithType:UIButtonTypeSystem]; viewMode.frame = CGRectMake(26, 26, 52, 52); viewMode.layer.cornerRadius = 17; viewMode.layer.borderWidth = 1; viewMode.layer.borderColor = [UIColor colorWithWhite:1 alpha:.14].CGColor; [viewMode setImage:[UIImage systemImageNamed:@"list.bullet"] forState:UIControlStateNormal]; viewMode.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [self.dashboardHeader addSubview:viewMode];
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(136, 96, width - 160, 48)]; self.searchBar.placeholder = @"البحث في الملفات..."; self.searchBar.searchBarStyle = UISearchBarStyleMinimal; self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; self.searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft; [self.dashboardHeader addSubview:self.searchBar];
+    UIButton *filter = [UIButton buttonWithType:UIButtonTypeSystem]; filter.frame = CGRectMake(24, 100, 96, 42); filter.layer.cornerRadius = 16; filter.layer.borderWidth = 1; filter.layer.borderColor = [UIColor colorWithWhite:1 alpha:.12].CGColor; [filter setTitle:@"☷  تصفية" forState:UIControlStateNormal]; filter.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold]; [filter setTitleColor:[UIColor colorWithRed:1 green:.28 blue:.23 alpha:1] forState:UIControlStateNormal]; [self.dashboardHeader addSubview:filter];
+    UIView *stats = [[UIView alloc] initWithFrame:CGRectMake(24, 156, width - 48, 112)]; stats.backgroundColor = [UIColor colorWithRed:.065 green:.066 blue:.075 alpha:1]; stats.layer.cornerRadius = 24; stats.layer.borderWidth = 1; stats.layer.borderColor = [UIColor colorWithRed:.42 green:.08 blue:.09 alpha:.65].CGColor; [self.dashboardHeader addSubview:stats];
+    NSArray *icons = @[@"cube", @"chart.pie", @"shield", @"arrow.down.circle"]; NSArray *labels = @[@"التطبيقات", @"إجمالي الحجم", @"موثوقة", @"تم التثبيت"]; NSMutableArray *values = [NSMutableArray array];
+    for (NSInteger i = 0; i < 4; i++) { CGFloat x = stats.bounds.size.width / 4.0 * i; if (i) { UIView *d = [[UIView alloc] initWithFrame:CGRectMake(x, 22, 1, 68)]; d.backgroundColor = [UIColor colorWithWhite:1 alpha:.08]; [stats addSubview:d]; } UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(x + 31, 13, 30, 30)]; iv.image = [UIImage systemImageNamed:icons[i]]; iv.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; iv.contentMode = UIViewContentModeScaleAspectFit; [stats addSubview:iv]; UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(x + 4, 45, stats.bounds.size.width / 4.0 - 8, 28)]; v.textAlignment = NSTextAlignmentCenter; v.font = [UIFont systemFontOfSize:21 weight:UIFontWeightBold]; v.textColor = UIColor.whiteColor; [stats addSubview:v]; [values addObject:v]; UILabel *c = [[UILabel alloc] initWithFrame:CGRectMake(x + 2, 76, stats.bounds.size.width / 4.0 - 4, 22)]; c.text = labels[i]; c.textAlignment = NSTextAlignmentCenter; c.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium]; c.textColor = [UIColor colorWithWhite:.68 alpha:1]; [stats addSubview:c]; }
+    self.appsCountLabel = values[0]; self.totalSizeLabel = values[1]; self.trustedCountLabel = values[2]; self.installedCountLabel = values[3]; self.tableView.tableHeaderView = self.dashboardHeader;
+}
+
+- (void)updateDashboardStatistics {
+    NSUInteger trusted = 0; unsigned long long total = 0; for (IPAExtractedInfo *info in self.ipaFiles) { total += info.fileSize.unsignedLongLongValue; if (info.teamIdentifier.length > 0 && ![info.teamIdentifier isEqualToString:@"غير معروف"]) trusted++; }
+    NSUInteger installed = 0; NSFileManager *fm = [NSFileManager defaultManager]; for (NSString *root in @[@"/Applications", @"/var/jb/Applications"]) { for (NSString *item in [fm contentsOfDirectoryAtPath:root error:nil]) if ([item.pathExtension.lowercaseString isEqualToString:@"app"]) installed++; }
+    self.appsCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.ipaFiles.count]; self.totalSizeLabel.text = [[IPAExtractor sharedExtractor] formatFileSize:(long long)total]; self.trustedCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)trusted]; self.installedCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)installed];
 }
 
 - (void)setupEmptyState {
@@ -223,6 +261,7 @@
             [self.ipaFiles removeAllObjects];
             [self.ipaFiles addObjectsFromArray:foundFiles];
             [self.tableView reloadData];
+            [self updateDashboardStatistics];
             self.emptyLabel.hidden = (self.ipaFiles.count > 0);
             self.emptyLabel.frame = CGRectMake(20, self.view.bounds.size.height / 2 - 40, self.view.bounds.size.width - 40, 80);
             [self.refreshControl endRefreshing];
@@ -257,6 +296,7 @@
                     if (index != NSNotFound) {
                         self.ipaFiles[index] = parsed;
                         [self.tableView reloadData];
+                        [self updateDashboardStatistics];
                     }
                 });
             }
@@ -395,6 +435,7 @@
             [self.ipaMetadataCache removeObjectForKey:info.filePath];
         });
         [self.ipaFiles removeObjectAtIndex:indexPath.row];
+        [self updateDashboardStatistics];
         [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
         completionHandler(YES);
     }];
