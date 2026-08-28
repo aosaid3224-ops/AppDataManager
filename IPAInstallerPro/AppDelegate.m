@@ -45,19 +45,39 @@
                                                    selectedImage:[UIImage systemImageNamed:@"gearshape.fill"]];
 
     tabBarController.viewControllers = @[mainNav, installedNav, unpackNav, settingsNav];
-    tabBarController.tabBar.tintColor = [UIColor colorWithRed:0.55 green:0.45 blue:0.95 alpha:1.0];
-    tabBarController.tabBar.barTintColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
-    tabBarController.tabBar.unselectedItemTintColor = [UIColor colorWithWhite:0.3 alpha:1.0];
-    tabBarController.tabBar.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.08 alpha:1.0];
+    UIColor *glassTint = [UIColor colorWithRed:0.44 green:0.78 blue:1.0 alpha:1.0];
+    UIColor *glassBackground = [UIColor colorWithRed:0.055 green:0.075 blue:0.14 alpha:0.72];
+
+    UITabBarAppearance *tabAppearance = [[UITabBarAppearance alloc] init];
+    [tabAppearance configureWithDefaultBackground];
+    tabAppearance.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
+    tabAppearance.backgroundColor = glassBackground;
+    tabAppearance.shadowColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+    tabAppearance.stackedLayoutAppearance.normal.iconColor = [UIColor colorWithWhite:1.0 alpha:0.42];
+    tabAppearance.stackedLayoutAppearance.normal.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:0.48], NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightMedium]};
+    tabAppearance.stackedLayoutAppearance.selected.iconColor = glassTint;
+    tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes = @{NSForegroundColorAttributeName: glassTint, NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]};
+    tabBarController.tabBar.standardAppearance = tabAppearance;
+    if (@available(iOS 15.0, *)) {
+        tabBarController.tabBar.scrollEdgeAppearance = tabAppearance;
+    }
+    tabBarController.tabBar.tintColor = glassTint;
+    tabBarController.tabBar.unselectedItemTintColor = [UIColor colorWithWhite:1.0 alpha:0.42];
+    tabBarController.tabBar.translucent = YES;
 
     for (UINavigationController *nav in tabBarController.viewControllers) {
         nav.navigationBar.prefersLargeTitles = YES;
-        nav.navigationBar.barTintColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
-        nav.navigationBar.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
-        nav.navigationBar.translucent = NO;
-        nav.navigationBar.tintColor = [UIColor whiteColor];
-        [nav.navigationBar setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]}];
-        [nav.navigationBar setLargeTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]}];
+        UINavigationBarAppearance *navAppearance = [[UINavigationBarAppearance alloc] init];
+        [navAppearance configureWithTransparentBackground];
+        navAppearance.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
+        navAppearance.backgroundColor = [UIColor colorWithRed:0.025 green:0.035 blue:0.075 alpha:0.60];
+        navAppearance.shadowColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+        navAppearance.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
+        navAppearance.largeTitleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont systemFontOfSize:34 weight:UIFontWeightBold]};
+        nav.navigationBar.standardAppearance = navAppearance;
+        nav.navigationBar.scrollEdgeAppearance = navAppearance;
+        nav.navigationBar.compactAppearance = navAppearance;
+        nav.navigationBar.tintColor = glassTint;
     }
 
     self.window.rootViewController = tabBarController;
