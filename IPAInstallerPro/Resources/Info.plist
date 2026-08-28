@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>ar</string>
     <key>CFBundleExecutable</key>
-    <string>IPAInstallerPro</string>
+    <string>Spider</string>
     <key>CFBundleIdentifier</key>
     <string>com.aosaid.ipainstallerpro</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.2.46</string>
+    <string>2.2.47</string>
     <key>CFBundleVersion</key>
-    <string>2.2.46</string>
+    <string>2.2.47</string>
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>
