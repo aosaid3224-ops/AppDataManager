@@ -1,5 +1,6 @@
 #import "IPAMultiInstancePreparer.h"
 #import "ApplicationManager.h"
+#import "RootlessManager.h"
 #import <spawn.h>
 #import <sys/wait.h>
 #import <unistd.h>
@@ -8,6 +9,7 @@ extern char **environ;
 @interface IPAMultiInstancePreparer ()
 @property (nonatomic, copy) NSString *unzipPath;
 @property (nonatomic, copy) NSString *zipPath;
+@property (nonatomic, copy) NSString *shellPath;
 @end
 
 @implementation IPAMultiInstancePreparer
@@ -22,8 +24,10 @@ extern char **environ;
 - (instancetype)init {
     self = [super init];
     if (!self) return nil;
-    _unzipPath = @"/usr/bin/unzip";
-    _zipPath = @"/usr/bin/zip";
+    RootlessManager *resolver = [RootlessManager sharedManager];
+    _unzipPath = [resolver resolvePath:@"/usr/bin/unzip"];
+    _zipPath = [resolver resolvePath:@"/usr/bin/zip"];
+    _shellPath = [resolver resolvePath:@"/bin/sh"];
     return self;
 }
 
@@ -36,14 +40,31 @@ extern char **environ;
         if (error) *error = [self errorWithCode:10 description:@"مسار أداة التجهيز غير صالح."];
         return NO;
     }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL exists = [fm fileExistsAtPath:path];
+    BOOL executable = [fm isExecutableFileAtPath:path];
+    NSString *toolName = path.lastPathComponent ?: @"unknown";
+    NSLog(@"[IPAInstallerPro][MultiInstance] tool=%@ resolvedPath=%@ exists=%@ executable=%@ errno=0", toolName, path, exists ? @"YES" : @"NO", executable ? @"YES" : @"NO");
+    if (!exists || !executable) {
+        if (error) *error = [self errorWithCode:13 description:[NSString stringWithFormat:@"tool=%@ resolvedPath=%@ exists=%@ executable=%@ errno=2", toolName, path, exists ? @"YES" : @"NO", executable ? @"YES" : @"NO"]];
+        return NO;
+    }
     NSMutableArray<NSString *> *argvStrings = nil;
     NSString *spawnPath = path;
     if (directory.length) {
         // iOS does not expose posix_spawn_file_actions_addchdir_np. Use sh only as
         // an argv transport; every user argument remains a separate quoted argv item.
-        argvStrings = [NSMutableArray arrayWithObjects:@"/bin/sh", @"-c", @"cd \"$1\" && shift 1 && exec \"$@\"", @"ipa-multi-instance", directory, path, nil];
+        NSString *shell = self.shellPath;
+        BOOL shellExists = [fm fileExistsAtPath:shell];
+        BOOL shellExecutable = [fm isExecutableFileAtPath:shell];
+        NSLog(@"[IPAInstallerPro][MultiInstance] tool=sh resolvedPath=%@ exists=%@ executable=%@ errno=0", shell, shellExists ? @"YES" : @"NO", shellExecutable ? @"YES" : @"NO");
+        if (!shellExists || !shellExecutable) {
+            if (error) *error = [self errorWithCode:14 description:[NSString stringWithFormat:@"tool=sh resolvedPath=%@ exists=%@ executable=%@ errno=2", shell, shellExists ? @"YES" : @"NO", shellExecutable ? @"YES" : @"NO"]];
+            return NO;
+        }
+        argvStrings = [NSMutableArray arrayWithObjects:shell, @"-c", @"cd \"$1\" && shift 1 && exec \"$@\"", @"ipa-multi-instance", directory, path, nil];
         [argvStrings addObjectsFromArray:arguments ?: @[]];
-        spawnPath = @"/bin/sh";
+        spawnPath = shell;
     } else {
         argvStrings = [NSMutableArray arrayWithObject:path];
         [argvStrings addObjectsFromArray:arguments ?: @[]];
@@ -55,7 +76,8 @@ extern char **environ;
     int spawnError = posix_spawn(&pid, spawnPath.fileSystemRepresentation, NULL, NULL, argv, environ);
     free(argv);
     if (spawnError != 0) {
-        if (error) *error = [self errorWithCode:11 description:[NSString stringWithFormat:@"تعذر تشغيل أداة التجهيز (errno=%d).", spawnError]];
+        NSLog(@"[IPAInstallerPro][MultiInstance] tool=%@ resolvedPath=%@ exists=%@ executable=%@ errno=%d", toolName, path, exists ? @"YES" : @"NO", executable ? @"YES" : @"NO", spawnError);
+        if (error) *error = [self errorWithCode:11 description:[NSString stringWithFormat:@"tool=%@ resolvedPath=%@ exists=%@ executable=%@ errno=%d", toolName, path, exists ? @"YES" : @"NO", executable ? @"YES" : @"NO", spawnError]];
         return NO;
     }
     int status = 0;
