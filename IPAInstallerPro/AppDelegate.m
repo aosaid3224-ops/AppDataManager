@@ -45,8 +45,8 @@
                                                    selectedImage:[UIImage systemImageNamed:@"gearshape.fill"]];
 
     tabBarController.viewControllers = @[mainNav, installedNav, unpackNav, settingsNav];
-    UIColor *glassTint = [UIColor colorWithRed:0.55 green:0.48 blue:1.0 alpha:1.0];
-    UIColor *glassBackground = [UIColor colorWithRed:0.045 green:0.065 blue:0.15 alpha:0.78];
+    UIColor *glassTint = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
+    UIColor *glassBackground = [UIColor colorWithRed:0.035 green:0.038 blue:0.048 alpha:0.84];
 
     UITabBarAppearance *tabAppearance = [[UITabBarAppearance alloc] init];
     [tabAppearance configureWithDefaultBackground];
@@ -70,8 +70,8 @@
         UINavigationBarAppearance *navAppearance = [[UINavigationBarAppearance alloc] init];
         [navAppearance configureWithTransparentBackground];
         navAppearance.backgroundEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
-        navAppearance.backgroundColor = [UIColor colorWithRed:0.045 green:0.055 blue:0.16 alpha:0.62];
-        navAppearance.shadowColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+        navAppearance.backgroundColor = [UIColor colorWithRed:0.025 green:0.028 blue:0.035 alpha:0.72];
+        navAppearance.shadowColor = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:0.32];
         navAppearance.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]};
         navAppearance.largeTitleTextAttributes = @{NSForegroundColorAttributeName: [UIColor colorWithRed:0.96 green:0.96 blue:1.0 alpha:1.0], NSFontAttributeName: [UIFont systemFontOfSize:34 weight:UIFontWeightBold]};
         nav.navigationBar.standardAppearance = navAppearance;

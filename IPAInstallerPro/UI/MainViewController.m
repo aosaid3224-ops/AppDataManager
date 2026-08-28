@@ -24,7 +24,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.03 blue:0.095 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithRed:0.012 green:0.014 blue:0.018 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
@@ -84,7 +84,7 @@
     UIBarButtonItem *addBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                                               target:self
                                                                               action:@selector(addIPATapped:)];
-    addBtn.tintColor = [UIColor colorWithRed:0.48 green:0.82 blue:1.0 alpha:1.0];
+    addBtn.tintColor = [UIColor colorWithRed:0.96 green:0.08 blue:0.10 alpha:1.0];
     self.navigationItem.rightBarButtonItem = addBtn;
 }
 

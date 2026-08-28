@@ -16,7 +16,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = self.currentPath.lastPathComponent ?: @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.035 blue:0.075 alpha:1.0];
+    self.view.backgroundColor = [UIColor colorWithRed:0.012 green:0.014 blue:0.018 alpha:1.0];
     if (!self.currentPath) self.currentPath = @"/var/mobile";
     self.items = [NSMutableArray array];
     self.filteredItems = [NSMutableArray array];
@@ -46,8 +46,8 @@
     self.toolbar.translatesAutoresizingMaskIntoConstraints = NO;
     self.toolbar.barStyle = UIBarStyleBlack;
     self.toolbar.translucent = YES;
-    self.toolbar.barTintColor = [UIColor colorWithWhite:0.08 alpha:0.62];
-    self.toolbar.tintColor = [UIColor colorWithRed:0.48 green:0.82 blue:1.0 alpha:1.0];
+    self.toolbar.barTintColor = [UIColor colorWithRed:0.035 green:0.038 blue:0.048 alpha:0.84];
+    self.toolbar.tintColor = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
     self.toolbar.layer.borderWidth = 0.6;
     self.toolbar.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
     [self.view addSubview:self.toolbar];
