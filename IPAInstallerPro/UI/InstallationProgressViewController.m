@@ -533,7 +533,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     _liveOutputCard.backgroundColor = [IPTheme cardColor];
     _liveOutputCard.layer.cornerRadius = 12;
     _liveOutputCard.layer.borderWidth = 0.7; _liveOutputCard.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    
+
     [_containerView addSubview:_liveOutputCard];
 
     UILabel *liveTitle = [[UILabel alloc] init];
