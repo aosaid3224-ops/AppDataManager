@@ -41,35 +41,6 @@ for physical_root in /private/preboot/*/dopamine-*/procursus/Applications /priva
     STAGE_ROOTS+=("$physical_root")
 done
 
-# Quarantine rollback backups before uikittools triggers run. The backup is
-# preserved for recovery, but it must not remain under Applications where
-# uicache can mistake *.app.backup for an install candidate.
-QUARANTINE_ROOT="/var/mobile/Library/Application Support/IPAInstallerPro/BackupQuarantine"
-MV_BIN=$(command -v mv 2>/dev/null || true)
-if [ -n "$MV_BIN" ]; then
-    mkdir -p "$QUARANTINE_ROOT" 2>/dev/null || true
-    quarantine_stamp=$(date +%s)
-    for stage_root in "${STAGE_ROOTS[@]}"; do
-        for backup_path in "$stage_root"/*.app.backup; do
-            [ -d "$backup_path" ] || continue
-            backup_name="${backup_path##*/}"
-            backup_stem="${backup_name%.backup}"
-            quarantine_path="$QUARANTINE_ROOT/${backup_stem}.${quarantine_stamp}.backup"
-            suffix=2
-            while [ -e "$quarantine_path" ]; do
-                quarantine_path="$QUARANTINE_ROOT/${backup_stem}.${quarantine_stamp}.${suffix}.backup"
-                suffix=$((suffix + 1))
-            done
-            "$MV_BIN" -- "$backup_path" "$quarantine_path"
-            [ ! -e "$backup_path" ] || {
-                echo "ERROR: backup remained in Applications: $backup_path" >&2
-                exit 1
-            }
-            echo "Quarantined rollback backup outside Applications: $quarantine_path"
-        done
-    done
-fi
-
 for stage_root in "${STAGE_ROOTS[@]}"; do
     for stage_path in "$stage_root"/*.app.ipa-stage-*; do
         [ -d "$stage_path" ] || continue
