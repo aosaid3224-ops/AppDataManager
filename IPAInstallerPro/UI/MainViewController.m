@@ -84,7 +84,7 @@
     UIBarButtonItem *addBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                                               target:self
                                                                               action:@selector(addIPATapped:)];
-    addBtn.tintColor = [UIColor colorWithRed:0.96 green:0.08 blue:0.10 alpha:1.0];
+    addBtn.tintColor = [UIColor colorWithRed:0.70 green:0.20 blue:0.24 alpha:0.92];
     self.navigationItem.rightBarButtonItem = addBtn;
 }
 

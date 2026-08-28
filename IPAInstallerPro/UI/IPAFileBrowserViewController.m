@@ -47,7 +47,7 @@
     self.toolbar.barStyle = UIBarStyleBlack;
     self.toolbar.translucent = YES;
     self.toolbar.barTintColor = [UIColor colorWithRed:0.035 green:0.038 blue:0.048 alpha:0.84];
-    self.toolbar.tintColor = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
+    self.toolbar.tintColor = [UIColor colorWithRed:0.68 green:0.20 blue:0.24 alpha:0.92];
     self.toolbar.layer.borderWidth = 0.6;
     self.toolbar.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
     [self.view addSubview:self.toolbar];

@@ -34,7 +34,7 @@
 
     self.accentView = [[UIView alloc] init];
     self.accentView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.accentView.backgroundColor = [UIColor colorWithRed:0.96 green:0.07 blue:0.10 alpha:0.98];
+    self.accentView.backgroundColor = [UIColor colorWithRed:0.70 green:0.20 blue:0.24 alpha:0.82];
     self.accentView.layer.cornerRadius = 2.5;
     [self.glassView.contentView addSubview:self.accentView];
 
@@ -43,7 +43,7 @@
     self.ipaIconView.contentMode = UIViewContentModeScaleAspectFill;
     self.ipaIconView.clipsToBounds = YES;
     self.ipaIconView.layer.cornerRadius = 15;
-    self.ipaIconView.backgroundColor = [UIColor colorWithRed:0.75 green:0.05 blue:0.08 alpha:0.18];
+    self.ipaIconView.backgroundColor = [UIColor colorWithRed:0.48 green:0.10 blue:0.13 alpha:0.12];
     [self.glassView.contentView addSubview:self.ipaIconView];
 
     self.titleLabel = [[UILabel alloc] init];
@@ -65,7 +65,7 @@
 
     self.chevronView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.forward"]];
     self.chevronView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.chevronView.tintColor = [UIColor colorWithRed:0.92 green:0.18 blue:0.20 alpha:0.72];
+    self.chevronView.tintColor = [UIColor colorWithRed:0.70 green:0.25 blue:0.28 alpha:0.58];
     self.chevronView.contentMode = UIViewContentModeScaleAspectFit;
     [self.glassView.contentView addSubview:self.chevronView];
 
