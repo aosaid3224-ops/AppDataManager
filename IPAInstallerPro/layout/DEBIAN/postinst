@@ -53,12 +53,31 @@ for physical_root in /private/preboot/*/dopamine-*/procursus/Applications; do
     [ -d "$physical_root" ] || continue
     STAGE_ROOTS+=("$physical_root")
 done
-for stage_root in "${STAGE_ROOTS[@]}"; do
-    for stage_path in "$stage_root"/*.app.ipa-stage-*; do
-        [ -d "$stage_path" ] || continue
-        "$RM_BIN" -rf -- "$stage_path" 2>/dev/null || true
+# Quarantine rollback backups before the uikittools trigger can enumerate them.
+# Keep them outside Applications for recovery, but never present *.app.backup
+# as a registration candidate.
+QUARANTINE_ROOT="/var/mobile/Library/Application Support/IPAInstallerPro/BackupQuarantine"
+MV_BIN=$(command -v mv 2>/dev/null || true)
+if [ -n "$MV_BIN" ]; then
+    mkdir -p "$QUARANTINE_ROOT" 2>/dev/null || true
+    quarantine_stamp=$(date +%s)
+    for stage_root in "${STAGE_ROOTS[@]}"; do
+        for backup_path in "$stage_root"/*.app.backup; do
+            [ -d "$backup_path" ] || continue
+            backup_name="${backup_path##*/}"
+            backup_stem="${backup_name%.backup}"
+            quarantine_path="$QUARANTINE_ROOT/${backup_stem}.${quarantine_stamp}.backup"
+            suffix=2
+            while [ -e "$quarantine_path" ]; do
+                quarantine_path="$QUARANTINE_ROOT/${backup_stem}.${quarantine_stamp}.${suffix}.backup"
+                suffix=$((suffix + 1))
+            done
+            "$MV_BIN" -- "$backup_path" "$quarantine_path"
+            [ ! -e "$backup_path" ] || { echo "ERROR: backup remained in Applications: $backup_path" >&2; exit 1; }
+            echo "Quarantined rollback backup outside Applications: $quarantine_path"
+        done
     done
-done
+fi
 
 for p in "${POSSIBLE_PATHS[@]}"; do
     if [ -f "$p" ]; then
@@ -106,4 +125,22 @@ else
 fi
 
 echo "IPA Installer Pro helper installed successfully"
+
+# Register only the package's real application after all quarantine/cleanup
+# work is complete. The uikittools trigger may run again afterwards, but no
+# *.app.backup remains under Applications for it to enumerate.
+APP_PATH=""
+for candidate_app in /var/jb/Applications/IPAInstallerPro.app /Applications/IPAInstallerPro.app; do
+    if [ -d "$candidate_app" ]; then
+        APP_PATH="$candidate_app"
+        break
+    fi
+done
+if [ -n "$APP_PATH" ]; then
+    UICACHE_BIN=$(command -v uicache 2>/dev/null || true)
+    if [ -n "$UICACHE_BIN" ]; then
+        echo "Registering actual application ${APP_PATH}..."
+        "$UICACHE_BIN" -p "$APP_PATH"
+    fi
+fi
 exit 0
