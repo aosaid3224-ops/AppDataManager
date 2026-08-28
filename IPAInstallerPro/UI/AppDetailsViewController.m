@@ -5,6 +5,7 @@
 #import "Core/ApplicationManager.h"
 #import "Core/Logger.h"
 #import "IPAInstallViewController.h"
+#import "IPTheme.h"
 
 @interface AppDetailsViewController ()
 @property (nonatomic, strong) AppInfo *appInfo;
@@ -29,7 +30,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"معلومات التطبيق";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
     [self setupViews];
 }
 
@@ -45,7 +46,7 @@
     self.iconView.layer.cornerRadius = 18;
     self.iconView.layer.masksToBounds = YES;
     self.iconView.contentMode = UIViewContentModeScaleAspectFit;
-    self.iconView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+    self.iconView.backgroundColor = [IPTheme cardColor];
     if (self.appInfo.icon) {
         self.iconView.image = self.appInfo.icon;
     } else {
@@ -63,7 +64,7 @@
     y += 36;
 
     UIView *card = [[UIView alloc] initWithFrame:CGRectMake(20, y, w - 40, 160)];
-    card.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.11 alpha:1.0];
+    card.backgroundColor = [IPTheme cardColor]; card.layer.borderWidth = 0.7; card.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     card.layer.cornerRadius = 18;
     [self.scrollView addSubview:card];
 
@@ -95,8 +96,8 @@
     [self.openButton setTitle:@"فتح التطبيق" forState:UIControlStateNormal];
     [self.openButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.openButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.openButton.backgroundColor = [UIColor colorWithRed:0.3 green:0.6 blue:0.9 alpha:1.0];
-    self.openButton.layer.cornerRadius = 14;
+    self.openButton.backgroundColor = [IPTheme accentColor];
+    self.openButton.layer.cornerRadius = 17;
     [self.openButton addTarget:self action:@selector(openTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.scrollView addSubview:self.openButton];
     y += 68;
@@ -106,8 +107,8 @@
     [self.exportButton setTitle:@"استخراج IPA" forState:UIControlStateNormal];
     [self.exportButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.exportButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.exportButton.backgroundColor = [UIColor colorWithRed:0.43 green:0.30 blue:0.82 alpha:1.0];
-    self.exportButton.layer.cornerRadius = 14;
+    self.exportButton.backgroundColor = [IPTheme secondaryCardColor]; self.exportButton.layer.borderWidth = 0.7; self.exportButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.exportButton.layer.cornerRadius = 17;
     [self.exportButton addTarget:self action:@selector(exportTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.scrollView addSubview:self.exportButton];
     y += 68;
@@ -117,8 +118,8 @@
     [self.cloneButton setTitle:@"تكرار التطبيق" forState:UIControlStateNormal];
     [self.cloneButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.cloneButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.cloneButton.backgroundColor = [UIColor colorWithRed:0.34 green:0.52 blue:0.72 alpha:1.0];
-    self.cloneButton.layer.cornerRadius = 14;
+    self.cloneButton.backgroundColor = [IPTheme secondaryCardColor]; self.cloneButton.layer.borderWidth = 0.7; self.cloneButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.cloneButton.layer.cornerRadius = 17;
     [self.cloneButton addTarget:self action:@selector(cloneTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.scrollView addSubview:self.cloneButton];
     y += 68;
@@ -130,7 +131,7 @@
         [self.deleteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         self.deleteButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         self.deleteButton.backgroundColor = [UIColor colorWithRed:0.8 green:0.25 blue:0.25 alpha:1.0];
-        self.deleteButton.layer.cornerRadius = 14;
+        self.deleteButton.layer.cornerRadius = 17;
         [self.deleteButton addTarget:self action:@selector(deleteTapped:) forControlEvents:UIControlEventTouchUpInside];
         [self.scrollView addSubview:self.deleteButton];
     }

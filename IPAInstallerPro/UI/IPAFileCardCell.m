@@ -1,4 +1,5 @@
 #import "IPAFileCardCell.h"
+#import "IPTheme.h"
 
 @interface IPAFileCardCell ()
 @property (nonatomic, strong, readwrite) UIImageView *ipaIconView;
@@ -21,11 +22,11 @@
     self.selectionStyle = UITableViewCellSelectionStyleDefault;
     self.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.contentView.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.contentView.layoutMargins = UIEdgeInsetsMake(5.0, 16.0, 5.0, 16.0);
+    self.contentView.layoutMargins = UIEdgeInsetsMake(3.0, 4.0, 3.0, 4.0);
 
     _cardView = [[UIView alloc] init];
     _cardView.translatesAutoresizingMaskIntoConstraints = NO;
-    _cardView.layer.cornerRadius = 18.0;
+    _cardView.layer.cornerRadius = 18.0; _cardView.layer.borderWidth = 0.7; _cardView.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     _cardView.layer.masksToBounds = YES;
     [self.contentView addSubview:_cardView];
 
@@ -97,8 +98,8 @@
         [_childRail.widthAnchor constraintEqualToConstant:4.0],
         [_ipaIconView.trailingAnchor constraintEqualToAnchor:_cardView.trailingAnchor constant:-16.0],
         [_ipaIconView.centerYAnchor constraintEqualToAnchor:_cardView.centerYAnchor],
-        [_ipaIconView.widthAnchor constraintEqualToConstant:48.0],
-        [_ipaIconView.heightAnchor constraintEqualToConstant:48.0],
+        [_ipaIconView.widthAnchor constraintEqualToConstant:52.0],
+        [_ipaIconView.heightAnchor constraintEqualToConstant:52.0],
         [_moreButton.leadingAnchor constraintEqualToAnchor:_cardView.leadingAnchor constant:8.0],
         [_moreButton.centerYAnchor constraintEqualToAnchor:_cardView.centerYAnchor],
         [_moreButton.widthAnchor constraintEqualToConstant:48.0],
@@ -129,10 +130,10 @@
     self.subtitleLabel.text = subtitle ?: @"";
     self.metaLabel.text = meta ?: @"";
     self.ipaIconView.image = icon;
-    self.statusDot.backgroundColor = statusColor ?: [UIColor colorWithWhite:0.45 alpha:1.0];
+    self.statusDot.backgroundColor = statusColor ?: [IPTheme accentColor];
     self.showsChildIndent = isChild;
     self.childRail.hidden = !isChild;
-    self.cardView.backgroundColor = isChild ? [UIColor colorWithRed:0.075 green:0.09 blue:0.12 alpha:1.0] : [UIColor colorWithRed:0.105 green:0.12 blue:0.16 alpha:1.0];
+    self.cardView.backgroundColor = isChild ? [IPTheme secondaryCardColor] : [IPTheme cardColor];
     self.titleLabel.font = [UIFont systemFontOfSize:isChild ? 15.0 : 17.0 weight:isChild ? UIFontWeightMedium : UIFontWeightSemibold];
     self.ipaIconView.alpha = isChild ? 0.9 : 1.0;
 }
@@ -140,7 +141,7 @@
 - (void)setSelected:(BOOL)selected animated:(BOOL)animated {
     [super setSelected:selected animated:animated];
     [UIView animateWithDuration:0.12 animations:^{
-        self.cardView.backgroundColor = selected ? [UIColor colorWithRed:0.17 green:0.2 blue:0.27 alpha:1.0] : (self.showsChildIndent ? [UIColor colorWithRed:0.075 green:0.09 blue:0.12 alpha:1.0] : [UIColor colorWithRed:0.105 green:0.12 blue:0.16 alpha:1.0]);
+        self.cardView.backgroundColor = selected ? [UIColor colorWithRed:.12 green:.07 blue:.075 alpha:1] : (self.showsChildIndent ? [IPTheme secondaryCardColor] : [IPTheme cardColor]);
     }];
 }
 

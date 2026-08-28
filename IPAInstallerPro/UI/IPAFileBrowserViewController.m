@@ -1,5 +1,6 @@
 #import "IPAFileBrowserViewController.h"
 #import "Core/Logger.h"
+#import "IPTheme.h"
 
 @interface IPAFileBrowserViewController ()
 @property (nonatomic, strong) UITableView *tableView;
@@ -16,7 +17,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = self.currentPath.lastPathComponent ?: @"ملفات IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.012 green:0.014 blue:0.018 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
     if (!self.currentPath) self.currentPath = @"/var/mobile";
     self.items = [NSMutableArray array];
     self.filteredItems = [NSMutableArray array];
@@ -46,8 +47,8 @@
     self.toolbar.translatesAutoresizingMaskIntoConstraints = NO;
     self.toolbar.barStyle = UIBarStyleBlack;
     self.toolbar.translucent = YES;
-    self.toolbar.barTintColor = [UIColor colorWithRed:0.035 green:0.038 blue:0.048 alpha:0.84];
-    self.toolbar.tintColor = [UIColor colorWithRed:0.82 green:0.12 blue:0.15 alpha:0.96];
+    self.toolbar.barTintColor = [IPTheme cardColor];
+    self.toolbar.tintColor = [IPTheme accentColor];
     self.toolbar.layer.borderWidth = 0.6;
     self.toolbar.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
     [self.view addSubview:self.toolbar];
@@ -93,9 +94,9 @@
     self.searchController.searchResultsUpdater = self;
     self.searchController.obscuresBackgroundDuringPresentation = NO;
     self.searchController.searchBar.placeholder = @"بحث في المجلد...";
-    self.searchController.searchBar.tintColor = [UIColor whiteColor];
+    self.searchController.searchBar.tintColor = [IPTheme accentColor];
     self.searchController.searchBar.searchTextField.textColor = [UIColor whiteColor];
-    self.searchController.searchBar.searchTextField.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
+    self.searchController.searchBar.searchTextField.backgroundColor = [IPTheme cardColor];
     self.navigationItem.searchController = self.searchController;
     self.navigationItem.hidesSearchBarWhenScrolling = NO;
 }
@@ -266,9 +267,9 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellId];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellId];
-        cell.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.075];
-        cell.layer.cornerRadius = 18.0;
-        cell.layer.borderWidth = 0.6;
+        cell.backgroundColor = [IPTheme cardColor];
+        cell.layer.cornerRadius = 16.0;
+        cell.layer.borderWidth = 0.7; cell.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
         cell.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
         cell.layer.masksToBounds = YES;
         cell.textLabel.textColor = [UIColor whiteColor];

@@ -1,4 +1,5 @@
 #import "IPAArchiveBrowserViewController.h"
+#import "IPTheme.h"
 
 @interface IPAArchiveBrowserViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, copy) NSString *rootPath;
@@ -20,10 +21,10 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(doneTapped:)];
     self.navigationItem.leftBarButtonItem.tintColor = [UIColor whiteColor];
-    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
+    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = UIColor.clearColor;
     self.tableView.dataSource = self;
@@ -85,7 +86,7 @@
     }
     UILabel *header = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 92)];
     header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    header.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.12 alpha:1.0];
+    header.backgroundColor = [IPTheme cardColor]; header.layer.cornerRadius = 16; header.layer.masksToBounds = YES;
     header.textColor = UIColor.whiteColor;
     header.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
     header.numberOfLines = 0;
@@ -123,7 +124,7 @@
     UITextView *textView = [[UITextView alloc] initWithFrame:viewer.view.bounds];
     textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     textView.backgroundColor = UIColor.clearColor;
-    textView.textColor = [UIColor colorWithRed:0.4 green:0.95 blue:0.6 alpha:1.0];
+    textView.textColor = [IPTheme mutedTextColor];
     textView.font = [UIFont fontWithName:@"Menlo" size:12] ?: [UIFont systemFontOfSize:12];
     textView.editable = NO;
     textView.text = text;

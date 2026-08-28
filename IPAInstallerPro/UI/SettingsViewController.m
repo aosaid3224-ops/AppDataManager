@@ -12,6 +12,7 @@
 #import "Logger.h"
 #import "IPAStructuralAnalyzer.h"
 #import "IPAStructuralResult.h"
+#import "IPTheme.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <MobileCoreServices/MobileCoreServices.h>
@@ -30,7 +31,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"الإعدادات";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
 
     [self setupScrollView];
     [self setupEnvironmentSection];
@@ -81,8 +82,8 @@
     self.envLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.envLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.envLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
-    self.envLabel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
-    self.envLabel.layer.cornerRadius = 10;
+    self.envLabel.backgroundColor = [IPTheme cardColor]; self.envLabel.layer.borderWidth = 0.7; self.envLabel.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.envLabel.layer.cornerRadius = 16;
     self.envLabel.clipsToBounds = YES;
     self.envLabel.numberOfLines = 0;
     self.envLabel.textAlignment = NSTextAlignmentRight;
@@ -114,8 +115,8 @@
     self.capLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.capLabel.font = [UIFont fontWithName:@"Menlo" size:11] ?: [UIFont systemFontOfSize:11];
     self.capLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
-    self.capLabel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
-    self.capLabel.layer.cornerRadius = 10;
+    self.capLabel.backgroundColor = [IPTheme cardColor]; self.capLabel.layer.borderWidth = 0.7; self.capLabel.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.capLabel.layer.cornerRadius = 16;
     self.capLabel.clipsToBounds = YES;
     self.capLabel.numberOfLines = 0;
     self.capLabel.textAlignment = NSTextAlignmentRight;
@@ -145,11 +146,11 @@
 
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
     btn.translatesAutoresizingMaskIntoConstraints = NO;
-    btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:1.0];
+    btn.backgroundColor = [IPTheme accentColor];
     [btn setTitle:@"🔍 اختيار وتحليل IPA" forState:UIControlStateNormal];
     [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     btn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
-    btn.layer.cornerRadius = 12;
+    btn.layer.cornerRadius = 17;
     [btn addTarget:self action:@selector(pickIPAFile) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:btn];
 
@@ -252,7 +253,7 @@
 - (void)showRawResultViewer {
     UIViewController *vc = [[UIViewController alloc] init];
     vc.title = @"📋 لوغات التحليل الخام";
-    vc.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    vc.view.backgroundColor = [IPTheme backgroundColor];
 
     CGFloat w = vc.view.bounds.size.width;
     CGFloat h = vc.view.bounds.size.height;
@@ -264,19 +265,19 @@
     UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
     seg.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
     seg.selectedSegmentIndex = 0;
-    seg.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    seg.backgroundColor = [IPTheme cardColor]; seg.layer.cornerRadius = 12; seg.layer.masksToBounds = YES;
     if (@available(iOS 13.0, *)) {
-        seg.selectedSegmentTintColor = [UIColor systemBlueColor];
+        seg.selectedSegmentTintColor = [IPTheme accentColor];
         [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
         [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateSelected];
     } else {
-        seg.tintColor = [UIColor systemBlueColor];
+        seg.tintColor = [IPTheme accentColor];
     }
     [seg addTarget:self action:@selector(rawSegmentChanged:) forControlEvents:UIControlEventValueChanged];
     [vc.view addSubview:seg];
 
     UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
-    tv.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
+    tv.backgroundColor = [IPTheme cardColor]; tv.layer.cornerRadius = 16; tv.layer.borderWidth = 0.7; tv.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     tv.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
     tv.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
     tv.editable = NO;
@@ -288,11 +289,11 @@
 
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(16, h - 44, w - 32, 36);
-    closeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    closeBtn.backgroundColor = [IPTheme secondaryCardColor]; closeBtn.layer.borderWidth = 0.7; closeBtn.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     [closeBtn setTitle:@"❌ إغلاق" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-    closeBtn.layer.cornerRadius = 8;
+    closeBtn.layer.cornerRadius = 16;
     closeBtn.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
     [closeBtn addTarget:self action:@selector(closeRawViewer:) forControlEvents:UIControlEventTouchUpInside];
     [vc.view addSubview:closeBtn];

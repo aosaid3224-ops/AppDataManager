@@ -6,6 +6,7 @@
 #import "InstalledAppsViewController.h"
 #import "ApplicationManager.h"
 #import "AppDetailsViewController.h"
+#import "IPTheme.h"
 
 @interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate>
 @property (nonatomic, strong) UITableView *tableView;
@@ -21,7 +22,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
     self.title = @"\u0627\u0644\u062a\u0637\u0628\u064a\u0642\u0627\u062a";
 
     [self setupSegmentControl];
@@ -50,8 +51,8 @@
     _segmentControl = [[UISegmentedControl alloc] initWithItems:@[@"\u0627\u0644\u0643\u0644", @"\u0645\u0633\u062a\u062e\u062f\u0645", @"\u0646\u0638\u0627\u0645"]];
     _segmentControl.translatesAutoresizingMaskIntoConstraints = NO;
     _segmentControl.selectedSegmentIndex = 0;
-    _segmentControl.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
-    _segmentControl.selectedSegmentTintColor = [UIColor colorWithWhite:0.25 alpha:1.0];
+    _segmentControl.backgroundColor = [IPTheme cardColor]; _segmentControl.layer.cornerRadius = 12; _segmentControl.layer.masksToBounds = YES;
+    _segmentControl.selectedSegmentTintColor = [IPTheme accentColor];
     [_segmentControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
     [_segmentControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:_segmentControl];
@@ -110,7 +111,7 @@
     _retryButton.translatesAutoresizingMaskIntoConstraints = NO;
     [_retryButton setTitle:@"\u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629" forState:UIControlStateNormal];
     _retryButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    [_retryButton setTitleColor:[UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+    [_retryButton setTitleColor:[IPTheme accentColor] forState:UIControlStateNormal];
     [_retryButton addTarget:self action:@selector(loadApps) forControlEvents:UIControlEventTouchUpInside];
     _retryButton.hidden = YES;
     [self.view addSubview:_retryButton];

@@ -5,6 +5,7 @@
 #import "UI/SettingsViewController.h"
 #import "Core/Logger.h"
 #import "Core/JailbreakEnvironment.h"
+#import "UI/IPTheme.h"
 
 @interface AppDelegate ()
 @end
@@ -16,6 +17,7 @@
     [Logger sharedLogger];
     [JailbreakEnvironment sharedEnvironment];  // detectEnvironment is now called in init
 
+    [IPTheme applyGlobalAppearance];
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 
     UITabBarController *tabBarController = [[UITabBarController alloc] init];
@@ -45,7 +47,7 @@
                                                    selectedImage:[UIImage systemImageNamed:@"gearshape.fill"]];
 
     tabBarController.viewControllers = @[mainNav, installedNav, unpackNav, settingsNav];
-    UIColor *glassTint = [UIColor colorWithRed:0.82 green:0.12 blue:0.15 alpha:0.96];
+    UIColor *glassTint = [IPTheme accentColor];
     UIColor *glassBackground = [UIColor colorWithRed:0.045 green:0.045 blue:0.052 alpha:0.86];
 
     UITabBarAppearance *tabAppearance = [[UITabBarAppearance alloc] init];
@@ -77,7 +79,7 @@
         nav.navigationBar.standardAppearance = navAppearance;
         nav.navigationBar.scrollEdgeAppearance = navAppearance;
         nav.navigationBar.compactAppearance = navAppearance;
-        nav.navigationBar.tintColor = glassTint;
+        [IPTheme applyToNavigationController:nav];
     }
 
     self.window.rootViewController = tabBarController;

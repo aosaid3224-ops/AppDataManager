@@ -10,6 +10,7 @@
 #import "JailbreakEnvironment.h"
 #import "OperationLog.h"
 #import "LiveOperationStream.h"
+#import "IPTheme.h"
 #import <objc/runtime.h>
 
 #pragma mark - Phase Visual State
@@ -64,7 +65,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         _pulsingDot = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 6, 6)];
         _pulsingDot.translatesAutoresizingMaskIntoConstraints = NO;
         _pulsingDot.layer.cornerRadius = 3;
-        _pulsingDot.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
+        _pulsingDot.backgroundColor = [IPTheme accentColor];
         _pulsingDot.hidden = YES;
         [self addSubview:_pulsingDot];
 
@@ -217,7 +218,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
     self.title = @"\u062a\u062b\u0628\u064a\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642";
     _rawLog = [NSMutableString string];
     _pendingLiveCriticalEvents = [NSMutableArray array];
@@ -244,8 +245,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     if (!self.logContainer) {
         self.logContainer = [[UIView alloc] init];
         self.logContainer.translatesAutoresizingMaskIntoConstraints = NO;
-        self.logContainer.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.98];
-        self.logContainer.layer.cornerRadius = 12;
+        self.logContainer.backgroundColor = [IPTheme cardColor]; self.logContainer.layer.borderWidth = 0.7; self.logContainer.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+        self.logContainer.layer.cornerRadius = 18;
         [self.view addSubview:self.logContainer];
 
         UILabel *logTitle = [[UILabel alloc] init];
@@ -264,7 +265,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
         self.logTextView = [[UITextView alloc] init];
         self.logTextView.translatesAutoresizingMaskIntoConstraints = NO;
-        self.logTextView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+        self.logTextView.backgroundColor = [IPTheme secondaryCardColor];
         self.logTextView.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.4 alpha:1.0];
         self.logTextView.font = [UIFont fontWithName:@"Courier" size:10] ?: [UIFont systemFontOfSize:10];
         self.logTextView.editable = NO;
@@ -529,10 +530,10 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     _liveOutputCard = [[UIView alloc] init];
     _liveOutputCard.translatesAutoresizingMaskIntoConstraints = NO;
-    _liveOutputCard.backgroundColor = [UIColor colorWithWhite:0.045 alpha:1.0];
+    _liveOutputCard.backgroundColor = [IPTheme cardColor];
     _liveOutputCard.layer.cornerRadius = 12;
-    _liveOutputCard.layer.borderWidth = 1;
-    _liveOutputCard.layer.borderColor = [UIColor colorWithWhite:0.16 alpha:1.0].CGColor;
+    _liveOutputCard.layer.borderWidth = 0.7; _liveOutputCard.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    
     [_containerView addSubview:_liveOutputCard];
 
     UILabel *liveTitle = [[UILabel alloc] init];
@@ -552,7 +553,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     _liveOutputView = [[UITextView alloc] init];
     _liveOutputView.translatesAutoresizingMaskIntoConstraints = NO;
-    _liveOutputView.backgroundColor = [UIColor colorWithWhite:0.02 alpha:1.0];
+    _liveOutputView.backgroundColor = [IPTheme secondaryCardColor];
     _liveOutputView.textColor = [UIColor colorWithRed:0.45 green:0.95 blue:0.6 alpha:1.0];
     _liveOutputView.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
     _liveOutputView.editable = NO;
@@ -757,10 +758,9 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     UIView *card = [[UIView alloc] init];
     card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1.0];
+    card.backgroundColor = [IPTheme cardColor];
     card.layer.cornerRadius = 16;
-    card.layer.borderWidth = 1;
-    card.layer.borderColor = [UIColor colorWithWhite:0.2 alpha:1.0].CGColor;
+    card.layer.borderWidth = 0.7; card.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     [self.containerView addSubview:card];
     self.reportCard = card;
 
@@ -829,7 +829,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [logBtn setTitle:@"\u0639\u0631\u0636 \u0627\u0644\u0644\u0648\u063a \u0627\u0644\u062e\u0627\u0645 (Raw Log)" forState:UIControlStateNormal];
     logBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     [logBtn setTitleColor:[UIColor colorWithRed:0.5 green:0.7 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
-    logBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    logBtn.backgroundColor = [IPTheme secondaryCardColor];
     logBtn.layer.cornerRadius = 8;
     [logBtn addTarget:self action:@selector(showRawLog) forControlEvents:UIControlEventTouchUpInside];
     [logBtn.heightAnchor constraintEqualToConstant:36].active = YES;
@@ -845,7 +845,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         retryBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [retryBtn setTitle:@"إعادة المحاولة" forState:UIControlStateNormal];
         retryBtn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-        retryBtn.backgroundColor = [UIColor colorWithRed:0.16 green:0.42 blue:0.72 alpha:1.0];
+        retryBtn.backgroundColor = [IPTheme accentColor];
         [retryBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         retryBtn.layer.cornerRadius = 12;
         [retryBtn addTarget:self action:@selector(retryTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -972,7 +972,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         NSRange searchRange = NSMakeRange(0, text.length);
         NSRange found = [text rangeOfString:word options:0 range:searchRange];
         while (found.location != NSNotFound) {
-            [attr addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:0.3 green:0.6 blue:1.0 alpha:1.0] range:found];
+            [attr addAttribute:NSForegroundColorAttributeName value:[IPTheme accentColor] range:found];
             searchRange = NSMakeRange(found.location + found.length, text.length - found.location - found.length);
             found = [text rangeOfString:word options:0 range:searchRange];
         }

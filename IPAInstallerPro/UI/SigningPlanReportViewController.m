@@ -6,6 +6,7 @@
 #import "SigningPlan.h"
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
+#import "IPTheme.h"
 
 @interface SigningPlanReportViewController ()
 @property (nonatomic, strong) UITextView *textView;
@@ -19,7 +20,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"📋 خطة التوقيع";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
 
     CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
@@ -32,20 +33,20 @@
     self.segmentControl = [[UISegmentedControl alloc] initWithItems:@[@"📄 Report", @"🧾 JSON"]];
     self.segmentControl.frame = CGRectMake(16, safeTop + 8, w - 32, 32);
     self.segmentControl.selectedSegmentIndex = 0;
-    self.segmentControl.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    self.segmentControl.backgroundColor = [IPTheme cardColor]; self.segmentControl.layer.cornerRadius = 12; self.segmentControl.layer.masksToBounds = YES;
     if (@available(iOS 13.0, *)) {
-        self.segmentControl.selectedSegmentTintColor = [UIColor systemBlueColor];
+        self.segmentControl.selectedSegmentTintColor = [IPTheme accentColor];
         [self.segmentControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
         [self.segmentControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateSelected];
     } else {
-        self.segmentControl.tintColor = [UIColor systemBlueColor];
+        self.segmentControl.tintColor = [IPTheme accentColor];
     }
     [self.segmentControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.segmentControl];
 
     // TextView
     self.textView = [[UITextView alloc] initWithFrame:CGRectMake(8, safeTop + 48, w - 16, h - safeTop - 100)];
-    self.textView.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
+    self.textView.backgroundColor = [IPTheme cardColor]; self.textView.layer.cornerRadius = 16; self.textView.layer.borderWidth = 0.7; self.textView.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     self.textView.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
     self.textView.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
     self.textView.editable = NO;
@@ -56,11 +57,11 @@
     // Close button
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(16, h - 44, w - 32, 36);
-    closeBtn.backgroundColor = [UIColor colorWithWhite:0.15 alpha:1.0];
+    closeBtn.backgroundColor = [IPTheme secondaryCardColor]; closeBtn.layer.borderWidth = 0.7; closeBtn.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     [closeBtn setTitle:@"❌ إغلاق" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-    closeBtn.layer.cornerRadius = 8;
+    closeBtn.layer.cornerRadius = 16;
     closeBtn.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
     [closeBtn addTarget:self action:@selector(closeTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:closeBtn];

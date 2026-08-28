@@ -5,6 +5,7 @@
 #import "Core/Logger.h"
 #import "Core/IPAValidator.h"
 #import "Core/IPAMultiInstancePreparer.h"
+#import "IPTheme.h"
 
 @interface IPAInstallViewController ()
 @property (nonatomic, strong) IPAExtractedInfo *ipaInfo;
@@ -34,7 +35,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"تثبيت IPA";
-    self.view.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.04 alpha:1.0];
+    self.view.backgroundColor = [IPTheme backgroundColor];
 
     [self setupViews];
     [self validateIPA];
@@ -50,7 +51,7 @@
     self.iconView.layer.cornerRadius = 20;
     self.iconView.layer.masksToBounds = YES;
     self.iconView.contentMode = UIViewContentModeScaleAspectFit;
-    self.iconView.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+    self.iconView.backgroundColor = [IPTheme cardColor];
     UIImage *icon = self.ipaInfo.icon;
     if (icon) {
         self.iconView.image = icon;
@@ -89,7 +90,7 @@
 
     // Details container
     self.detailsContainer = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 200)];
-    self.detailsContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.11 alpha:1.0];
+    self.detailsContainer.backgroundColor = [IPTheme cardColor]; self.detailsContainer.layer.borderWidth = 0.7; self.detailsContainer.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     self.detailsContainer.layer.cornerRadius = 18;
     [self.view addSubview:self.detailsContainer];
 
@@ -123,7 +124,7 @@
 
     // Isolated multi-instance option. OFF is the default and preserves the normal path.
     UIView *multiRow = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 54)];
-    multiRow.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.11 alpha:1.0];
+    multiRow.backgroundColor = [IPTheme cardColor]; multiRow.layer.borderWidth = 0.7; multiRow.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     multiRow.layer.cornerRadius = 16.0;
     multiRow.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     [self.view addSubview:multiRow];
@@ -137,7 +138,7 @@
     [multiRow addSubview:self.multiInstanceLabel];
     self.multiInstanceSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     self.multiInstanceSwitch.on = NO;
-    self.multiInstanceSwitch.onTintColor = [UIColor colorWithRed:0.25 green:0.75 blue:0.42 alpha:1.0];
+    self.multiInstanceSwitch.onTintColor = [IPTheme accentColor];
     self.multiInstanceSwitch.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.multiInstanceSwitch.accessibilityLabel = @"نسخ متعددة";
     self.multiInstanceSwitch.accessibilityHint = @"عند التفعيل سيتم تجهيز نسخة مستقلة بمعرّف حزمة مختلف";
@@ -152,8 +153,8 @@
     [self.installButton setTitle:@"تثبيت التطبيق" forState:UIControlStateNormal];
     [self.installButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.installButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.installButton.backgroundColor = [UIColor colorWithRed:0.3 green:0.7 blue:0.5 alpha:1.0];
-    self.installButton.layer.cornerRadius = 14;
+    self.installButton.backgroundColor = [IPTheme accentColor];
+    self.installButton.layer.cornerRadius = 17;
     self.installButton.enabled = NO;
     self.installButton.alpha = 0.5;
     [self.installButton addTarget:self action:@selector(installTapped:) forControlEvents:UIControlEventTouchUpInside];
