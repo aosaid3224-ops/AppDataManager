@@ -12,6 +12,7 @@
 @property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, assign) BOOL sortByDate;
 @property (nonatomic, assign) BOOL restoringItems;
+@property (nonatomic, assign) BOOL hasLoadedPersistedItems;
 @end
 
 static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.PersistedItems.v1";
@@ -107,6 +108,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         [self.items addObject:item];
     }
     self.restoringItems = NO;
+    self.hasLoadedPersistedItems = YES;
 }
 
 - (void)setupNavigation {
@@ -123,16 +125,70 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)setupTableView {
-    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
+    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
     self.tableView.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.backgroundColor = UIColor.clearColor;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.rowHeight = 84;
+    self.tableView.contentInset = UIEdgeInsetsMake(0.0, 0.0, 24.0, 0.0);
+    self.tableView.scrollIndicatorInsets = self.tableView.contentInset;
+    self.tableView.estimatedRowHeight = 94.0;
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
+    self.tableView.alwaysBounceVertical = YES;
     [self.tableView registerClass:IPAFileCardCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
-    [self.view addSubview:self.tableView];
+    [self.view insertSubview:self.tableView atIndex:0];
+    UILayoutGuide *guide = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.tableView.topAnchor constraintEqualToAnchor:guide.topAnchor],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor]
+    ]];
+
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.bounds.size.width, 122.0)];
+    header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    header.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    header.backgroundColor = UIColor.clearColor;
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 18.0, header.bounds.size.width - 40.0, 30.0)];
+    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    title.text = @"فك حزمة IPA";
+    title.textColor = UIColor.whiteColor;
+    title.font = [UIFont systemFontOfSize:28.0 weight:UIFontWeightBold];
+    title.textAlignment = NSTextAlignmentRight;
+    title.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [header addSubview:title];
+    UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(20.0, 53.0, header.bounds.size.width - 100.0, 22.0)];
+    subtitle.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    subtitle.text = @"ملفاتك الأصلية ونتائج الاستخراج داخل مساحة العمل الخاصة بالأداة";
+    subtitle.textColor = [UIColor colorWithWhite:0.62 alpha:1.0];
+    subtitle.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+    subtitle.textAlignment = NSTextAlignmentRight;
+    subtitle.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
+    [header addSubview:subtitle];
+    UIButton *headerAdd = [UIButton buttonWithType:UIButtonTypeSystem];
+    headerAdd.frame = CGRectMake(header.bounds.size.width - 72.0, 18.0, 48.0, 48.0);
+    headerAdd.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    headerAdd.backgroundColor = [UIColor colorWithRed:0.18 green:0.43 blue:0.82 alpha:1.0];
+    headerAdd.layer.cornerRadius = 16.0;
+    [headerAdd setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal];
+    headerAdd.tintColor = UIColor.whiteColor;
+    headerAdd.accessibilityLabel = @"إضافة ملف IPA";
+    [headerAdd addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside];
+    [header addSubview:headerAdd];
+    self.tableView.tableHeaderView = header;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (!self.hasLoadedPersistedItems) {
+        [self restorePersistedItems];
+        self.hasLoadedPersistedItems = YES;
+    }
+    self.emptyLabel.hidden = self.items.count != 0;
+    [self.tableView reloadData];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -149,16 +205,23 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)setupEmptyState {
-    self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(24, self.view.bounds.size.height / 2 - 65, self.view.bounds.size.width - 48, 130)];
-    self.emptyLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+    self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.emptyLabel.text = @"لا توجد حزم IPA مضافة\nاضغط + لاختيار ملف خارجي";
-    self.emptyLabel.textColor = [UIColor colorWithWhite:0.42 alpha:1.0];
-    self.emptyLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    self.emptyLabel.textColor = [UIColor colorWithWhite:0.46 alpha:1.0];
+    self.emptyLabel.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightMedium];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
     self.emptyLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     self.emptyLabel.numberOfLines = 0;
-    self.emptyLabel.hidden = self.items.count > 0;
+    self.emptyLabel.hidden = self.items.count != 0;
     [self.view addSubview:self.emptyLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor constant:35.0],
+        [self.emptyLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:24.0],
+        [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0]
+    ]];
+    [self.view bringSubviewToFront:self.emptyLabel];
 }
 
 - (void)addIPATapped:(id)sender {
@@ -385,9 +448,13 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)reloadItem:(NSMutableDictionary *)item {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self reloadItem:item]; });
+        return;
+    }
     item[@"updatedAt"] = [NSDate date];
     [self persistItems];
-    self.emptyLabel.hidden = self.items.count > 0;
+    self.emptyLabel.hidden = self.items.count != 0;
     [self.tableView reloadData];
 }
 
