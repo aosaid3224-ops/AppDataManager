@@ -1,16 +1,16 @@
-Package: com.aosaid.appdatamgr
-Name: AppData Manager
-Description: Professional iOS Jailbreak App - Wipe & Backup App Data (Rootless/Dopamine Compatible) [Crash-Resilient Build]
-Maintainer: ZAIN <@Zainqkvd>
-Author: ZAIN <@Zainqkvd>
+Package: com.aosaid.ipainstallerpro
+Name: Spider
+Description: Spider official standalone IPA installer with analysis and signing orchestration using system primitives
+Maintainer: aosaid <aosaid@proton.me>
+Author: aosaid <aosaid@proton.me>
 Section: Utilities
-Depends: firmware (>= 15.0)
+Depends: firmware (>= 15.0), ldid, uikittools, unzip, zip, com.aosaid.ipadecrypthelper, moe.misty.fouldecrypt
 Architecture: iphoneos-arm64
-Version: 1.0.2
-Installed-Size: 872
-Filename: pool/main/iphoneos-arm64/com.aosaid.appdatamgr_1.0.2_iphoneos-arm64.deb
-Size: 294580
-MD5sum: 2bcc05251626833d060500e5fdeb1b02
-SHA1: 866f2baffc70c5d75d97d5c63d224c3cb936b6b5
-SHA256: 60e1b23753668b0529c00848eed5c651626cbbd46dd2b050bea6bf8be920e933
+Version: 2.2.63
+Installed-Size: 5804
+Filename: pool/main/iphoneos-arm64/com.aosaid.ipainstallerpro_2.2.63_iphoneos-arm64.deb
+Size: 4472990
+MD5sum: 59ffd2a91f1dac7f59959673bc1c375b
+SHA1: 6e3e983a3d5bdd0d197cd3ff1412520c85f7549a
+SHA256: 6ba284e5d2d1ac2724b78dcdc69f2305108557f26af07222f26cf900b740a036
 
