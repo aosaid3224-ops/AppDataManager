@@ -30,6 +30,7 @@
     [self setupScrollView];
     [self setupEnvironmentSection];
     [self setupCapabilitiesSection];
+    [self setupAboutSection];
     [self refreshData];
 }
 
@@ -125,6 +126,68 @@
         [self.capLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
         [self.capLabel.heightAnchor constraintGreaterThanOrEqualToConstant:260]
     ]];}
+
+#pragma mark - About Section
+
+- (void)setupAboutSection {
+    UILabel *header = [[UILabel alloc] init];
+    header.translatesAutoresizingMaskIntoConstraints = NO;
+    header.text = @"حول الأداة";
+    header.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    header.textColor = [UIColor whiteColor];
+    header.textAlignment = NSTextAlignmentRight;
+    [self.contentView addSubview:header];
+
+    UILabel *aboutLabel = [[UILabel alloc] init];
+    aboutLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    aboutLabel.text = @"هذه الأداة متاحة حاليًا كنسخة تجريبية وليست الإصدار النهائي.\nقد تواجه بعض الأخطاء أو المشاكل أثناء الاستخدام، ونهدف من خلال هذه المرحلة إلى اختبار الأداة وتحسين استقرارها وتطوير ميزاتها.\n\nإذا واجهت أي خلل، أو لديك ملاحظة أو اقتراح لتحسين الأداة، نرجو منك مشاركة تجربتك معنا. ملاحظاتك تساعدنا على اكتشاف المشاكل ومعالجتها قبل إطلاق الإصدار النهائي.\n\nللتواصل والإبلاغ عن المشاكل:\nX: @Zainqkvd";
+    aboutLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightRegular];
+    aboutLabel.textColor = [UIColor colorWithWhite:0.82 alpha:1.0];
+    aboutLabel.backgroundColor = [IPTheme cardColor];
+    aboutLabel.layer.borderWidth = 0.7;
+    aboutLabel.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    aboutLabel.layer.cornerRadius = 16;
+    aboutLabel.clipsToBounds = YES;
+    aboutLabel.numberOfLines = 0;
+    aboutLabel.textAlignment = NSTextAlignmentRight;
+    aboutLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    [self.contentView addSubview:aboutLabel];
+
+    UIButton *okButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    okButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [okButton setTitle:@"حسناً" forState:UIControlStateNormal];
+    [okButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    okButton.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    okButton.backgroundColor = [IPTheme accentColor];
+    okButton.layer.cornerRadius = 12;
+    [okButton addTarget:self action:@selector(closeAbout:) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:okButton];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [header.topAnchor constraintEqualToAnchor:self.capLabel.bottomAnchor constant:24],
+        [header.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [header.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+
+        [aboutLabel.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
+        [aboutLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
+        [aboutLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
+        [aboutLabel.heightAnchor constraintGreaterThanOrEqualToConstant:260],
+
+        [okButton.topAnchor constraintEqualToAnchor:aboutLabel.bottomAnchor constant:16],
+        [okButton.centerXAnchor constraintEqualToAnchor:self.contentView.centerXAnchor],
+        [okButton.widthAnchor constraintEqualToConstant:120],
+        [okButton.heightAnchor constraintEqualToConstant:44],
+        [okButton.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-24]
+    ]];
+}
+
+- (void)closeAbout:(UIButton *)sender {
+    if (self.navigationController.presentingViewController) {
+        [self.navigationController dismissViewControllerAnimated:YES completion:nil];
+    } else {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
 
 #pragma mark - Data
 
