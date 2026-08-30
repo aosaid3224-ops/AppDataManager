@@ -18,6 +18,7 @@
 @property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
 @property (nonatomic, assign) NSUInteger ipaLoadGeneration;
 @property (nonatomic, strong) UIView *dashboardHeader;
+@property (nonatomic, assign) BOOL hasShownAutoAbout;
 @property (nonatomic, strong) UILabel *appsCountLabel;
 @property (nonatomic, strong) UILabel *totalSizeLabel;
 @property (nonatomic, strong) UILabel *trustedCountLabel;
@@ -53,9 +54,28 @@
     // Don't reload here to avoid lag — use pull-to-refresh instead
 }
 
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (self.hasShownAutoAbout) return;
+    self.hasShownAutoAbout = YES;
+
+    // Wait until the first frame is visible so the alert never blocks app launch.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self presentAutomaticAboutIfNeeded];
+    });
+}
+
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     self.navigationController.navigationBarHidden = NO;
+}
+
+- (void)presentAutomaticAboutIfNeeded {
+    NSString *message = @"هذه الأداة متاحة حاليًا كنسخة تجريبية وليست الإصدار النهائي.\n\nقد تواجه بعض الأخطاء أو المشاكل أثناء الاستخدام، ونهدف من خلال هذه المرحلة إلى اختبار الأداة وتحسين استقرارها وتطوير ميزاتها.\n\nإذا واجهت أي خلل، أو لديك ملاحظة أو اقتراح لتحسين الأداة، نرجو منك مشاركة تجربتك معنا. ملاحظاتك تساعدنا على اكتشاف المشاكل ومعالجتها قبل إطلاق الإصدار النهائي.\n\nللتواصل والإبلاغ عن المشاكل:\nX: @Zainqkvd";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"حول الأداة" message:message preferredStyle:UIAlertControllerStyleAlert];
+    alert.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)setupNavigationBar {
