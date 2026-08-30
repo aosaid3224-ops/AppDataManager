@@ -6,11 +6,11 @@ Author: aosaid <aosaid@proton.me>
 Section: Utilities
 Depends: firmware (>= 15.0), ldid, uikittools, unzip, zip, com.aosaid.ipadecrypthelper, moe.misty.fouldecrypt
 Architecture: iphoneos-arm64
-Version: 3.0.0
-Installed-Size: 5840
-Filename: pool/main/iphoneos-arm64/com.aosaid.ipainstallerpro_3.0.0_iphoneos-arm64.deb
-Size: 4478338
-MD5sum: 28d9203f295677e93e26281e5bc1bf3f
-SHA1: 66edae268d16281a1dbea3d0b2a94a58b68abee8
-SHA256: c6eef98c6a6dfd63970a3acb8e9becf5552ffd6060d3bf98631b7028cef46418
+Version: 3.0.1
+Installed-Size: 5848
+Filename: pool/main/iphoneos-arm64/com.aosaid.ipainstallerpro_3.0.1_iphoneos-arm64.deb
+Size: 4479406
+MD5sum: f3dafd3151ce0dad49d03b5585db24cc
+SHA1: f78a2073b000fa10e8b832182c100fd7c55201d4
+SHA256: 80dea8fdcff7fe8049c402eace436fb5235e7ba8bda074d6103d4eb1ecf9ceb7
 
