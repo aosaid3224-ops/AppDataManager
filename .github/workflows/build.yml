@@ -1,11 +1,7 @@
 name: Build and Publish AppData Manager
 
+# Production publishing is manual only. Development pushes must never reach the public repo.
 on:
-  push:
-    branches: [main, master]
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
   workflow_dispatch:
 
 permissions:
