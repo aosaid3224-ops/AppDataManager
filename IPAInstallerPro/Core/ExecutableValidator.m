@@ -1,13 +1,18 @@
 //
 //  ExecutableValidator.m
-//  IPAInstallerPro — Commit 2: ldid Executable Validator
+//  IPAInstallerPro — Commit 3: Runtime Environment Discovery
+//
+//  CHANGES:
+//  - buildSearchPathsForName: now consumes RuntimeEnvironment instead of hardcoding.
+//  - Search paths are dynamically built from detected bootstrap + PATH.
+//  - No other changes.
 //
 
 #import "ExecutableValidator.h"
 #import "ExecutableCapability.h"
 #import "ProcessRunner.h"
 #import "CommandResult.h"
-#import "RootlessManager.h"
+#import "RuntimeEnvironment.h"
 #import "Logger.h"
 
 #include <unistd.h>
@@ -60,7 +65,7 @@
 
     if (cached) return cached;
 
-    // Build search paths
+    // Build search paths from RuntimeEnvironment
     NSArray<NSString *> *searchPaths = [self buildSearchPathsForName:name];
     ExecutableCapability *cap = [[ExecutableCapability alloc] initWithExecutableName:name searchedPaths:searchPaths];
 
@@ -170,51 +175,28 @@
 #pragma mark - Private
 
 - (NSArray<NSString *> *)buildSearchPathsForName:(NSString *)name {
-    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
 
-    // 1. PATH environment variable
-    const char *pathEnv = getenv("PATH");
-    if (pathEnv) {
-        NSString *pathStr = [NSString stringWithUTF8String:pathEnv];
-        NSArray *pathComponents = [pathStr componentsSeparatedByString:@":"];
-        for (NSString *p in pathComponents) {
-            if (p.length > 0) [paths addObject:p];
-        }
+    // 1. Use RuntimeEnvironment binSearchPaths (dynamic discovery)
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    for (NSString *p in rt.binSearchPaths) {
+        if (p.length > 0) [paths addObject:p];
     }
 
-    // 2. Standard Unix paths
+    // 2. Fallback: standard Unix paths (in case RuntimeEnvironment missed something)
     [paths addObject:@"/usr/bin"];
     [paths addObject:@"/bin"];
     [paths addObject:@"/usr/local/bin"];
 
-    // 3. Rootless paths via RootlessManager
-    NSString *resolvedBin = [[RootlessManager sharedManager] resolvePath:@"/usr/bin"];
-    if (resolvedBin.length > 0 && ![resolvedBin isEqualToString:@"/usr/bin"]) {
-        [paths addObject:resolvedBin];
-    }
-
-    // 4. Known Rootless bootstrap paths (fallback)
+    // 3. Fallback: known rootless paths (for environments not yet characterized)
     [paths addObject:@"/var/jb/usr/bin"];
     [paths addObject:@"/var/jb/bin"];
     [paths addObject:@"/var/LIY/usr/bin"];
     [paths addObject:@"/var/LIY/bin"];
-
-    // 5. Procursus and other bootstrap paths (future-proofing)
     [paths addObject:@"/opt/procursus/bin"];
     [paths addObject:@"/opt/procursus/usr/bin"];
 
-    // 6. ElleKit / other bootstrap paths
-    [paths addObject:@"/usr/local/bin"];
-
-    // Remove duplicates and empty strings, preserve order
-    NSMutableArray<NSString *> *ordered = [NSMutableArray array];
-    for (NSString *p in paths) {
-        if (p.length > 0 && ![ordered containsObject:p]) {
-            [ordered addObject:p];
-        }
-    }
-
-    return ordered;
+    return paths.array;
 }
 
 - (ExecutableCapability *)runInvocationTestForExecutable:(NSString *)name
