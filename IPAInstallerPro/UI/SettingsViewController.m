@@ -1,8 +1,12 @@
 //
-// SettingsViewController.m
-// IPA Installer Pro
+//  SettingsViewController.m
+//  IPAInstallerPro — Commit 4: Diagnostics Fix
 //
-// v2.5 — Auto Layout, clean analyzer test section
+//  CHANGES:
+//  - envLabel now displays iosVersion, architecture, and dynamic paths.
+//  - capLabel now displays ExecutableCapability.localizedStatusDescription (Arabic, precise).
+//  - Shows resolved path for each tool.
+//  - Shows full diagnostic classification, not just Ready/Missing.
 //
 
 #import "SettingsViewController.h"
@@ -91,7 +95,7 @@
         [self.envLabel.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
         [self.envLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [self.envLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [self.envLabel.heightAnchor constraintGreaterThanOrEqualToConstant:180]
+        [self.envLabel.heightAnchor constraintGreaterThanOrEqualToConstant:220]
     ]];}
 
 #pragma mark - Capabilities Section
@@ -124,7 +128,7 @@
         [self.capLabel.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
         [self.capLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
         [self.capLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-        [self.capLabel.heightAnchor constraintGreaterThanOrEqualToConstant:260]
+        [self.capLabel.heightAnchor constraintGreaterThanOrEqualToConstant:320]
     ]];}
 
 #pragma mark - About Section
@@ -171,10 +175,12 @@
     JailbreakEnvironment *env = [JailbreakEnvironment sharedEnvironment];
     CapabilityManager *cap = [CapabilityManager sharedManager];
 
+    // === Environment Section ===
     NSMutableString *envStr = [NSMutableString string];
     [envStr appendFormat:@"Jailbreak: %@\n", env.jailbreakType ?: @"Unknown"];
     [envStr appendFormat:@"Rootless: %@\n", env.isRootless ? @"Yes" : @"No"];
-    [envStr appendFormat:@"OS Version: %@\n", env.osVersion ?: @"Unknown"];
+    [envStr appendFormat:@"iOS Version: %@\n", env.iosVersion ?: @"Unknown"];
+    [envStr appendFormat:@"Architecture: %@\n", env.architecture ?: @"Unknown"];
     [envStr appendFormat:@"Device: %@\n", env.deviceModel ?: @"Unknown"];
     [envStr appendFormat:@"Applications: %@\n", env.applicationsPath ?: @"N/A"];
     [envStr appendFormat:@"usr/bin: %@\n", env.usrBinPath ?: @"N/A"];
@@ -183,13 +189,26 @@
 
     self.envLabel.text = envStr;
 
+    // === Capabilities Section ===
     NSMutableString *capStr = [NSMutableString string];
-    [capStr appendFormat:@"%@\n", [cap installationReadinessStatus]];
-    [capStr appendString:@"\n=== Tools ===\n"];
+
+    // Installation readiness (with precise diagnostics)
+    [capStr appendFormat:@"%@\n\n", [cap installationReadinessStatus]];
+
+    // Individual tools with precise Arabic classification
+    [capStr appendString:@"=== الأدوات ===\n"];
     for (Capability *c in [cap allCapabilities]) {
         NSString *icon = c.isAvailable ? @"✅" : @"❌";
-        [capStr appendFormat:@"%@ %@: %@\n", icon, c.name, c.statusMessage];
+        [capStr appendFormat:@"%@ %@: %@", icon, c.name, c.statusMessage];
+        if (c.path.length > 0) {
+            [capStr appendFormat:@" (%@)", c.path];
+        }
+        [capStr appendString:@"\n"];
     }
+
+    // Overall summary
+    [capStr appendString:@"\n=== الملخص ===\n"];
+    [capStr appendFormat:@"%@", [cap capabilityStatusDescription]];
 
     self.capLabel.text = capStr;
 }
