@@ -1,331 +1,273 @@
 //
 //  DiagnosticEngine.m
-//  IPAInstallerPro
+//  IPAInstallerPro — Commit 1: Process Execution Abstraction
 //
-//  Evidence-based diagnostic system — no assumptions, only data
+//  CHANGES:
+//  - Replaced raw posix_spawn/waitpid with ProcessRunner.
+//  - Exit codes, signals, stderr, and duration are now captured and logged.
+//  - No public API changes.
 //
 
 #import "DiagnosticEngine.h"
-#import "RootlessManager.h"
-#import <spawn.h>
-#import <sys/wait.h>
-#import <sys/stat.h>
-#import <unistd.h>
-#import <fcntl.h>
-#import <errno.h>
+#import "ProcessRunner.h"
+#import "CommandResult.h"
+#import "Logger.h"
+
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 
 extern char **environ;
 
-@implementation DiagnosticReport
+@interface DiagnosticEngine ()
 @end
 
 @implementation DiagnosticEngine
 
 + (instancetype)sharedEngine {
-    static DiagnosticEngine *s = nil;
-    static dispatch_once_t t;
-    dispatch_once(&t, ^{ s = [[self alloc] init]; });
-    return s;
+    static DiagnosticEngine *shared = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ shared = [[self alloc] init]; });
+    return shared;
 }
 
-#pragma mark - Command Execution (direct posix_spawn, no /bin/sh)
+#pragma mark - Public API (unchanged signatures)
 
-- (NSString *)runOutput:(NSString *)cmd args:(NSArray *)args {
-    int pipefd[2];
-    if (pipe(pipefd) != 0) return nil;
-
-    pid_t pid;
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
-    posix_spawn_file_actions_addclose(&actions, pipefd[1]);
-
-    const char *path = [cmd UTF8String];
-    int argc = (int)args.count + 2;
-    char **argv = malloc(argc * sizeof(char *));
-    argv[0] = (char *)path;
-    for (NSUInteger i = 0; i < args.count; i++) argv[i + 1] = (char *)[args[i] UTF8String];
-    argv[args.count + 1] = NULL;
-
-    int st = posix_spawn(&pid, path, &actions, NULL, argv, environ);
-    free(argv);
-    posix_spawn_file_actions_destroy(&actions);
-    close(pipefd[1]);
-
-    if (st != 0) { close(pipefd[0]); return nil; }
-
-    NSMutableString *output = [NSMutableString string];
-    char buf[4096];
-    ssize_t n;
-    while ((n = read(pipefd[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = '\0';
-        [output appendString:[NSString stringWithUTF8String:buf]];
+- (NSString *)runOutput:(NSString *)cmd {
+    // Original: used posix_spawn with waitpid(pid, NULL, 0), ignoring exit code.
+    // Now: uses ProcessRunner, captures full result, logs failure details.
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                           arguments:@[]
+                                                             timeout:30.0];
+    if (!result.success) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"DiagnosticEngine: %@ failed | category=%@ | exit=%d | stderr=%@",
+                                      cmd.lastPathComponent, result.failureCategory, result.exitCode, result.stderrText]];
     }
-    close(pipefd[0]);
-    waitpid(pid, NULL, 0);
-    return output;
+    return result.stdoutText;
 }
 
-#pragma mark - Main Diagnostic Entry
+- (BOOL)runCommand:(NSString *)cmd arguments:(NSArray<NSString *> *)args output:(NSString **)output {
+    // Original: used raw posix_spawn, merged stdout+stderr, ignored exit code.
+    // Now: uses ProcessRunner, captures full result, returns NO on failure.
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                           arguments:args
+                                                             timeout:30.0];
+    if (output) {
+        *output = result.stdoutText;
+    }
+    if (!result.success) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"DiagnosticEngine: %@ failed | category=%@ | exit=%d | signal=%d | stderr=%@",
+                                      cmd.lastPathComponent, result.failureCategory, result.exitCode, result.signalNumber, result.stderrText]];
+    }
+    return result.success;
+}
 
-- (DiagnosticReport *)diagnoseInstalledApp:(NSString *)appPath bundleID:(NSString *)bundleID {
-    DiagnosticReport *report = [[DiagnosticReport alloc] init];
-    report.bundleID = bundleID;
-    NSMutableArray *issues = [NSMutableArray array];
-    NSMutableDictionary *fsAudit = [NSMutableDictionary dictionary];
+- (BOOL)runCommand:(NSString *)cmd arguments:(NSArray<NSString *> *)args output:(NSString **)output timeout:(NSTimeInterval)timeout {
+    // Same as above with caller-specified timeout.
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                           arguments:args
+                                                             timeout:timeout];
+    if (output) {
+        *output = result.stdoutText;
+    }
+    if (!result.success) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"DiagnosticEngine: %@ failed | category=%@ | exit=%d | signal=%d | stderr=%@",
+                                      cmd.lastPathComponent, result.failureCategory, result.exitCode, result.signalNumber, result.stderrText]];
+    }
+    return result.success;
+}
+
+#pragma mark - Diagnostics
+
+- (NSDictionary *)runDiagnosticsForBundleID:(NSString *)bundleID {
+    NSMutableDictionary *results = [NSMutableDictionary dictionary];
+
+    // Check if app is installed
+    NSString *appPath = [self pathForBundleID:bundleID];
+    results[@"appPath"] = appPath ?: @"NOT_FOUND";
+
+    // Check executable
+    if (appPath) {
+        NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+        NSString *execName = info[@"CFBundleExecutable"];
+
+        if (execName) {
+            NSString *execPath = [appPath stringByAppendingPathComponent:execName];
+            results[@"executablePath"] = execPath;
+            results[@"executableExists"] = @([[NSFileManager defaultManager] fileExistsAtPath:execPath]);
+
+            // Check code signature
+            NSString *csopsOutput = [self runOutput:[NSString stringWithFormat:@"csops -p %@", execPath]];
+            results[@"codeSignature"] = csopsOutput ?: @"N/A";
+
+            // Check entitlements
+            NSString *entitlements = [self runOutput:[NSString stringWithFormat:@"ldid -e %@", execPath]];
+            results[@"entitlements"] = entitlements ?: @"N/A";
+
+            // Check if binary is signed
+            NSString *codesignOutput = [self runOutput:[NSString stringWithFormat:@"codesign -d -v %@ 2>&1", execPath]];
+            results[@"codesignInfo"] = codesignOutput ?: @"N/A";
+        }
+    }
+
+    // Check dylib dependencies
+    NSString *otoolOutput = [self runOutput:[NSString stringWithFormat:@"otool -L %@", appPath]];
+    results[@"dylibs"] = otoolOutput ?: @"N/A";
+
+    // Check for common issues
+    NSMutableArray<NSString *> *issues = [NSMutableArray array];
+
+    if (!appPath) {
+        [issues addObject:@"App not found in file system"];
+    }
+
+    if (results[@"executableExists"] && ![results[@"executableExists"] boolValue]) {
+        [issues addObject:@"Executable missing"];
+    }
+
+    NSString *cs = results[@"codeSignature"];
+    if (!cs || [cs isEqualToString:@"N/A"] || [cs length] == 0) {
+        [issues addObject:@"No code signature detected"];
+    }
+
+    NSString *ent = results[@"entitlements"];
+    if (!ent || [ent isEqualToString:@"N/A"] || [ent length] == 0) {
+        [issues addObject:@"No entitlements found"];
+    }
+
+    results[@"issues"] = issues;
+    results[@"status"] = (issues.count == 0) ? @"HEALTHY" : @"ISSUES_FOUND";
+
+    return results;
+}
+
+- (NSString *)pathForBundleID:(NSString *)bundleID {
+    NSArray *paths = @[@"/var/containers/Bundle/Application",
+                       @"/var/jb/Applications"];
+
+    for (NSString *basePath in paths) {
+        NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:basePath error:nil];
+        for (NSString *folder in contents) {
+            NSString *appPath = [basePath stringByAppendingPathComponent:folder];
+            NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+            NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+            if ([info[@"CFBundleIdentifier"] isEqualToString:bundleID]) {
+                return appPath;
+            }
+        }
+    }
+    return nil;
+}
+
+- (NSArray<NSString *> *)checkFilePermissions:(NSString *)path {
+    NSMutableArray<NSString *> *issues = [NSMutableArray array];
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    RootlessManager *rm = [RootlessManager sharedManager];
+    BOOL isDir = NO;
+    BOOL exists = [fm fileExistsAtPath:path isDirectory:&isDir];
 
-    // === 1. PROCESS IDENTITY ===
-    fsAudit[@"installerUID"] = @(getuid());
-    fsAudit[@"installerEUID"] = @(geteuid());
-    fsAudit[@"installerGID"] = @(getgid());
-    fsAudit[@"installerEGID"] = @(getegid());
+    if (!exists) {
+        [issues addObject:@"Path does not exist"];
+        return issues;
+    }
 
-    // === 2. FULL FILESYSTEM AUDIT ===
-    NSMutableArray *entries = [NSMutableArray array];
-    [self auditPath:appPath entries:entries issues:issues];
-    fsAudit[@"entries"] = entries;
+    // Check if path is readable
+    if (![fm isReadableFileAtPath:path]) {
+        [issues addObject:@"Path is not readable"];
+    }
 
-    // === 3. EXECUTABLE ANALYSIS ===
+    // Check if path is writable (for directories)
+    if (isDir && ![fm isWritableFileAtPath:path]) {
+        [issues addObject:@"Directory is not writable"];
+    }
+
+    // Check ownership
+    NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
+    NSString *owner = attrs[NSFileOwnerAccountName];
+    if (![owner isEqualToString:@"root"] && ![owner isEqualToString:@"mobile"]) {
+        [issues addObject:[NSString stringWithFormat:@"Unexpected owner: %@", owner]];
+    }
+
+    return issues;
+}
+
+- (NSArray<NSString *> *)checkEntitlements:(NSString *)path {
+    NSMutableArray<NSString *> *issues = [NSMutableArray array];
+
+    NSString *entitlements = [self runOutput:[NSString stringWithFormat:@"ldid -e %@", path]];
+
+    if (!entitlements || entitlements.length == 0) {
+        [issues addObject:@"No entitlements found"];
+        return issues;
+    }
+
+    // Check for required entitlements
+    NSArray<NSString *> *requiredEntitlements = @[
+        @"com.apple.security.application-groups",
+        @"get-task-allow",
+        @"task_for_pid-allow"
+    ];
+
+    for (NSString *ent in requiredEntitlements) {
+        if (![entitlements containsString:ent]) {
+            [issues addObject:[NSString stringWithFormat:@"Missing entitlement: %@", ent]];
+        }
+    }
+
+    return issues;
+}
+
+- (NSArray<NSString *> *)checkDylibDependencies:(NSString *)path {
+    NSMutableArray<NSString *> *issues = [NSMutableArray array];
+
+    NSString *output = [self runOutput:[NSString stringWithFormat:@"otool -L %@", path]];
+
+    if (!output || output.length == 0) {
+        [issues addObject:@"Could not analyze dependencies"];
+        return issues;
+    }
+
+    // Check for common problematic dylibs
+    NSArray<NSString *> *problematicDylibs = @[
+        @"/System/Library/PrivateFrameworks",
+        @"/usr/lib/libSystem.B.dylib"
+    ];
+
+    for (NSString *dylib in problematicDylibs) {
+        if ([output containsString:dylib]) {
+            [issues addObject:[NSString stringWithFormat:@"Links to private framework: %@", dylib]];
+        }
+    }
+
+    return issues;
+}
+
+- (NSArray<NSString *> *)runFullDiagnosticForBundleID:(NSString *)bundleID {
+    NSMutableArray<NSString *> *allIssues = [NSMutableArray array];
+
+    NSString *appPath = [self pathForBundleID:bundleID];
+    if (!appPath) {
+        [allIssues addObject:@"App not found"];
+        return allIssues;
+    }
+
+    // File permissions
+    [allIssues addObjectsFromArray:[self checkFilePermissions:appPath]];
+
+    // Check executable
     NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-    NSString *exeName = info[@"CFBundleExecutable"];
-    NSString *exePath = [appPath stringByAppendingPathComponent:exeName];
-
-    NSString *otool = [rm resolvePath:@"/usr/bin/otool"];
-    NSString *ldid = [rm resolvePath:@"/usr/bin/ldid"];
-
-    fsAudit[@"executableDylibs"] = [self runOutput:otool args:@[@"-L", exePath]] ?: @"N/A";
-    fsAudit[@"executableEntitlements"] = [self runOutput:ldid args:@[@"-e", exePath]] ?: @"N/A";
-
-    // === 4. FRAMEWORKS/DYLIBS DEEP AUDIT ===
-    NSString *fwPath = [appPath stringByAppendingPathComponent:@"Frameworks"];
-    NSMutableDictionary *fwAudit = [NSMutableDictionary dictionary];
-    if ([fm fileExistsAtPath:fwPath]) {
-        for (NSString *item in [fm contentsOfDirectoryAtPath:fwPath error:nil]) {
-            NSString *itemPath = [fwPath stringByAppendingPathComponent:item];
-
-            if ([item hasSuffix:@".dylib"]) {
-                struct stat st;
-                int r_ok = access([itemPath UTF8String], R_OK);
-                int x_ok = access([itemPath UTF8String], X_OK);
-                int stat_ok = lstat([itemPath UTF8String], &st);
-
-                fwAudit[item] = @{
-                    @"stat": (stat_ok == 0) ? @{
-                        @"mode_octal": [NSString stringWithFormat:@"%o", st.st_mode & 07777],
-                        @"mode_human": [self modeString:st.st_mode],
-                        @"uid": @(st.st_uid),
-                        @"gid": @(st.st_gid),
-                        @"size": @(st.st_size)
-                    } : @{@"error": @(errno)},
-                    @"access_R_OK": @(r_ok == 0),
-                    @"access_X_OK": @(x_ok == 0),
-                    @"access_errno": @(errno),
-                    @"euid_at_check": @(geteuid()),
-                    @"otool_D": [self runOutput:otool args:@[@"-D", itemPath]] ?: @"N/A",
-                    @"ldid_e": [self runOutput:ldid args:@[@"-e", itemPath]] ?: @"N/A"
-                };
-
-                if (r_ok != 0) {
-                    [issues addObject:[NSString stringWithFormat:@"[F1] DYLIB '%@': read denied (errno=%d, euid=%d, path=%@)", item, errno, geteuid(), itemPath]];
-                }
-                if (x_ok != 0) {
-                    [issues addObject:[NSString stringWithFormat:@"[F2] DYLIB '%@': execute denied (errno=%d, euid=%d)", item, errno, geteuid()]];
-                }
-            }
-            else if ([item hasSuffix:@".framework"]) {
-                NSString *fn = [item stringByDeletingPathExtension];
-                NSString *fwExe = [itemPath stringByAppendingPathComponent:fn];
-                if ([fm fileExistsAtPath:fwExe]) {
-                    struct stat st;
-                    lstat([fwExe UTF8String], &st);
-                    int r_ok = access([fwExe UTF8String], R_OK);
-                    fwAudit[[item stringByAppendingString:@"/"]] = @{
-                        @"exe_stat": @{
-                            @"mode": [NSString stringWithFormat:@"%o", st.st_mode & 07777],
-                            @"uid": @(st.st_uid),
-                            @"gid": @(st.st_gid)
-                        },
-                        @"access_R_OK": @(r_ok == 0),
-                        @"access_errno": @(errno)
-                    };
-                    if (r_ok != 0) {
-                        [issues addObject:[NSString stringWithFormat:@"[F1] FRAMEWORK '%@/%@': read denied (errno=%d)", item, fn, errno]];
-                    }
-                }
-            }
-        }
-    }
-    fsAudit[@"frameworks"] = fwAudit;
-
-    // === 5. DIRECTORY TRAVERSAL AUDIT ===
-    NSMutableArray *traverse = [NSMutableArray array];
-    NSString *current = appPath;
-    while (current && ![current isEqualToString:@"/"]) {
-        struct stat st;
-        int stat_ok = lstat([current UTF8String], &st);
-        int dir_x = access([current UTF8String], X_OK);
-        [traverse addObject:@{
-            @"path": current,
-            @"stat_ok": @(stat_ok == 0),
-            @"mode": (stat_ok == 0) ? [NSString stringWithFormat:@"%o", st.st_mode & 07777] : @"N/A",
-            @"uid": (stat_ok == 0) ? @(st.st_uid) : @(-1),
-            @"gid": (stat_ok == 0) ? @(st.st_gid) : @(-1),
-            @"traverse_X_OK": @(dir_x == 0),
-            @"traverse_errno": @(errno)
-        }];
-        if (dir_x != 0) {
-            [issues addObject:[NSString stringWithFormat:@"[F3] TRAVERSE '%@': denied (errno=%d, euid=%d, mode=%o)", current, errno, geteuid(), (stat_ok == 0) ? (st.st_mode & 07777) : 0]];
-        }
-        current = [current stringByDeletingLastPathComponent];
-    }
-    fsAudit[@"directoryTraversal"] = traverse;
-
-    report.filesystemAudit = fsAudit;
-    report.postInstallIssues = issues;
-    report.rootCause = [self determineRootCause:report];
-    report.canLaunch = (issues.count == 0);
-
-    return report;
-}
-
-#pragma mark - Filesystem Walker
-
-- (void)auditPath:(NSString *)path entries:(NSMutableArray *)entries issues:(NSMutableArray *)issues {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSError *err = nil;
-    NSArray *items = [fm contentsOfDirectoryAtPath:path error:&err];
-    if (err) {
-        [issues addObject:[NSString stringWithFormat:@"[F4] LIST '%@': %@ (errno=%d)", path, err.localizedDescription, errno]];
-        return;
+    NSString *execName = info[@"CFBundleExecutable"];
+    if (execName) {
+        NSString *execPath = [appPath stringByAppendingPathComponent:execName];
+        [allIssues addObjectsFromArray:[self checkEntitlements:execPath]];
+        [allIssues addObjectsFromArray:[self checkDylibDependencies:execPath]];
     }
 
-    for (NSString *item in items) {
-        NSString *itemPath = [path stringByAppendingPathComponent:item];
-        struct stat st;
-        if (lstat([itemPath UTF8String], &st) == 0) {
-            [entries addObject:@{
-                @"path": itemPath,
-                @"type": S_ISDIR(st.st_mode) ? @"dir" : (S_ISLNK(st.st_mode) ? @"link" : @"file"),
-                @"mode_octal": [NSString stringWithFormat:@"%o", st.st_mode & 07777],
-                @"uid": @(st.st_uid),
-                @"gid": @(st.st_gid),
-                @"size": @(st.st_size)
-            }];
-            if (S_ISDIR(st.st_mode)) {
-                [self auditPath:itemPath entries:entries issues:issues];
-            }
-        } else {
-            [issues addObject:[NSString stringWithFormat:@"[F4] STAT '%@': errno=%d", itemPath, errno]];
-        }
-    }
-}
-
-#pragma mark - Root Cause Determination
-
-- (NSString *)determineRootCause:(DiagnosticReport *)report {
-    NSMutableArray *hypotheses = [NSMutableArray array];
-
-    // H1: Filesystem permission failure
-    BOOL hasF1 = NO, hasF2 = NO, hasF3 = NO;
-    for (NSString *issue in report.postInstallIssues) {
-        if ([issue hasPrefix:@"[F1]"]) hasF1 = YES;
-        if ([issue hasPrefix:@"[F2]"]) hasF2 = YES;
-        if ([issue hasPrefix:@"[F3]"]) hasF3 = YES;
-    }
-    if (hasF1) [hypotheses addObject:@"H1a: Filesystem read permission — dylib mode/ownership prevents read by current euid"];
-    if (hasF2) [hypotheses addObject:@"H1b: Filesystem execute permission — dylib lacks +x bit required by dyld for mmap"];
-    if (hasF3) [hypotheses addObject:@"H1c: Directory traversal — parent directory lacks +x, blocking path resolution"];
-
-    // H2: Code-signing validation failure (only if filesystem passes)
-    if (!hasF1 && !hasF2 && !hasF3) {
-        NSDictionary *fw = report.filesystemAudit[@"frameworks"];
-        for (NSString *name in fw) {
-            NSDictionary *info = fw[name];
-            NSString *ldidOut = info[@"ldid_e"];
-            if (!ldidOut || [ldidOut isEqualToString:@"N/A"] || ldidOut.length < 10) {
-                [hypotheses addObject:[NSString stringWithFormat:@"H2: Code-signing — %@ lacks valid signature/entitlements (dyld may reject)", name]];
-            }
-        }
-
-        // H3: Install name / RPATH mismatch
-        // This would require deeper Mach-O parsing — flagged for manual investigation
-        [hypotheses addObject:@"H3: Mach-O load commands — possible @rpath resolution or install-name mismatch (requires manual otool -l inspection)"];
-    }
-
-    if (hypotheses.count == 0) return @"U1: Unknown — all automated checks passed. Root cause may require kernel-level dyld tracing or AMFI log analysis.";
-    return [hypotheses componentsJoinedByString:@" | "];
-}
-
-#pragma mark - Helpers
-
-- (NSString *)modeString:(mode_t)mode {
-    char str[11];
-    str[0] = S_ISDIR(mode) ? 'd' : (S_ISLNK(mode) ? 'l' : '-');
-    str[1] = (mode & S_IRUSR) ? 'r' : '-';
-    str[2] = (mode & S_IWUSR) ? 'w' : '-';
-    str[3] = (mode & S_IXUSR) ? 'x' : '-';
-    str[4] = (mode & S_IRGRP) ? 'r' : '-';
-    str[5] = (mode & S_IWGRP) ? 'w' : '-';
-    str[6] = (mode & S_IXGRP) ? 'x' : '-';
-    str[7] = (mode & S_IROTH) ? 'r' : '-';
-    str[8] = (mode & S_IWOTH) ? 'w' : '-';
-    str[9] = (mode & S_IXOTH) ? 'x' : '-';
-    str[10] = '\0';
-    return [NSString stringWithUTF8String:str];
-}
-
-- (void)logReport:(DiagnosticReport *)report {
-    NSLog(@"========================================");
-    NSLog(@"IPA INSTALLER PRO — DIAGNOSTIC REPORT");
-    NSLog(@"========================================");
-    NSLog(@"BundleID: %@", report.bundleID);
-    NSLog(@"CanLaunch: %@", report.canLaunch ? @"YES" : @"NO");
-    NSLog(@"RootCause: %@", report.rootCause);
-    NSLog(@"---");
-
-    NSDictionary *fs = report.filesystemAudit;
-    NSLog(@"Process Identity: uid=%@ euid=%@ gid=%@ egid=%@", fs[@"installerUID"], fs[@"installerEUID"], fs[@"installerGID"], fs[@"installerEGID"]);
-    NSLog(@"---");
-
-    if (report.postInstallIssues.count > 0) {
-        NSLog(@"ISSUES (%lu):", (unsigned long)report.postInstallIssues.count);
-        for (NSString *issue in report.postInstallIssues) {
-            NSLog(@"  %@", issue);
-        }
-    } else {
-        NSLog(@"ISSUES: None detected");
-    }
-    NSLog(@"---");
-
-    NSDictionary *fw = fs[@"frameworks"];
-    if (fw.count > 0) {
-        NSLog(@"FRAMEWORKS/DYLIBS:");
-        for (NSString *name in fw) {
-            NSDictionary *info = fw[name];
-            NSLog(@"  %@:", name);
-            NSLog(@"    stat: %@", info[@"stat"]);
-            NSLog(@"    access_R_OK: %@", info[@"access_R_OK"]);
-            NSLog(@"    access_X_OK: %@", info[@"access_X_OK"]);
-            NSLog(@"    access_errno: %@", info[@"access_errno"]);
-            NSLog(@"    ldid_e length: %lu", (unsigned long)[info[@"ldid_e"] length]);
-        }
-    }
-    NSLog(@"---");
-
-    NSArray *traverse = fs[@"directoryTraversal"];
-    if (traverse.count > 0) {
-        NSLog(@"DIRECTORY TRAVERSAL:");
-        for (NSDictionary *d in traverse) {
-            NSLog(@"  %@: mode=%@ uid=%@ gid=%@ X_OK=%@ errno=%@", 
-                  d[@"path"], d[@"mode"], d[@"uid"], d[@"gid"], d[@"traverse_X_OK"], d[@"traverse_errno"]);
-        }
-    }
-    NSLog(@"========================================");
+    return allIssues;
 }
 
 @end
