@@ -25,7 +25,7 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _isRootlessActive = [RuntimeEnvironment sharedEnvironment].isRootless;
+        // RuntimeEnvironment is the single source of truth for rootless state.
     }
     return self;
 }
@@ -85,9 +85,18 @@
     return path;
 }
 
-- (BOOL)fileExistsAtRootlessPath:(NSString *)path {
+- (BOOL)fileExistsAtLogicalPath:(NSString *)path {
     NSString *resolved = [self resolvePath:path];
     return [[NSFileManager defaultManager] fileExistsAtPath:resolved];
+}
+
+- (BOOL)createDirectoryAtLogicalPath:(NSString *)path error:(NSError **)error {
+    NSString *resolved = [self resolvePath:path];
+    return [[NSFileManager defaultManager] createDirectoryAtPath:resolved withIntermediateDirectories:YES attributes:nil error:error];
+}
+
+- (BOOL)fileExistsAtRootlessPath:(NSString *)path {
+    return [self fileExistsAtLogicalPath:path];
 }
 
 - (BOOL)isFileAtPathExecutable:(NSString *)path {
