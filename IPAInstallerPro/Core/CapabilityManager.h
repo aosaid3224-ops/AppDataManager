@@ -11,7 +11,7 @@
 
 @interface CapabilityManager : NSObject
 + (instancetype)sharedManager;
-- (void)scanCapabilities;
+- (NSDictionary *)scanCapabilities;
 - (NSArray *)allCapabilities;
 - (Capability *)capabilityForIdentifier:(NSString *)identifier;
 - (BOOL)isUnzipAvailable;
@@ -22,5 +22,7 @@
 - (BOOL)isDirectInstallationAvailable;
 - (NSString *)installationReadinessStatus;
 - (NSString *)capabilityStatusString;
+- (NSString *)capabilityStatusDescription;
+- (NSArray<NSString *> *)missingCapabilities;
 - (BOOL)canInstallIPA;
 @end
