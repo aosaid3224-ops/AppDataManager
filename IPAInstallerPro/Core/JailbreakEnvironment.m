@@ -11,6 +11,7 @@
 //
 
 #import "JailbreakEnvironment.h"
+#import <UIKit/UIKit.h>
 #import "RuntimeEnvironment.h"
 #import "Logger.h"
 
