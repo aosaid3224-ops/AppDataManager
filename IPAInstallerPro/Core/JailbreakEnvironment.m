@@ -1,32 +1,24 @@
-#import "JailbreakEnvironment.h"
-#import <objc/runtime.h>
-#import <objc/message.h>
-#import <UIKit/UIKit.h>
-#import "Logger.h"
-#import "rootless.h"
-#include <sys/utsname.h>
+//
+//  JailbreakEnvironment.m
+//  IPAInstallerPro — Commit 3: Runtime Environment Discovery
+//
+//  CHANGES:
+//  - Replaced static path checks with RuntimeEnvironment dynamic discovery.
+//  - isRootless, rootPath, and jailbreakType now delegate to RuntimeEnvironment.
+//  - Added iOS version and architecture exposure.
+//  - No public API changes.
+//
 
-@interface JailbreakEnvironment ()
-@property (readwrite, nonatomic) BOOL isJailbroken;
-@property (readwrite, nonatomic) BOOL isRootless;
-@property (readwrite, nonatomic) NSString *jailbreakType;
-@property (readwrite, nonatomic) NSString *rootPath;
-@property (readwrite, nonatomic) NSString *applicationsPath;
-@property (readwrite, nonatomic) NSString *usrBinPath;
-@property (readwrite, nonatomic) NSString *mobileDocumentsPath;
-@property (readwrite, nonatomic) NSString *osVersion;
-@property (readwrite, nonatomic) NSString *deviceModel;
-@property (readwrite, nonatomic) id lsApplicationWorkspace;
-@end
+#import "JailbreakEnvironment.h"
+#import "RuntimeEnvironment.h"
+#import "Logger.h"
 
 @implementation JailbreakEnvironment
 
 + (instancetype)sharedEnvironment {
     static JailbreakEnvironment *shared = nil;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        shared = [[self alloc] init];
-    });
+    dispatch_once(&onceToken, ^{ shared = [[self alloc] init]; });
     return shared;
 }
 
@@ -39,65 +31,49 @@
 }
 
 - (void)detectEnvironment {
-    @try {
-        [[Logger sharedLogger] info:@"Detecting jailbreak environment..."];
+    NSDate *start = [NSDate date];
 
-        // Detect rootless
-        self.isRootless = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"];
-        self.rootPath = self.isRootless ? @"/var/jb" : @"";
+    // Delegate to RuntimeEnvironment for all discovery
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    _isRootless = rt.isRootless;
+    _rootPath = rt.bootstrapPath ?: @"";
+    _jailbreakType = rt.jailbreakTypeName;
+    _isJailbroken = (rt.jailbreakType != SpiderJailbreakTypeUnknown) || rt.isRootless;
 
-        // Detect jailbreak type
-        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/usr/bin/dopamine"]) {
-            self.jailbreakType = @"Dopamine";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/.installed_dopamine"]) {
-            self.jailbreakType = @"Dopamine 3.0";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/usr/bin/dopamine-cli"]) {
-            self.jailbreakType = @"Dopamine 3.0";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/usr/lib/libdopamine.dylib"]) {
-            self.jailbreakType = @"Dopamine";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/.installed_unc0ver"]) {
-            self.jailbreakType = @"unc0ver";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/.installed_taurine"]) {
-            self.jailbreakType = @"Taurine";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/.installed_xina"]) {
-            self.jailbreakType = @"XinaA15";
-        } else if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb/usr/bin/ellekit"]) {
-            self.jailbreakType = @"Dopamine/ElleKit";
-        } else {
-            self.jailbreakType = @"Unknown";
-        }
+    // Expose system info from RuntimeEnvironment
+    _iosVersion = rt.iosVersion;
+    _architecture = rt.architecture;
 
-        self.isJailbroken = self.isRootless || [[NSFileManager defaultManager] fileExistsAtPath:@"/usr/bin/ldid"];
+    // Log discovery results
+    NSTimeInterval duration = [[NSDate date] timeIntervalSinceDate:start];
+    [[Logger sharedLogger] info:[NSString stringWithFormat:@"JailbreakEnvironment: detected in %.3fs | jailbroken=%@ | rootless=%@ | type=%@ | root=%@ | iOS=%@ | arch=%@",
+                                 duration,
+                                 _isJailbroken ? @"YES" : @"NO",
+                                 _isRootless ? @"YES" : @"NO",
+                                 _jailbreakType,
+                                 _rootPath,
+                                 _iosVersion,
+                                 _architecture]];
 
-        // Paths
-        self.applicationsPath = ROOT_PATH_NS(@"/Applications");
-        self.usrBinPath = ROOT_PATH_NS(@"/usr/bin");
-        self.mobileDocumentsPath = @"/var/mobile/Documents";
-
-        // Device info
-        self.osVersion = [[UIDevice currentDevice] systemVersion];
-        struct utsname systemInfo;
-        uname(&systemInfo);
-        self.deviceModel = [NSString stringWithCString:systemInfo.machine encoding:NSUTF8StringEncoding];
-
-        // LSApplicationWorkspace (lazy init with null check)
-        Class lsClass = objc_getClass("LSApplicationWorkspace");
-        if (lsClass) {
-            SEL sharedSel = NSSelectorFromString(@"defaultWorkspace");
-            if ([lsClass respondsToSelector:sharedSel]) {
-                self.lsApplicationWorkspace = ((id (*)(Class, SEL))objc_msgSend)(lsClass, sharedSel);
-            }
-        }
-
-        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Environment: %@, Rootless: %@, iOS: %@, Device: %@",
-            self.jailbreakType, self.isRootless ? @"YES" : @"NO", self.osVersion, self.deviceModel]];
+    // Log warning if not characterized
+    if (!rt.isCharacterized) {
+        [[Logger sharedLogger] warning:@"JailbreakEnvironment: RuntimeEnvironment could not characterize the system"];
     }
-    @catch (NSException *exception) {
-        [[Logger sharedLogger] error:[NSString stringWithFormat:@"Environment detection failed: %@", exception.reason]];
-        self.isJailbroken = NO;
-        self.isRootless = NO;
-        self.jailbreakType = @"Unknown";
-    }
+}
+
+- (NSDictionary *)environmentInfo {
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[@"isJailbroken"] = @(self.isJailbroken);
+    info[@"isRootless"] = @(self.isRootless);
+    info[@"jailbreakType"] = self.jailbreakType ?: @"Unknown";
+    info[@"rootPath"] = self.rootPath ?: @"";
+    info[@"iosVersion"] = self.iosVersion ?: @"";
+    info[@"architecture"] = self.architecture ?: @"";
+    info[@"bootstrapPath"] = rt.bootstrapPath ?: @"none";
+    info[@"binSearchPathsCount"] = @(rt.binSearchPaths.count);
+    info[@"librarySearchPathsCount"] = @(rt.librarySearchPaths.count);
+    return info;
 }
 
 @end
