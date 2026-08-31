@@ -23,6 +23,9 @@
 @property (nonatomic, strong) NSDate *lastScanTime;
 @end
 
+@implementation Capability
+@end
+
 @implementation CapabilityManager
 
 + (instancetype)sharedManager {
@@ -106,8 +109,7 @@
         return @"⚠️ جاهز جزئيًا";
     }
 
-    return [NSString stringWithFormat:@"❌ غير جاهز:
-%@", [issues componentsJoinedByString:@"\n"]];
+    return [NSString stringWithFormat:@"❌ غير جاهز:\n%@", [issues componentsJoinedByString:@"\n"]];
 }
 
 - (NSArray<Capability *> *)allCapabilities {

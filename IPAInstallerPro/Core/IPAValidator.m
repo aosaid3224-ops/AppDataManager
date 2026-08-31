@@ -21,7 +21,43 @@
 
 extern char **environ;
 
+@implementation IPAValidationResult
+@end
+
 @implementation IPAValidator
+
+- (IPAValidationResult *)validateIPAAtPath:(NSString *)ipaPath {
+    IPAValidationResult *result = [[IPAValidationResult alloc] init];
+    NSError *error = nil;
+    BOOL valid = [self validateIPAAtPath:ipaPath error:&error];
+    result.isReadyForInstall = valid;
+    result.status = valid ? IPAValidationStatusValid : IPAValidationStatusUnknown;
+    result.statusMessage = valid ? @"IPA صالحة وجاهزة للتحقق" : (error.localizedDescription ?: @"تعذر التحقق من IPA");
+    result.issues = error ? @[error.localizedDescription ?: @"خطأ غير معروف"] : @[];
+    result.missingLibraries = @[];
+    return result;
+}
+
+- (IPAValidationResult *)validateExtractedAppAtPath:(NSString *)appPath {
+    IPAValidationResult *result = [[IPAValidationResult alloc] init];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:NSString.class] ? info[@"CFBundleExecutable"] : nil;
+    NSString *execPath = executable.length ? [appPath stringByAppendingPathComponent:executable] : nil;
+    BOOL valid = appPath.length > 0 && [fm fileExistsAtPath:appPath] && info != nil && executable.length > 0 && [fm isExecutableFileAtPath:execPath];
+    result.isReadyForInstall = valid;
+    result.status = valid ? IPAValidationStatusValid : (info ? IPAValidationStatusMissingExecutable : IPAValidationStatusMissingInfoPlist);
+    result.statusMessage = valid ? @"حزمة التطبيق المستخرجة صالحة" : @"حزمة التطبيق المستخرجة غير مكتملة";
+    result.issues = valid ? @[] : @[result.statusMessage];
+    result.missingLibraries = @[];
+    return result;
+}
+
+- (NSArray<NSString *> *)checkDependenciesAtAppPath:(NSString *)appPath {
+    if (appPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:appPath]) return @[];
+    return @[];
+}
 
 + (instancetype)sharedValidator {
     static IPAValidator *shared = nil;
