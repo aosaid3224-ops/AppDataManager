@@ -99,6 +99,12 @@ typedef NS_ENUM(NSInteger, IPAStructuralParseStatus) {
 @interface IPAStructuralResult : NSObject
 @property (nonatomic, strong) NSString *ipaPath;
 @property (nonatomic, strong) NSString *extractPath;
+// Compatibility summary fields used by the existing analyzer/UI contract.
+@property (nonatomic, strong) NSString *error;
+@property (nonatomic, strong) NSString *bundleID;
+@property (nonatomic, strong) NSString *bundleName;
+@property (nonatomic, strong) NSString *version;
+@property (nonatomic, strong) NSString *executableName;
 @property (nonatomic, assign) unsigned long long ipaSize;
 @property (nonatomic, strong) NSArray<IPAStructuralBundle *> *bundles;
 @property (nonatomic, strong) NSArray<IPAStructuralExecutable *> *executables;
@@ -123,4 +129,7 @@ typedef NS_ENUM(NSInteger, IPAStructuralParseStatus) {
 - (NSDictionary *)dictionaryRepresentation;
 - (NSString *)jsonRepresentation;
 - (NSString *)summaryReport;
+- (void)addMachOBinary:(NSString *)path;
+- (void)addFramework:(NSString *)frameworkPath withBinary:(NSString *)binaryPath;
+- (void)addPlugIn:(NSString *)pluginPath withBinary:(NSString *)binaryPath;
 @end

@@ -222,6 +222,47 @@
     return report;
 }
 
+- (void)addMachOBinary:(NSString *)path {
+    if (path.length == 0) return;
+    IPAStructuralExecutable *executable = [[IPAStructuralExecutable alloc] init];
+    executable.path = path;
+    executable.name = [path lastPathComponent];
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    executable.fileSize = [attrs[NSFileSize] unsignedLongLongValue];
+    NSMutableArray *items = [self.executables mutableCopy] ?: [NSMutableArray array];
+    [items addObject:executable];
+    self.executables = [items copy];
+    self.executableCount = self.executables.count;
+}
+
+- (void)addFramework:(NSString *)frameworkPath withBinary:(NSString *)binaryPath {
+    IPAStructuralBundle *bundle = [[IPAStructuralBundle alloc] init];
+    bundle.path = frameworkPath;
+    bundle.bundleType = @".framework";
+    bundle.executablePath = binaryPath;
+    bundle.executableName = [binaryPath lastPathComponent];
+    bundle.executableExists = [[NSFileManager defaultManager] fileExistsAtPath:binaryPath];
+    NSMutableArray *items = [self.bundles mutableCopy] ?: [NSMutableArray array];
+    [items addObject:bundle];
+    self.bundles = [items copy];
+    self.frameworkCount += 1;
+    self.bundleCount = self.bundles.count;
+}
+
+- (void)addPlugIn:(NSString *)pluginPath withBinary:(NSString *)binaryPath {
+    IPAStructuralBundle *bundle = [[IPAStructuralBundle alloc] init];
+    bundle.path = pluginPath;
+    bundle.bundleType = @".appex";
+    bundle.executablePath = binaryPath;
+    bundle.executableName = [binaryPath lastPathComponent];
+    bundle.executableExists = [[NSFileManager defaultManager] fileExistsAtPath:binaryPath];
+    NSMutableArray *items = [self.bundles mutableCopy] ?: [NSMutableArray array];
+    [items addObject:bundle];
+    self.bundles = [items copy];
+    self.appexCount += 1;
+    self.bundleCount = self.bundles.count;
+}
+
 - (NSString *)isoStringFromDate:(NSDate *)date {
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
     formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss.SSSZ";

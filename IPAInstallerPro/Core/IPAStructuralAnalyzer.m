@@ -11,6 +11,7 @@
 //
 
 #import "IPAStructuralAnalyzer.h"
+#import "IPAStructuralResult.h"
 #import "ProcessRunner.h"
 #import "CommandResult.h"
 #import "Logger.h"
@@ -73,6 +74,30 @@ extern char **environ;
         [self cacheResult:result forPath:path];
     });
 
+    return result;
+}
+
+- (IPAStructuralResult *)analyzeIPAAtPath:(NSString *)path keepExtracted:(BOOL)keep {
+    IPAStructuralResult *result = [self analyzeIPAAtPath:path];
+    (void)keep;
+    return result;
+}
+
+- (IPAStructuralResult *)analyzeExtractedPayloadAtPath:(NSString *)payloadPath sourceIPAPath:(NSString *)ipaPath {
+    IPAStructuralResult *result = [[IPAStructuralResult alloc] init];
+    result.ipaPath = ipaPath;
+    result.extractPath = [payloadPath stringByDeletingLastPathComponent];
+    NSArray<NSString *> *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payloadPath error:nil];
+    for (NSString *item in items) {
+        if ([item hasSuffix:@".app"]) {
+            [self analyzeAppBundle:[payloadPath stringByAppendingPathComponent:item] result:result];
+            result.success = YES;
+            break;
+        }
+    }
+    if (!result.success) {
+        result.errors = [NSMutableArray arrayWithObject:@"Payload لا يحتوي على App bundle صالح"];
+    }
     return result;
 }
 
