@@ -16,6 +16,9 @@
 @property (nonatomic, strong) NSDate *lastScanTime;
 @end
 
+@implementation Capability
+@end
+
 @implementation CapabilityManager
 
 + (instancetype)sharedManager {
