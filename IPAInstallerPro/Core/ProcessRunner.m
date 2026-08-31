@@ -117,7 +117,6 @@ extern char **environ;
     BOOL timedOut = NO;
     int status = 0;
 
-    int deadlineMs = (timeout > 0) ? (int)(timeout * 1000.0) : -1;
     NSDate *deadline = (timeout > 0) ? [NSDate dateWithTimeIntervalSinceNow:timeout] : nil;
 
     while (!finished) {
