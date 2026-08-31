@@ -170,7 +170,7 @@
         [capStr appendString:@"\n"];
     }
     [capStr appendString:@"\n=== الملخص ===\n"];
-    [capStr appendFormat:@"%@", [cap capabilityStatusDescription]];
+    [capStr appendFormat:@"%@", [cap capabilityStatusString]];
     self.capLabel.text = capStr;
 }
 
