@@ -21,6 +21,9 @@
 
 extern char **environ;
 
+@implementation IPAValidationResult
+@end
+
 @implementation IPAValidator
 
 + (instancetype)sharedValidator {
@@ -31,6 +34,40 @@ extern char **environ;
 }
 
 #pragma mark - Public API
+
+- (IPAValidationResult *)validateIPAAtPath:(NSString *)ipaPath {
+    IPAValidationResult *result = [[IPAValidationResult alloc] init];
+    NSError *error = nil;
+    BOOL valid = [self validateIPAAtPath:ipaPath error:&error];
+    result.isReadyForInstall = valid;
+    result.status = valid ? IPAValidationStatusValid : IPAValidationStatusUnknown;
+    result.statusMessage = valid ? @"IPA جاهز للتثبيت" : (error.localizedDescription ?: @"فشل التحقق من IPA");
+    result.issues = error ? @[error.localizedDescription ?: @"خطأ غير معروف"] : @[];
+    result.missingLibraries = @[];
+    return result;
+}
+
+- (IPAValidationResult *)validateExtractedAppAtPath:(NSString *)appPath {
+    IPAValidationResult *result = [[IPAValidationResult alloc] init];
+    NSMutableArray<NSString *> *issues = [NSMutableArray array];
+    NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    if (!info) [issues addObject:@"Info.plist مفقود أو غير صالح"];
+    NSString *executable = [info[@"CFBundleExecutable"] isKindOfClass:NSString.class] ? info[@"CFBundleExecutable"] : nil;
+    if (executable.length == 0) [issues addObject:@"الملف التنفيذي غير محدد"];
+    else if (![[NSFileManager defaultManager] fileExistsAtPath:[appPath stringByAppendingPathComponent:executable]]) [issues addObject:@"الملف التنفيذي مفقود"];
+    result.isReadyForInstall = issues.count == 0;
+    result.status = result.isReadyForInstall ? IPAValidationStatusValid : IPAValidationStatusMissingExecutable;
+    result.statusMessage = result.isReadyForInstall ? @"التطبيق المستخرج جاهز" : [issues componentsJoinedByString:@"، "];
+    result.issues = issues;
+    result.missingLibraries = @[];
+    return result;
+}
+
+- (NSArray<NSString *> *)checkDependenciesAtAppPath:(NSString *)appPath {
+    // Dependency inspection is optional at validation time; installation resolves system libraries.
+    return @[];
+}
 
 - (BOOL)validateIPAAtPath:(NSString *)path error:(NSError **)error {
     // Check file exists
