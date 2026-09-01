@@ -45,11 +45,23 @@
 }
 
 - (BOOL)isRootHelperAvailable {
-    NSString *p = @"/usr/bin/ipainstallerpro_helper";
-    if (![[NSFileManager defaultManager] fileExistsAtPath:p]) {
-        p = @"/var/jb/usr/bin/ipainstallerpro_helper";
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSMutableOrderedSet<NSString *> *candidates = [NSMutableOrderedSet orderedSet];
+    if (rt.bootstrapPath.length > 0) {
+        [candidates addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin/ipainstallerpro_helper"]];
+        [candidates addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin/ipainstallerpro_helper"]];
     }
-    return [[NSFileManager defaultManager] isExecutableFileAtPath:p];
+    [candidates addObjectsFromArray:@[
+        @"/usr/bin/ipainstallerpro_helper",
+        @"/var/jb/usr/bin/ipainstallerpro_helper",
+        @"/var/LIY/usr/bin/ipainstallerpro_helper",
+        @"/opt/procursus/bin/ipainstallerpro_helper"
+    ]];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *path in candidates) {
+        if ([fm isExecutableFileAtPath:path]) return YES;
+    }
+    return NO;
 }
 
 - (BOOL)isSystemInstallationAvailable {
@@ -233,33 +245,30 @@
 }
 
 - (BOOL)canWriteToApplicationsDirectory {
-    // FIX: In Rootless, /var/jb/Applications is owned by root. The app writes via
-    // root helper / setuid, not directly as mobile user. isWritableFileAtPath
-    // checks the CURRENT USER, which returns NO for mobile. The correct check
-    // is: does the path exist and is it a directory? The installation engine
-    // handles privilege escalation.
+    // Rootless installations are performed by the privileged helper. The mobile
+    // process must not require direct write permission, nor must it assume that
+    // every jailbreak exposes the same Applications directory spelling.
     RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
-    NSString *appsDir;
-    if (rt.isRootless && rt.bootstrapPath) {
-        appsDir = [rt.bootstrapPath stringByAppendingPathComponent:@"Applications"];
-    } else {
-        appsDir = @"/Applications";
+    NSMutableOrderedSet<NSString *> *candidateDirs = [NSMutableOrderedSet orderedSet];
+    if (rt.bootstrapPath.length > 0) {
+        [candidateDirs addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"Applications"]];
     }
+    [candidateDirs addObjectsFromArray:@[
+        @"/var/jb/Applications",
+        @"/var/LIY/Applications",
+        @"/opt/procursus/Applications",
+        @"/Applications"
+    ]];
     NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL isDir = NO;
-    BOOL exists = [fm fileExistsAtPath:appsDir isDirectory:&isDir];
-
-    if (!exists) {
-        [[Logger sharedLogger] warning:[NSString stringWithFormat:@"CapabilityManager: Applications directory does not exist: %@", appsDir]];
-        return NO;
+    for (NSString *path in candidateDirs) {
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) return YES;
     }
-    if (!isDir) {
-        [[Logger sharedLogger] warning:[NSString stringWithFormat:@"CapabilityManager: Applications path is not a directory: %@", appsDir]];
-        return NO;
-    }
-
-    // Path exists and is a directory — installation can proceed via root/helper
-    return YES;
+    // A rootless bootstrap may create/redirect the target during installation;
+    // the helper is the authoritative capability in that case.
+    if (rt.isRootless && [self isRootHelperAvailable]) return YES;
+    [[Logger sharedLogger] warning:[NSString stringWithFormat:@"CapabilityManager: no Applications directory and no root helper (rootless=%@, bootstrap=%@)", rt.isRootless ? @"YES" : @"NO", rt.bootstrapPath ?: @"none"]];
+    return NO;
 }
 
 @end
