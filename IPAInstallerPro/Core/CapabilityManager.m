@@ -1,6 +1,13 @@
 //
 //  CapabilityManager.m
-//  IPAInstallerPro — Commit 4b: Fix Applications path
+//  IPAInstallerPro — Commit 4c: Fix canWriteToApplicationsDirectory
+//
+//  CHANGES:
+//  - canWriteToApplicationsDirectory now checks path existence + isDirectory,
+//    NOT isWritableFileAtPath (which checks current user permissions only).
+//    In Rootless, /var/jb/Applications is owned by root; actual writes happen
+//    via root helper / setuid. The correct check is: does the path exist and
+//    is it a directory? The installation engine handles privilege escalation.
 //
 
 #import "CapabilityManager.h"
@@ -14,9 +21,6 @@
 @interface CapabilityManager ()
 @property (nonatomic, strong) NSArray<Capability *> *cachedCapabilities;
 @property (nonatomic, strong) NSDate *lastScanTime;
-@end
-
-@implementation Capability
 @end
 
 @implementation CapabilityManager
@@ -76,7 +80,9 @@
         [issues addObject:[NSString stringWithFormat:@"uicache: %@", [uicacheCap localizedStatusDescription]]];
     }
     if (![self canWriteToApplicationsDirectory]) {
-        [issues addObject:@"لا يمكن الكتابة إلى مجلد Applications"];
+        RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+        NSString *appsDir = (rt.isRootless && rt.bootstrapPath) ? [rt.bootstrapPath stringByAppendingPathComponent:@"Applications"] : @"/Applications";
+        [issues addObject:[NSString stringWithFormat:@"مجلد Applications غير موجود: %@", appsDir]];
     }
     if (issues.count == 0) return @"⚠️ جاهز جزئيًا";
     return [NSString stringWithFormat:@"❌ غير جاهز:\n%@", [issues componentsJoinedByString:@"\n"]];
@@ -227,6 +233,11 @@
 }
 
 - (BOOL)canWriteToApplicationsDirectory {
+    // FIX: In Rootless, /var/jb/Applications is owned by root. The app writes via
+    // root helper / setuid, not directly as mobile user. isWritableFileAtPath
+    // checks the CURRENT USER, which returns NO for mobile. The correct check
+    // is: does the path exist and is it a directory? The installation engine
+    // handles privilege escalation.
     RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
     NSString *appsDir;
     if (rt.isRootless && rt.bootstrapPath) {
@@ -234,7 +245,21 @@
     } else {
         appsDir = @"/Applications";
     }
-    return [[NSFileManager defaultManager] isWritableFileAtPath:appsDir];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    BOOL exists = [fm fileExistsAtPath:appsDir isDirectory:&isDir];
+
+    if (!exists) {
+        [[Logger sharedLogger] warning:[NSString stringWithFormat:@"CapabilityManager: Applications directory does not exist: %@", appsDir]];
+        return NO;
+    }
+    if (!isDir) {
+        [[Logger sharedLogger] warning:[NSString stringWithFormat:@"CapabilityManager: Applications path is not a directory: %@", appsDir]];
+        return NO;
+    }
+
+    // Path exists and is a directory — installation can proceed via root/helper
+    return YES;
 }
 
 @end
