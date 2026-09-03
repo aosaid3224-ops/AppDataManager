@@ -1,3 +1,11 @@
+//
+//  IPAExtractor.m
+//  IPAInstallerPro — Commit 2: Binary-safe metadata extraction
+//
+//  FIX: findAppInfoEntryInListing now prefers CFBundlePackageType == APPL
+//  to avoid selecting WatchKit extensions or AppClips as the main app.
+//
+
 #import "IPAExtractor.h"
 #include <spawn.h>
 #include <sys/wait.h>
@@ -72,6 +80,8 @@ extern char **environ;
 - (NSString *)findAppInfoEntryInListing:(NSString *)listing ipaPath:(NSString *)ipaPath appRoot:(NSString **)appRootOut {
     NSString *fallbackEntry = nil;
     NSString *fallbackRoot = nil;
+    NSString *bestEntry = nil;
+    NSString *bestRoot = nil;
     NSArray<NSString *> *lines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
 
     for (NSString *rawLine in lines) {
@@ -90,7 +100,12 @@ extern char **environ;
 
         NSData *candidateData = [self runUnzipDataForIPA:ipaPath entry:entry];
         NSDictionary *candidateInfo = candidateData.length > 0 ? [NSPropertyListSerialization propertyListWithData:candidateData options:NSPropertyListImmutable format:NULL error:nil] : nil;
+        if (![candidateInfo isKindOfClass:[NSDictionary class]]) continue;
+
+        NSString *packageType = [candidateInfo[@"CFBundlePackageType"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundlePackageType"] : nil;
         NSString *candidateExecutable = [candidateInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? candidateInfo[@"CFBundleExecutable"] : nil;
+
+        if (packageType && ![packageType isEqualToString:@"APPL"]) continue;
         if (candidateExecutable.length == 0) continue;
 
         NSString *expectedExecutable = [[candidateRoot stringByAppendingPathComponent:candidateExecutable] lowercaseString];
@@ -103,11 +118,20 @@ extern char **environ;
             }
         }
         if (executableExists) {
-            if (appRootOut) *appRootOut = candidateRoot;
-            return entry;
+            BOOL hasAppTraits = (candidateInfo[@"UIRequiredDeviceCapabilities"] != nil ||
+                                 candidateInfo[@"CFBundleIconFiles"] != nil ||
+                                 candidateInfo[@"CFBundleIcons"] != nil);
+            if (hasAppTraits || !bestEntry) {
+                bestEntry = entry;
+                bestRoot = candidateRoot;
+            }
         }
     }
 
+    if (bestEntry) {
+        if (appRootOut) *appRootOut = bestRoot;
+        return bestEntry;
+    }
     if (appRootOut) *appRootOut = fallbackRoot;
     return fallbackEntry;
 }
