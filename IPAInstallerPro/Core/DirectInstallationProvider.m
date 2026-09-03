@@ -1225,6 +1225,13 @@ extern char **environ;
      NSString *fallbackRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"copyfile fallback into isolated staging" target:[NSString stringWithFormat:@"%@ -> %@", srcApp, stagedDest] input:@"COPYFILE_ALL|COPYFILE_RECURSIVE|COPYFILE_NOFOLLOW_SRC" transactionID:txnID];
      int rv = copyfile([srcApp UTF8String], [stagedDest UTF8String], NULL, COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW_SRC);
      copied = (rv == 0);
+     // FIX(iOS16+): Strip quarantine and other harmful xattrs that break rootless
+     if (copied) {
+         NSString *xattrPath = [self resolveExecutable:@"/usr/bin/xattr"];
+         if (xattrPath) {
+             [self runRoot:xattrPath args:@[@"-cr", stagedDest] opLog:nil recordID:nil];
+         }
+     }
      NSString *fallbackError = copied ? @"" : [NSString stringWithFormat:@"copyfile failed: rv=%d errno=%d", rv, errno];
      if (!copied) {
          NSError *e = nil;
@@ -1277,8 +1284,35 @@ extern char **environ;
  // make directories traversable, and keep regular resources non-executable.
  [self runRoot:self.chmodPath args:@[@"-R", @"u+rwX,go+rX", destApp] opLog:opLog recordID:rec10a];
 
- NSString *rec10b = [opLog beginPhase:OperationPhasePermission operation:@"chown -R root:wheel" target:destApp input:@"" transactionID:txnID];
- [self runRoot:self.chownPath args:@[@"-R", @"root:wheel", destApp] opLog:opLog recordID:rec10b];
+ // FIX(iOS16+): Ensure the main executable has +x (extracted IPAs often lose it)
+ NSString *infoPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
+ NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+ NSString *execName = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
+ if (execName.length > 0) {
+     NSString *execPath = [destApp stringByAppendingPathComponent:execName];
+     if ([[NSFileManager defaultManager] fileExistsAtPath:execPath]) {
+         NSString *rec10a_exec = [opLog beginPhase:OperationPhasePermission operation:@"chmod +x main executable" target:execPath input:@"+x" transactionID:txnID];
+         [self runRoot:self.chmodPath args:@[@"+x", execPath] opLog:opLog recordID:rec10a_exec];
+     }
+ }
+
+ // FIX(rootless): Detect correct uid:gid from an existing app in /Applications
+ // instead of hardcoding root:wheel (Palera1n uses 0:0 or 501:501 on some setups).
+ NSString *ownerSpec = @"root:wheel";
+ NSString *appsDir = [destApp stringByDeletingLastPathComponent];
+ NSArray *existingApps = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appsDir error:nil];
+ for (NSString *existing in existingApps) {
+     if ([existing hasSuffix:@".app"] && ![existing isEqualToString:[destApp lastPathComponent]]) {
+         NSString *existingPath = [appsDir stringByAppendingPathComponent:existing];
+         struct stat st;
+         if (stat([existingPath UTF8String], &st) == 0) {
+             ownerSpec = [NSString stringWithFormat:@"%u:%u", st.st_uid, st.st_gid];
+             break;
+         }
+     }
+ }
+ NSString *rec10b = [opLog beginPhase:OperationPhasePermission operation:@"chown -R" target:destApp input:ownerSpec transactionID:txnID];
+ [self runRoot:self.chownPath args:@[@"-R", ownerSpec, destApp] opLog:opLog recordID:rec10b];
 
  // Embedded framework binaries are executable code even when an IPA archive
  // preserved them as 0644. Set the execute bit only on Mach-O files; never
