@@ -185,9 +185,57 @@ extern char **environ;
         return nil;
     }
 
+    // FIX(wildcard): unzip -p Payload/*/Info.plist extracts ALL matching files
+    // concatenated, corrupting data when IPA contains WatchKit/AppClip extensions.
+    // Step 1: List archive contents to find the exact path of the MAIN app's Info.plist.
     NSString *cmd = @"/usr/bin/unzip";
-    NSArray<NSString *> *args = @[@"-p", path, @"Payload/*/Info.plist"];
-    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd arguments:args timeout:60.0];
+    CommandResult *listResult = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-l", path] timeout:30.0];
+    NSString *exactInfoPlistEntry = nil;
+    if (listResult.success) {
+        NSString *listing = listResult.stdoutText;
+        NSArray<NSString *> *lines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        NSString *bestEntry = nil;
+        for (NSString *rawLine in lines) {
+            NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (entry.length == 0) continue;
+            NSString *lower = entry.lowercaseString;
+            if (![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
+            NSArray<NSString *> *components = [entry pathComponents];
+            if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+            // Prefer main app (CFBundlePackageType == APPL) over extensions
+            bestEntry = entry;
+            // If we can peek at this plist without extracting, do so
+            CommandResult *peekResult = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                                         arguments:@[@"-p", path, entry]
+                                                                           timeout:15.0];
+            NSData *peekData = peekResult.stdoutData;
+            if (peekData.length > 0) {
+                NSDictionary *peekInfo = [NSPropertyListSerialization propertyListWithData:peekData
+                                                                                     options:NSPropertyListImmutable
+                                                                                      format:NULL
+                                                                                       error:nil];
+                if ([peekInfo isKindOfClass:[NSDictionary class]]) {
+                    NSString *packageType = [peekInfo[@"CFBundlePackageType"] isKindOfClass:[NSString class]] ? peekInfo[@"CFBundlePackageType"] : nil;
+                    if ([packageType isEqualToString:@"APPL"]) {
+                        exactInfoPlistEntry = entry;
+                        break; // Found main app — stop searching
+                    }
+                }
+            }
+        }
+        if (!exactInfoPlistEntry && bestEntry) exactInfoPlistEntry = bestEntry;
+    }
+
+    if (!exactInfoPlistEntry) {
+        // Fallback to wildcard only if listing failed (should be rare)
+        exactInfoPlistEntry = @"Payload/*/Info.plist";
+        [[Logger sharedLogger] warning:@"IPAValidator: could not determine exact Info.plist path, falling back to wildcard"];
+    }
+
+    // Step 2: Extract the SINGLE exact Info.plist
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                           arguments:@[@"-p", path, exactInfoPlistEntry]
+                                                             timeout:60.0];
 
     if (!result.success) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: unzip failed | category=%@ | exit=%d | stderr=%@",
