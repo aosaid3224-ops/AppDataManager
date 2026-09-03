@@ -1,6 +1,6 @@
 //
 //  CommandResult.m
-//  IPAInstallerPro — Commit 1: Process Execution Abstraction
+//  IPAInstallerPro — Commit 2: Binary-safe output support
 //
 
 #import "CommandResult.h"
@@ -14,6 +14,8 @@
                          spawnError:(int)spawnError
                          stdoutText:(NSString *)stdoutText
                          stderrText:(NSString *)stderrText
+                         stdoutData:(NSData *)stdoutData
+                         stderrData:(NSData *)stderrData
                            duration:(NSTimeInterval)duration
                            timedOut:(BOOL)timedOut {
     self = [super init];
@@ -25,6 +27,8 @@
         _spawnError = spawnError;
         _stdoutText = [stdoutText copy] ?: @"";
         _stderrText = [stderrText copy] ?: @"";
+        _stdoutData = [stdoutData copy] ?: [NSData data];
+        _stderrData = [stderrData copy] ?: [NSData data];
         _duration = duration;
         _timedOut = timedOut;
         _success = (spawnError == 0 && !timedOut && exitCode == 0);
@@ -42,7 +46,8 @@
     d[@"spawnError"] = @(self.spawnError);
     d[@"timedOut"] = @(self.timedOut);
     d[@"durationMs"] = @(round(self.duration * 1000.0));
-    // stdout/stderr omitted from lightweight diagnostics; callers may add them if needed.
+    d[@"stdoutBytes"] = @(self.stdoutData.length);
+    d[@"stderrBytes"] = @(self.stderrData.length);
     return d;
 }
 
@@ -62,9 +67,10 @@
 }
 
 - (NSString *)description {
-    return [NSString stringWithFormat:@"<CommandResult: %@ | exit=%d signal=%d spawnErr=%d timedOut=%@ duration=%.3fs success=%@>",
+    return [NSString stringWithFormat:@"<CommandResult: %@ | exit=%d signal=%d spawnErr=%d timedOut=%@ duration=%.3fs success=%@ stdoutBytes=%lu stderrBytes=%lu>",
             self.commandPath.lastPathComponent, self.exitCode, self.signalNumber, self.spawnError,
-            self.timedOut ? @"YES" : @"NO", self.duration, self.success ? @"YES" : @"NO"];
+            self.timedOut ? @"YES" : @"NO", self.duration, self.success ? @"YES" : @"NO",
+            (unsigned long)self.stdoutData.length, (unsigned long)self.stderrData.length];
 }
 
 @end
