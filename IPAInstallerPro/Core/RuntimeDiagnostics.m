@@ -437,7 +437,10 @@
 }
 
 - (ProcessInfo *)findProcessMatchingBundleID:(NSString *)bundleID exeName:(NSString *)exeName {
-    NSString *psOutput = [self runCmdOutput:@"/var/jb/usr/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
+    // FIX(rootless): Use ExecutableValidator to find ps dynamically instead of hardcoding /var/jb
+    NSString *psPath = [[ExecutableValidator sharedValidator] findExecutableNamed:@"ps"];
+    NSString *psOutput = nil;
+    if (psPath) psOutput = [self runCmdOutput:psPath args:@[@"-eo", @"pid,uid,gid,comm"]];
     if (!psOutput) psOutput = [self runCmdOutput:@"/bin/ps" args:@[@"-eo", @"pid,uid,gid,comm"]];
     if (!psOutput) return nil;
 
