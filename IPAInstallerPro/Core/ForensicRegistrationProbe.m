@@ -130,10 +130,18 @@ extern char **environ;
     if (workspaceClass && [workspaceClass respondsToSelector:@selector(defaultWorkspace)]) {
         @try { workspace = [workspaceClass performSelector:@selector(defaultWorkspace)]; } @catch (__unused NSException *exception) { workspace = nil; }
     }
-    if (workspace && [workspace respondsToSelector:@selector(allInstalledApplications)]) {
+    // FIX(iOS16+): allInstalledApplications is deprecated/removed on iOS 16+.
+    // Use allApplications instead for cross-version compatibility.
+    SEL allAppsSel = nil;
+    if (@available(iOS 16.0, *)) {
+        allAppsSel = @selector(allApplications);
+    } else {
+        allAppsSel = @selector(allInstalledApplications);
+    }
+    if (workspace && [workspace respondsToSelector:allAppsSel]) {
         facts[@"workspaceEnumerationSupported"] = @YES;
         @try {
-            NSArray *apps = [workspace performSelector:@selector(allInstalledApplications)];
+            NSArray *apps = [workspace performSelector:allAppsSel];
             for (id app in apps) {
                 NSString *candidateID = nil;
                 @try { candidateID = [app performSelector:@selector(bundleIdentifier)]; } @catch (__unused NSException *exception) { candidateID = nil; }
