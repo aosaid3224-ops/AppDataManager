@@ -20,6 +20,7 @@
 #import "SigningTarget.h"
 #import "EntitlementSet.h"
 #import "SignatureAnalyzer.h"
+#import "ExecutableValidator.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <mach-o/loader.h>
