@@ -1,21 +1,23 @@
 //
 //  CommandResult.h
-//  IPAInstallerPro — Commit 1: Process Execution Abstraction
+//  IPAInstallerPro — Commit 2: Binary-safe output support
 //
 //  Unified result model for every external command execution.
-//  No UI logic. No state machine. Pure data.
+//  Now preserves raw NSData for binary-safe callers (e.g. plist extraction).
 //
 
 #import <Foundation/Foundation.h>
 
 @interface CommandResult : NSObject
 
-@property (nonatomic, assign, readonly) BOOL success;           // exit code == 0 AND no spawn error
-@property (nonatomic, assign, readonly) int exitCode;           // WEXITSTATUS(status) if WIFEXITED
-@property (nonatomic, assign, readonly) int signalNumber;       // WTERMSIG(status) if WIFSIGNALED
-@property (nonatomic, assign, readonly) int spawnError;         // errno if posix_spawn failed (0 = OK)
+@property (nonatomic, assign, readonly) BOOL success;
+@property (nonatomic, assign, readonly) int exitCode;
+@property (nonatomic, assign, readonly) int signalNumber;
+@property (nonatomic, assign, readonly) int spawnError;
 @property (nonatomic, copy, readonly) NSString *stdoutText;
 @property (nonatomic, copy, readonly) NSString *stderrText;
+@property (nonatomic, copy, readonly) NSData *stdoutData;
+@property (nonatomic, copy, readonly) NSData *stderrData;
 @property (nonatomic, assign, readonly) NSTimeInterval duration;
 @property (nonatomic, assign, readonly) BOOL timedOut;
 @property (nonatomic, copy, readonly) NSString *commandPath;
@@ -28,13 +30,12 @@
                          spawnError:(int)spawnError
                          stdoutText:(NSString *)stdoutText
                          stderrText:(NSString *)stderrText
+                         stdoutData:(NSData *)stdoutData
+                         stderrData:(NSData *)stderrData
                            duration:(NSTimeInterval)duration
                            timedOut:(BOOL)timedOut;
 
-/// Diagnostic snapshot for logging. Never contains sensitive data.
 - (NSDictionary *)diagnosticDictionary;
-
-/// Human-readable classification for error reporting.
 - (NSString *)failureCategory;
 
 @end
