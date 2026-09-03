@@ -1,3 +1,15 @@
+//
+//  IPAInstallViewController.m
+//  IPAInstallerPro — Commit 2: Adaptive layout for all iOS versions
+//
+//  FIXES:
+//  1. Replaced fixed-frame layout in viewDidLoad with layoutSubviews recalculation.
+//     On iOS 16+ view bounds are not final in viewDidLoad (Dynamic Island, rotation, multitasking).
+//  2. Wrapped content in UIScrollView to prevent clipping on small screens (iPhone SE, iOS 16).
+//  3. All labels now use autoresizingMask for width flexibility.
+//  4. Safe-area insets respected for notched devices.
+//
+
 #import "IPAInstallViewController.h"
 #import "InstallationProgressViewController.h"
 #import "Core/InstallationEngine.h"
@@ -9,6 +21,8 @@
 
 @interface IPAInstallViewController ()
 @property (nonatomic, strong) IPAExtractedInfo *ipaInfo;
+@property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIImageView *iconView;
 @property (nonatomic, strong) UILabel *nameLabel;
 @property (nonatomic, strong) UILabel *detailLabel;
@@ -20,6 +34,7 @@
 @property (nonatomic, assign) BOOL isValid;
 @property (nonatomic, strong) UISwitch *multiInstanceSwitch;
 @property (nonatomic, strong) UILabel *multiInstanceLabel;
+@property (nonatomic, strong) NSMutableArray<UILabel *> *detailValueLabels;
 @end
 
 @implementation IPAInstallViewController
@@ -28,6 +43,7 @@
     self = [super init];
     if (self) {
         _ipaInfo = info;
+        _detailValueLabels = [NSMutableArray array];
     }
     return self;
 }
@@ -36,18 +52,27 @@
     [super viewDidLoad];
     self.title = @"تثبيت IPA";
     self.view.backgroundColor = [IPTheme backgroundColor];
-
     [self setupViews];
     [self validateIPA];
 }
 
-- (void)setupViews {
-    CGFloat margin = 20;
-    CGFloat y = 20;
-    CGFloat w = self.view.bounds.size.width;
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self layoutContent];
+}
 
-    // Icon
-    self.iconView = [[UIImageView alloc] initWithFrame:CGRectMake((w - 90) / 2, y, 90, 90)];
+- (void)setupViews {
+    self.scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
+    self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.scrollView.alwaysBounceVertical = YES;
+    self.scrollView.showsVerticalScrollIndicator = YES;
+    [self.view addSubview:self.scrollView];
+
+    self.contentView = [[UIView alloc] initWithFrame:self.scrollView.bounds];
+    self.contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.scrollView addSubview:self.contentView];
+
+    self.iconView = [[UIImageView alloc] initWithFrame:CGRectZero];
     self.iconView.layer.cornerRadius = 20;
     self.iconView.layer.masksToBounds = YES;
     self.iconView.contentMode = UIViewContentModeScaleAspectFit;
@@ -58,41 +83,35 @@
     } else {
         self.iconView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:0.3 alpha:1.0]];
     }
-    [self.view addSubview:self.iconView];
+    [self.contentView addSubview:self.iconView];
 
-    y += 110;
-
-    // Name
-    self.nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 30)];
+    self.nameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.nameLabel.text = self.ipaInfo.displayName ?: self.ipaInfo.name;
     self.nameLabel.textColor = [UIColor whiteColor];
     self.nameLabel.font = [UIFont systemFontOfSize:24 weight:UIFontWeightBold];
     self.nameLabel.textAlignment = NSTextAlignmentCenter;
-    [self.view addSubview:self.nameLabel];
+    self.nameLabel.adjustsFontSizeToFitWidth = YES;
+    self.nameLabel.minimumScaleFactor = 0.7;
+    [self.contentView addSubview:self.nameLabel];
 
-    y += 38;
-
-    // Validation status
     self.validationSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    self.validationSpinner.center = CGPointMake(w / 2, y + 10);
     self.validationSpinner.color = [UIColor colorWithWhite:0.5 alpha:1.0];
     [self.validationSpinner startAnimating];
-    [self.view addSubview:self.validationSpinner];
+    [self.contentView addSubview:self.validationSpinner];
 
-    self.validationLabel = [[UILabel alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 22)];
+    self.validationLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.validationLabel.text = @"جاري التحقق...";
     self.validationLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
     self.validationLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     self.validationLabel.textAlignment = NSTextAlignmentCenter;
-    [self.view addSubview:self.validationLabel];
+    [self.contentView addSubview:self.validationLabel];
 
-    y += 50;
-
-    // Details container
-    self.detailsContainer = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 200)];
-    self.detailsContainer.backgroundColor = [IPTheme cardColor]; self.detailsContainer.layer.borderWidth = 0.7; self.detailsContainer.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.detailsContainer = [[UIView alloc] initWithFrame:CGRectZero];
+    self.detailsContainer.backgroundColor = [IPTheme cardColor];
+    self.detailsContainer.layer.borderWidth = 0.7;
+    self.detailsContainer.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     self.detailsContainer.layer.cornerRadius = 18;
-    [self.view addSubview:self.detailsContainer];
+    [self.contentView addSubview:self.detailsContainer];
 
     NSArray *details = @[
         @{@"title": @"معرّف الحزمة", @"value": self.ipaInfo.bundleID ?: @"غير معروف"},
@@ -102,40 +121,40 @@
         @{@"title": @"الفريق", @"value": self.ipaInfo.teamIdentifier ?: @"غير موقّع"},
     ];
 
-    CGFloat detailY = 14;
     for (NSDictionary *detail in details) {
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, detailY, 140, 22)];
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         titleLabel.text = detail[@"title"];
         titleLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
         titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         [self.detailsContainer addSubview:titleLabel];
 
-        UILabel *valueLabel = [[UILabel alloc] initWithFrame:CGRectMake(160, detailY, self.detailsContainer.bounds.size.width - 176, 22)];
+        UILabel *valueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         valueLabel.text = detail[@"value"];
         valueLabel.textColor = [UIColor whiteColor];
         valueLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         valueLabel.textAlignment = NSTextAlignmentRight;
+        valueLabel.adjustsFontSizeToFitWidth = YES;
+        valueLabel.minimumScaleFactor = 0.8;
         [self.detailsContainer addSubview:valueLabel];
-
-        detailY += 34;
+        [self.detailValueLabels addObject:valueLabel];
     }
 
-    y += 220;
-
-    // Isolated multi-instance option. OFF is the default and preserves the normal path.
-    UIView *multiRow = [[UIView alloc] initWithFrame:CGRectMake(margin, y, w - margin * 2, 54)];
-    multiRow.backgroundColor = [IPTheme cardColor]; multiRow.layer.borderWidth = 0.7; multiRow.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    UIView *multiRow = [[UIView alloc] initWithFrame:CGRectZero];
+    multiRow.backgroundColor = [IPTheme cardColor];
+    multiRow.layer.borderWidth = 0.7;
+    multiRow.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     multiRow.layer.cornerRadius = 16.0;
     multiRow.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    [self.view addSubview:multiRow];
-    self.multiInstanceLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 8, multiRow.bounds.size.width - 92, 38)];
-    self.multiInstanceLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.contentView addSubview:multiRow];
+
+    self.multiInstanceLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.multiInstanceLabel.text = @"نسخ متعددة";
     self.multiInstanceLabel.textColor = UIColor.whiteColor;
     self.multiInstanceLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     self.multiInstanceLabel.textAlignment = NSTextAlignmentRight;
     self.multiInstanceLabel.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
     [multiRow addSubview:self.multiInstanceLabel];
+
     self.multiInstanceSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
     self.multiInstanceSwitch.on = NO;
     self.multiInstanceSwitch.onTintColor = [IPTheme accentColor];
@@ -143,13 +162,8 @@
     self.multiInstanceSwitch.accessibilityLabel = @"نسخ متعددة";
     self.multiInstanceSwitch.accessibilityHint = @"عند التفعيل سيتم تجهيز نسخة مستقلة بمعرّف حزمة مختلف";
     [multiRow addSubview:self.multiInstanceSwitch];
-    self.multiInstanceSwitch.center = CGPointMake(multiRow.bounds.size.width - 48.0, multiRow.bounds.size.height / 2.0);
-    self.multiInstanceSwitch.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-    y += 70;
 
-    // Install button
     self.installButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.installButton.frame = CGRectMake(margin, y, w - margin * 2, 54);
     [self.installButton setTitle:@"تثبيت التطبيق" forState:UIControlStateNormal];
     [self.installButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.installButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
@@ -158,7 +172,51 @@
     self.installButton.enabled = NO;
     self.installButton.alpha = 0.5;
     [self.installButton addTarget:self action:@selector(installTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.installButton];
+    [self.contentView addSubview:self.installButton];
+}
+
+- (void)layoutContent {
+    CGFloat margin = 20;
+    CGFloat safeTop = self.view.safeAreaInsets.top;
+    CGFloat safeBottom = self.view.safeAreaInsets.bottom;
+    CGFloat w = self.view.bounds.size.width;
+    CGFloat y = safeTop + 20;
+
+    self.iconView.frame = CGRectMake((w - 90) / 2, y, 90, 90);
+    y += 110;
+
+    self.nameLabel.frame = CGRectMake(margin, y, w - margin * 2, 30);
+    y += 38;
+
+    self.validationSpinner.center = CGPointMake(w / 2, y + 10);
+    self.validationLabel.frame = CGRectMake(margin, y, w - margin * 2, 22);
+    y += 50;
+
+    CGFloat containerH = 14 + 5 * 34;
+    self.detailsContainer.frame = CGRectMake(margin, y, w - margin * 2, containerH);
+
+    NSArray *subviews = self.detailsContainer.subviews;
+    CGFloat detailY = 14;
+    for (NSUInteger i = 0; i < subviews.count; i += 2) {
+        UILabel *titleLabel = (UILabel *)subviews[i];
+        UILabel *valueLabel = (UILabel *)subviews[i+1];
+        titleLabel.frame = CGRectMake(16, detailY, 140, 22);
+        valueLabel.frame = CGRectMake(160, detailY, self.detailsContainer.bounds.size.width - 176, 22);
+        detailY += 34;
+    }
+    y += containerH + 20;
+
+    UIView *multiRow = self.multiInstanceSwitch.superview;
+    multiRow.frame = CGRectMake(margin, y, w - margin * 2, 54);
+    self.multiInstanceLabel.frame = CGRectMake(16, 8, multiRow.bounds.size.width - 92, 38);
+    self.multiInstanceSwitch.center = CGPointMake(multiRow.bounds.size.width - 48.0, multiRow.bounds.size.height / 2.0);
+    y += 70;
+
+    self.installButton.frame = CGRectMake(margin, y, w - margin * 2, 54);
+    y += 70;
+
+    self.contentView.frame = CGRectMake(0, 0, w, y);
+    self.scrollView.contentSize = CGSizeMake(w, y + safeBottom + 20);
 }
 
 - (void)validateIPA {
@@ -171,7 +229,6 @@
             self.isValid = result.isReadyForInstall;
 
             if (result.isReadyForInstall) {
-                // Check for missing dependencies
                 NSArray<NSString *> *missingLibs = [[IPAValidator sharedValidator] checkDependenciesAtAppPath:self.ipaInfo.appDirectoryPath];
                 if (missingLibs.count > 0) {
                     NSString *libsList = [missingLibs componentsJoinedByString:@", "];
@@ -179,9 +236,11 @@
                     self.validationLabel.textColor = [UIColor colorWithRed:1.0 green:0.6 blue:0.0 alpha:1.0];
                     self.installButton.enabled = YES;
                     self.installButton.alpha = 1.0;
-                    // Show alert about missing libraries
                     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"مكتبات مفقودة"
-                                                                                 message:[NSString stringWithFormat:@"التطبيق يحتاج هذه المكتبات:\n%@\n\nقد لا يعمل التطبيق بدونها. هل تريد الاستمرار؟", libsList]
+                                                                                 message:[NSString stringWithFormat:@"التطبيق يحتاج هذه المكتبات:
+%@
+
+قد لا يعمل التطبيق بدونها. هل تريد الاستمرار؟", libsList]
                                                                           preferredStyle:UIAlertControllerStyleAlert];
                     [alert addAction:[UIAlertAction actionWithTitle:@"تثبيت" style:UIAlertActionStyleDefault handler:nil]];
                     [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
@@ -231,7 +290,6 @@
         }];
         return;
     }
-    // OFF: this is the existing installation path, unchanged.
     [self presentProgressForIPAPath:self.ipaInfo.filePath name:self.ipaInfo.displayName ?: self.ipaInfo.name];
 }
 
