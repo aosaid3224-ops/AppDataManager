@@ -1227,7 +1227,7 @@ extern char **environ;
      copied = (rv == 0);
      // FIX(iOS16+): Strip quarantine and other harmful xattrs that break rootless
      if (copied) {
-         NSString *xattrPath = [self resolveExecutable:@"/usr/bin/xattr"];
+         NSString *xattrPath = [[ExecutableValidator sharedValidator] findExecutableNamed:@"xattr"];
          if (xattrPath) {
              [self runRoot:xattrPath args:@[@"-cr", stagedDest] opLog:nil recordID:nil];
          }
@@ -1285,9 +1285,9 @@ extern char **environ;
  [self runRoot:self.chmodPath args:@[@"-R", @"u+rwX,go+rX", destApp] opLog:opLog recordID:rec10a];
 
  // FIX(iOS16+): Ensure the main executable has +x (extracted IPAs often lose it)
- NSString *infoPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
- NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
- NSString *execName = [info[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? info[@"CFBundleExecutable"] : nil;
+ NSString *installedInfoPath = [destApp stringByAppendingPathComponent:@"Info.plist"];
+ NSDictionary *installedInfo = [NSDictionary dictionaryWithContentsOfFile:installedInfoPath];
+ NSString *execName = [installedInfo[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? installedInfo[@"CFBundleExecutable"] : nil;
  if (execName.length > 0) {
      NSString *execPath = [destApp stringByAppendingPathComponent:execName];
      if ([[NSFileManager defaultManager] fileExistsAtPath:execPath]) {
@@ -1299,11 +1299,11 @@ extern char **environ;
  // FIX(rootless): Detect correct uid:gid from an existing app in /Applications
  // instead of hardcoding root:wheel (Palera1n uses 0:0 or 501:501 on some setups).
  NSString *ownerSpec = @"root:wheel";
- NSString *appsDir = [destApp stringByDeletingLastPathComponent];
- NSArray *existingApps = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appsDir error:nil];
+ NSString *installedAppsDir = [destApp stringByDeletingLastPathComponent];
+ NSArray *existingApps = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:installedAppsDir error:nil];
  for (NSString *existing in existingApps) {
      if ([existing hasSuffix:@".app"] && ![existing isEqualToString:[destApp lastPathComponent]]) {
-         NSString *existingPath = [appsDir stringByAppendingPathComponent:existing];
+         NSString *existingPath = [installedAppsDir stringByAppendingPathComponent:existing];
          struct stat st;
          if (stat([existingPath UTF8String], &st) == 0) {
              ownerSpec = [NSString stringWithFormat:@"%u:%u", st.st_uid, st.st_gid];
