@@ -141,7 +141,8 @@ extern char **environ;
     if (workspace && [workspace respondsToSelector:allAppsSel]) {
         facts[@"workspaceEnumerationSupported"] = @YES;
         @try {
-            NSArray *apps = [workspace performSelector:allAppsSel];
+            IMP allAppsIMP = [workspace methodForSelector:allAppsSel];
+            NSArray *apps = allAppsIMP ? ((id (*)(id, SEL))allAppsIMP)(workspace, allAppsSel) : @[];
             for (id app in apps) {
                 NSString *candidateID = nil;
                 @try { candidateID = [app performSelector:@selector(bundleIdentifier)]; } @catch (__unused NSException *exception) { candidateID = nil; }
