@@ -297,7 +297,7 @@
         UIAlertController *strongForm = weakForm;
         NSString *requestedName = [strongForm.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         NSString *requestedID = [strongForm.textFields.lastObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSPredicate *validID = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"];
+        NSPredicate *validID = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"];
         if (requestedName.length == 0 || ![validID evaluateWithObject:requestedID] || [requestedID isEqualToString:self.appInfo.bundleID] || [[ApplicationManager sharedManager] appInfoForBundleID:requestedID] != nil) {
             UIAlertController *invalid = [UIAlertController alertControllerWithTitle:@"بيانات غير صالحة"
                 message:@"استخدم اسمًا غير فارغ وBundle ID بصيغة صحيحة ومختلفًا عن التطبيق الأصلي وغير مستخدم على الجهاز." preferredStyle:UIAlertControllerStyleAlert];
