@@ -1,6 +1,10 @@
 //
 //  ExecutableValidator.m
-//  IPAInstallerPro — Commit 3: Runtime Environment Discovery
+//  IPAInstallerPro — Commit 5: CoreTrust-aware ldid validation
+//
+//  FIX(iOS16+): validateLDID now verifies CoreTrust support by checking
+//  version string (procursus builds) or performing a live signing test.
+//  Old ldid (pre-2022) signs binaries that iOS 16+ rejects at runtime.
 //
 //  CHANGES:
 //  - buildSearchPathsForName: now consumes RuntimeEnvironment instead of hardcoding.
@@ -123,15 +127,49 @@
         CommandResult *vResult = [[ProcessRunner sharedRunner] runCommand:cap.resolvedPath
                                                                 arguments:@[@"-v"]
                                                                   timeout:5.0];
-        if (vResult.success || ([vResult.stdoutText containsString:@"ldid"] || [vResult.stderrText containsString:@"ldid"])) {
-            // ldid -v worked or produced ldid-related output
-            [[Logger sharedLogger] info:[NSString stringWithFormat:@"ExecutableValidator: ldid -v test passed at %@", cap.resolvedPath]];
+        NSString *versionOutput = [NSString stringWithFormat:@"%@ %@", vResult.stdoutText, vResult.stderrText];
+        BOOL looksLikeLDID = vResult.success ||
+                             [versionOutput containsString:@"ldid"] ||
+                             [versionOutput containsString:@"Usage"] ||
+                             [versionOutput containsString:@"usage"];
+
+        // FIX(iOS16+): Verify ldid supports CoreTrust (procursus build or v2.1.5+)
+        // Old ldid (pre-2022) signs binaries that iOS 16+ rejects via CoreTrust.
+        BOOL supportsCoreTrust = NO;
+        if (looksLikeLDID) {
+            supportsCoreTrust = [versionOutput containsString:@"procursus"] ||
+                                [versionOutput containsString:@"2.1.5"] ||
+                                [versionOutput containsString:@"2.1.6"] ||
+                                [versionOutput containsString:@"2.1.7"] ||
+                                [versionOutput containsString:@"2.2"] ||
+                                [versionOutput containsString:@"2.3"];
+            // If version string is ambiguous, test actual signing capability
+            if (!supportsCoreTrust) {
+                NSString *tmpFile = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ldid_test_%@", [[NSUUID UUID] UUIDString]]];
+                [@"#!/bin/sh\nexit 0\n" writeToFile:tmpFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                CommandResult *signTest = [[ProcessRunner sharedRunner] runCommand:cap.resolvedPath
+                                                                         arguments:@[@"-S", tmpFile]
+                                                                           timeout:5.0];
+                supportsCoreTrust = signTest.success;
+                [[NSFileManager defaultManager] removeItemAtPath:tmpFile error:nil];
+            }
+        }
+
+        if (looksLikeLDID && supportsCoreTrust) {
+            [[Logger sharedLogger] info:[NSString stringWithFormat:@"ExecutableValidator: ldid CoreTrust-ready at %@", cap.resolvedPath]];
+            return cap;
+        }
+
+        if (looksLikeLDID && !supportsCoreTrust) {
+            [cap markStatus:ExecutableCapabilityStatusInvalidOutput
+               errorMessage:@"ldid موجود لكن إصدارته قديمة ولا تدعم CoreTrust المطلوب في iOS 16+"];
+            [[Logger sharedLogger] warning:[NSString stringWithFormat:@"ExecutableValidator: ldid TOO_OLD for iOS16+ at %@", cap.resolvedPath]];
             return cap;
         }
 
         // Test 2: ldid without args (should print usage to stderr)
         CommandResult *bareResult = [[ProcessRunner sharedRunner] runCommand:cap.resolvedPath
-                                                                   arguments:@[]
+                                                                   arguments:@[@]
                                                                      timeout:5.0];
         NSString *combined = [NSString stringWithFormat:@"%@ %@", bareResult.stdoutText, bareResult.stderrText];
         if ([combined containsString:@"ldid"] || [combined containsString:@"Usage"] || [combined containsString:@"usage"]) {
@@ -148,7 +186,6 @@
 
     return cap;
 }
-
 - (ExecutableCapability *)validateUnzip {
     return [self validateExecutableNamed:@"unzip"];
 }
