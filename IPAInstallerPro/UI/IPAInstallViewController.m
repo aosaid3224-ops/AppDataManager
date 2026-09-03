@@ -237,10 +237,7 @@
                     self.installButton.enabled = YES;
                     self.installButton.alpha = 1.0;
                     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"مكتبات مفقودة"
-                                                                                 message:[NSString stringWithFormat:@"التطبيق يحتاج هذه المكتبات:
-%@
-
-قد لا يعمل التطبيق بدونها. هل تريد الاستمرار؟", libsList]
+                                                                                 message:[NSString stringWithFormat:@"التطبيق يحتاج هذه المكتبات:\n%@\n\nقد لا يعمل التطبيق بدونها. هل تريد الاستمرار؟", libsList]
                                                                           preferredStyle:UIAlertControllerStyleAlert];
                     [alert addAction:[UIAlertAction actionWithTitle:@"تثبيت" style:UIAlertActionStyleDefault handler:nil]];
                     [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
