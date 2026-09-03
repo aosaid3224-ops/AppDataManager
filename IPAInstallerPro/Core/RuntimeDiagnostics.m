@@ -9,6 +9,7 @@
 #import "RuntimeDiagnostics.h"
 #import "OperationLog.h"
 #import "RootlessManager.h"
+#import "ExecutableValidator.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <sys/types.h>
