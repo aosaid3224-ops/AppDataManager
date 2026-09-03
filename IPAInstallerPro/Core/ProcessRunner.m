@@ -1,6 +1,7 @@
 //
 //  ProcessRunner.m
-//  IPAInstallerPro — Commit 1: Process Execution Abstraction
+//  IPAInstallerPro — Commit 2: Binary-safe output support
+//  FIX: stdoutData/stderrData now passed to CommandResult for binary-safe consumers.
 //
 
 #import "ProcessRunner.h"
@@ -50,6 +51,8 @@ extern char **environ;
                                                  spawnError:ENOENT
                                                  stdoutText:@""
                                                  stderrText:@""
+                                                 stdoutData:[NSData data]
+                                                 stderrData:[NSData data]
                                                    duration:0.0
                                                    timedOut:NO];
     }
@@ -66,6 +69,8 @@ extern char **environ;
                                                  spawnError:errno
                                                  stdoutText:@""
                                                  stderrText:@""
+                                                 stdoutData:[NSData data]
+                                                 stderrData:[NSData data]
                                                    duration:0.0
                                                    timedOut:NO];
     }
@@ -106,6 +111,8 @@ extern char **environ;
                                                  spawnError:spawnErr
                                                  stdoutText:@""
                                                  stderrText:@""
+                                                 stdoutData:[NSData data]
+                                                 stderrData:[NSData data]
                                                    duration:[[NSDate date] timeIntervalSinceDate:start]
                                                    timedOut:NO];
     }
@@ -198,6 +205,8 @@ extern char **environ;
                                                               spawnError:0
                                                               stdoutText:stdoutStr
                                                               stderrText:stderrStr
+                                                              stdoutData:[stdoutData copy]
+                                                              stderrData:[stderrData copy]
                                                                 duration:duration
                                                                 timedOut:timedOut];
 
