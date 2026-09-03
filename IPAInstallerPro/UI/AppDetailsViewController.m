@@ -1,3 +1,11 @@
+//
+//  AppDetailsViewController.m
+//  IPAInstallerPro — Commit 2: Adaptive layout for all iOS versions
+//
+//  FIX: Replaced fixed-frame layout with scrollView + viewDidLayoutSubviews.
+//  Cards and buttons now adapt to screen width, safe area, and Dynamic Island.
+//
+
 #import "AppDetailsViewController.h"
 #import "Core/InstallationEngine.h"
 #import "Core/IPAExportManager.h"
@@ -10,20 +18,23 @@
 @interface AppDetailsViewController ()
 @property (nonatomic, strong) AppInfo *appInfo;
 @property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UIImageView *iconView;
 @property (nonatomic, strong) UILabel *nameLabel;
 @property (nonatomic, strong) UILabel *bundleLabel;
+@property (nonatomic, strong) UIView *card;
 @property (nonatomic, strong) UIButton *openButton;
 @property (nonatomic, strong) UIButton *exportButton;
 @property (nonatomic, strong) UIButton *cloneButton;
 @property (nonatomic, strong) UIButton *deleteButton;
+@property (nonatomic, strong) NSMutableArray<UILabel *> *cardValueLabels;
 @end
 
 @implementation AppDetailsViewController
 
 - (instancetype)initWithAppInfo:(AppInfo *)appInfo {
     self = [super init];
-    if (self) { _appInfo = appInfo; }
+    if (self) { _appInfo = appInfo; _cardValueLabels = [NSMutableArray array]; }
     return self;
 }
 
@@ -34,15 +45,22 @@
     [self setupViews];
 }
 
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self layoutContent];
+}
+
 - (void)setupViews {
-    CGFloat w = self.view.bounds.size.width;
-    CGFloat y = 20;
     self.scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.scrollView.alwaysBounceVertical = YES;
     [self.view addSubview:self.scrollView];
 
-    self.iconView = [[UIImageView alloc] initWithFrame:CGRectMake((w - 80) / 2, y, 80, 80)];
+    self.contentView = [[UIView alloc] initWithFrame:self.scrollView.bounds];
+    self.contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.scrollView addSubview:self.contentView];
+
+    self.iconView = [[UIImageView alloc] initWithFrame:CGRectZero];
     self.iconView.layer.cornerRadius = 18;
     self.iconView.layer.masksToBounds = YES;
     self.iconView.contentMode = UIViewContentModeScaleAspectFit;
@@ -52,21 +70,23 @@
     } else {
         self.iconView.image = [[UIImage systemImageNamed:@"app"] imageWithTintColor:[UIColor colorWithWhite:0.3 alpha:1.0]];
     }
-    [self.scrollView addSubview:self.iconView];
-    y += 100;
+    [self.contentView addSubview:self.iconView];
 
-    self.nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w - 40, 28)];
+    self.nameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.nameLabel.text = self.appInfo.name;
     self.nameLabel.textColor = [UIColor whiteColor];
     self.nameLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     self.nameLabel.textAlignment = NSTextAlignmentCenter;
-    [self.scrollView addSubview:self.nameLabel];
-    y += 36;
+    self.nameLabel.adjustsFontSizeToFitWidth = YES;
+    self.nameLabel.minimumScaleFactor = 0.7;
+    [self.contentView addSubview:self.nameLabel];
 
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(20, y, w - 40, 160)];
-    card.backgroundColor = [IPTheme cardColor]; card.layer.borderWidth = 0.7; card.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    card.layer.cornerRadius = 18;
-    [self.scrollView addSubview:card];
+    self.card = [[UIView alloc] initWithFrame:CGRectZero];
+    self.card.backgroundColor = [IPTheme cardColor];
+    self.card.layer.borderWidth = 0.7;
+    self.card.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.card.layer.cornerRadius = 18;
+    [self.contentView addSubview:self.card];
 
     NSArray *details = @[
         @{@"title": @"معرّف الحزمة", @"value": self.appInfo.bundleID},
@@ -74,68 +94,109 @@
         @{@"title": @"النوع", @"value": self.appInfo.isSystemApp ? @"نظام" : @"مستخدم"},
         @{@"title": @"الحماية", @"value": self.appInfo.isProtected ? @"محمي ✓" : @"غير محمي"},
     ];
-    CGFloat dy = 14;
     for (NSDictionary *d in details) {
-        UILabel *tl = [[UILabel alloc] initWithFrame:CGRectMake(16, dy, 140, 22)];
+        UILabel *tl = [[UILabel alloc] initWithFrame:CGRectZero];
         tl.text = d[@"title"];
         tl.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
         tl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        [card addSubview:tl];
-        UILabel *vl = [[UILabel alloc] initWithFrame:CGRectMake(160, dy, card.bounds.size.width - 176, 22)];
+        [self.card addSubview:tl];
+
+        UILabel *vl = [[UILabel alloc] initWithFrame:CGRectZero];
         vl.text = d[@"value"];
         vl.textColor = [UIColor whiteColor];
         vl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         vl.textAlignment = NSTextAlignmentRight;
-        [card addSubview:vl];
-        dy += 34;
+        vl.adjustsFontSizeToFitWidth = YES;
+        vl.minimumScaleFactor = 0.8;
+        [self.card addSubview:vl];
+        [self.cardValueLabels addObject:vl];
     }
-    y += 180;
 
     self.openButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.openButton.frame = CGRectMake(20, y, w - 40, 52);
     [self.openButton setTitle:@"فتح التطبيق" forState:UIControlStateNormal];
     [self.openButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.openButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     self.openButton.backgroundColor = [IPTheme accentColor];
     self.openButton.layer.cornerRadius = 17;
     [self.openButton addTarget:self action:@selector(openTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.scrollView addSubview:self.openButton];
-    y += 68;
+    [self.contentView addSubview:self.openButton];
 
     self.exportButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.exportButton.frame = CGRectMake(20, y, w - 40, 52);
     [self.exportButton setTitle:@"استخراج IPA" forState:UIControlStateNormal];
     [self.exportButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.exportButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.exportButton.backgroundColor = [IPTheme secondaryCardColor]; self.exportButton.layer.borderWidth = 0.7; self.exportButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.exportButton.backgroundColor = [IPTheme secondaryCardColor];
+    self.exportButton.layer.borderWidth = 0.7;
+    self.exportButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     self.exportButton.layer.cornerRadius = 17;
     [self.exportButton addTarget:self action:@selector(exportTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.scrollView addSubview:self.exportButton];
-    y += 68;
+    [self.contentView addSubview:self.exportButton];
 
     self.cloneButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.cloneButton.frame = CGRectMake(20, y, w - 40, 52);
     [self.cloneButton setTitle:@"تكرار التطبيق" forState:UIControlStateNormal];
     [self.cloneButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.cloneButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.cloneButton.backgroundColor = [IPTheme secondaryCardColor]; self.cloneButton.layer.borderWidth = 0.7; self.cloneButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.cloneButton.backgroundColor = [IPTheme secondaryCardColor];
+    self.cloneButton.layer.borderWidth = 0.7;
+    self.cloneButton.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
     self.cloneButton.layer.cornerRadius = 17;
     [self.cloneButton addTarget:self action:@selector(cloneTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [self.scrollView addSubview:self.cloneButton];
-    y += 68;
+    [self.contentView addSubview:self.cloneButton];
 
     if (!self.appInfo.isProtected) {
         self.deleteButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        self.deleteButton.frame = CGRectMake(20, y, w - 40, 52);
         [self.deleteButton setTitle:@"حذف التطبيق" forState:UIControlStateNormal];
         [self.deleteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         self.deleteButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
         self.deleteButton.backgroundColor = [UIColor colorWithRed:0.8 green:0.25 blue:0.25 alpha:1.0];
         self.deleteButton.layer.cornerRadius = 17;
         [self.deleteButton addTarget:self action:@selector(deleteTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [self.scrollView addSubview:self.deleteButton];
+        [self.contentView addSubview:self.deleteButton];
     }
-    self.scrollView.contentSize = CGSizeMake(w, y + 120);
+}
+
+- (void)layoutContent {
+    CGFloat w = self.view.bounds.size.width;
+    CGFloat margin = 20;
+    CGFloat safeTop = self.view.safeAreaInsets.top;
+    CGFloat safeBottom = self.view.safeAreaInsets.bottom;
+    CGFloat y = safeTop + 20;
+
+    self.iconView.frame = CGRectMake((w - 80) / 2, y, 80, 80);
+    y += 100;
+
+    self.nameLabel.frame = CGRectMake(margin, y, w - margin * 2, 28);
+    y += 36;
+
+    CGFloat cardH = 14 + 4 * 34;
+    self.card.frame = CGRectMake(margin, y, w - margin * 2, cardH);
+    CGFloat dy = 14;
+    NSArray *subviews = self.card.subviews;
+    for (NSUInteger i = 0; i < subviews.count; i += 2) {
+        UILabel *tl = (UILabel *)subviews[i];
+        UILabel *vl = (UILabel *)subviews[i+1];
+        tl.frame = CGRectMake(16, dy, 140, 22);
+        vl.frame = CGRectMake(160, dy, self.card.bounds.size.width - 176, 22);
+        dy += 34;
+    }
+    y += cardH + 20;
+
+    self.openButton.frame = CGRectMake(margin, y, w - margin * 2, 52);
+    y += 68;
+
+    self.exportButton.frame = CGRectMake(margin, y, w - margin * 2, 52);
+    y += 68;
+
+    self.cloneButton.frame = CGRectMake(margin, y, w - margin * 2, 52);
+    y += 68;
+
+    if (self.deleteButton) {
+        self.deleteButton.frame = CGRectMake(margin, y, w - margin * 2, 52);
+        y += 68;
+    }
+
+    self.contentView.frame = CGRectMake(0, 0, w, y);
+    self.scrollView.contentSize = CGSizeMake(w, y + safeBottom + 20);
 }
 
 - (void)openTapped:(UIButton *)sender {
@@ -236,7 +297,7 @@
         UIAlertController *strongForm = weakForm;
         NSString *requestedName = [strongForm.textFields.firstObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         NSString *requestedID = [strongForm.textFields.lastObject.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        NSPredicate *validID = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"];
+        NSPredicate *validID = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", @"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"];
         if (requestedName.length == 0 || ![validID evaluateWithObject:requestedID] || [requestedID isEqualToString:self.appInfo.bundleID] || [[ApplicationManager sharedManager] appInfoForBundleID:requestedID] != nil) {
             UIAlertController *invalid = [UIAlertController alertControllerWithTitle:@"بيانات غير صالحة"
                 message:@"استخدم اسمًا غير فارغ وBundle ID بصيغة صحيحة ومختلفًا عن التطبيق الأصلي وغير مستخدم على الجهاز." preferredStyle:UIAlertControllerStyleAlert];
