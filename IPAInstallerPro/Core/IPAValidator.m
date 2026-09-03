@@ -1,11 +1,14 @@
 //
 //  IPAValidator.m
-//  IPAInstallerPro — Commit 1: Process Execution Abstraction
+//  IPAInstallerPro — Commit 2: Binary-safe validation & Mach-O header check
 //
-//  CHANGES:
-//  - Replaced raw posix_spawn/waitpid in runCmdOutput: with ProcessRunner.
-//  - Exit code, signal, stderr, and duration are now captured.
-//  - No public API changes.
+//  FIXES:
+//  1. extractInfoPlistFromIPA now uses stdoutData (NSData) instead of stdoutText (NSString).
+//     Previously binary plists were corrupted when forced through UTF-8 string conversion.
+//  2. validateExecutableArchitecture now reads Mach-O magic bytes directly instead of
+//     relying on /usr/bin/file which is missing on many rootless setups.
+//  3. validateIPAAtPath caches the extracted Info.plist path to avoid double extraction.
+//  4. All temp directories are cleaned up synchronously on failure paths.
 //
 
 #import "IPAValidator.h"
@@ -21,6 +24,10 @@
 
 extern char **environ;
 
+@interface IPAValidator ()
+@property (nonatomic, strong) NSCache<NSString *, NSString *> *plistPathCache;
+@end
+
 @implementation IPAValidationResult
 @end
 
@@ -31,6 +38,15 @@ extern char **environ;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{ shared = [[self alloc] init]; });
     return shared;
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _plistPathCache = [[NSCache alloc] init];
+        _plistPathCache.countLimit = 20;
+    }
+    return self;
 }
 
 #pragma mark - Public API
@@ -65,78 +81,52 @@ extern char **environ;
 }
 
 - (NSArray<NSString *> *)checkDependenciesAtAppPath:(NSString *)appPath {
-    // Dependency inspection is optional at validation time; installation resolves system libraries.
     return @[];
 }
 
 - (BOOL)validateIPAAtPath:(NSString *)path error:(NSError **)error {
-    // Check file exists
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:1 userInfo:@{NSLocalizedDescriptionKey: @"IPA file not found"}];
-        }
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:1 userInfo:@{NSLocalizedDescriptionKey: @"IPA file not found"}];
         return NO;
     }
-
-    // Check file size
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
     unsigned long long fileSize = [attrs[NSFileSize] unsignedLongLongValue];
     if (fileSize == 0) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:2 userInfo:@{NSLocalizedDescriptionKey: @"IPA file is empty"}];
-        }
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:2 userInfo:@{NSLocalizedDescriptionKey: @"IPA file is empty"}];
         return NO;
     }
-
-    // Check if it's a valid zip file
     if (![self isValidZipFile:path]) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:3 userInfo:@{NSLocalizedDescriptionKey: @"Invalid IPA file format"}];
-        }
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:3 userInfo:@{NSLocalizedDescriptionKey: @"Invalid IPA file format"}];
         return NO;
     }
 
-    // Extract and validate Info.plist
-    NSString *infoPlist = [self extractInfoPlistFromIPA:path];
-    if (!infoPlist || infoPlist.length == 0) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:4 userInfo:@{NSLocalizedDescriptionKey: @"Could not extract Info.plist"}];
-        }
+    NSString *infoPlistPath = [self extractInfoPlistFromIPA:path];
+    if (!infoPlistPath || infoPlistPath.length == 0) {
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:4 userInfo:@{NSLocalizedDescriptionKey: @"Could not extract Info.plist"}];
         return NO;
     }
 
-    // Validate Info.plist content
-    NSData *plistData = [infoPlist dataUsingEncoding:NSUTF8StringEncoding];
-    if (!plistData) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:5 userInfo:@{NSLocalizedDescriptionKey: @"Invalid Info.plist content"}];
-        }
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlistPath];
+    if (!info) {
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:5 userInfo:@{NSLocalizedDescriptionKey: @"Invalid Info.plist content (binary plist may be corrupted)"}];
         return NO;
     }
 
-    // Check required fields
-    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlist];
     if (!info[@"CFBundleIdentifier"]) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Missing CFBundleIdentifier"}];
-        }
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:6 userInfo:@{NSLocalizedDescriptionKey: @"Missing CFBundleIdentifier"}];
         return NO;
     }
 
-    if (!info[@"CFBundleExecutable"]) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"IPAValidator" code:7 userInfo:@{NSLocalizedDescriptionKey: @"Missing CFBundleExecutable"}];
-        }
+    NSString *execName = info[@"CFBundleExecutable"];
+    if (!execName || ![execName isKindOfClass:[NSString class]] || execName.length == 0) {
+        if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:7 userInfo:@{NSLocalizedDescriptionKey: @"Missing CFBundleExecutable"}];
         return NO;
     }
 
-    // Validate executable architecture
-    NSString *execPath = [self executablePathForIPA:path];
+    NSString *execPath = [self executablePathForIPA:path usingInfoPlistPath:infoPlistPath];
     if (execPath) {
         if (![self validateExecutableArchitecture:execPath]) {
-            if (error) {
-                *error = [NSError errorWithDomain:@"IPAValidator" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Invalid executable architecture"}];
-            }
+            if (error) *error = [NSError errorWithDomain:@"IPAValidator" code:8 userInfo:@{NSLocalizedDescriptionKey: @"Invalid executable architecture"}];
             return NO;
         }
     }
@@ -146,22 +136,16 @@ extern char **environ;
 
 - (NSDictionary *)detailedValidationForIPA:(NSString *)path {
     NSMutableDictionary *results = [NSMutableDictionary dictionary];
-
-    // Basic checks
     results[@"exists"] = @([[NSFileManager defaultManager] fileExistsAtPath:path]);
-
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
     results[@"size"] = attrs[NSFileSize] ?: @0;
-
-    // Zip validation
     results[@"validZip"] = @([self isValidZipFile:path]);
 
-    // Info.plist
-    NSString *infoPlist = [self extractInfoPlistFromIPA:path];
-    results[@"hasInfoPlist"] = @(infoPlist != nil && infoPlist.length > 0);
+    NSString *infoPlistPath = [self extractInfoPlistFromIPA:path];
+    results[@"hasInfoPlist"] = @(infoPlistPath != nil && infoPlistPath.length > 0);
 
-    if (infoPlist) {
-        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlist];
+    if (infoPlistPath) {
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlistPath];
         results[@"bundleID"] = info[@"CFBundleIdentifier"] ?: @"";
         results[@"bundleName"] = info[@"CFBundleName"] ?: @"";
         results[@"version"] = info[@"CFBundleShortVersionString"] ?: @"";
@@ -169,8 +153,7 @@ extern char **environ;
         results[@"minimumOS"] = info[@"MinimumOSVersion"] ?: @"";
     }
 
-    // Check code signature
-    NSString *execPath = [self executablePathForIPA:path];
+    NSString *execPath = [self executablePathForIPA:path usingInfoPlistPath:infoPlistPath];
     if (execPath) {
         results[@"signatureValid"] = @([self validateCodeSignature:execPath]);
         results[@"architectureValid"] = @([self validateExecutableArchitecture:execPath]);
@@ -182,26 +165,26 @@ extern char **environ;
 #pragma mark - Private Methods
 
 - (BOOL)isValidZipFile:(NSString *)path {
-    // Check zip magic number
     NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
     if (!handle) return NO;
-
     NSData *header = [handle readDataOfLength:4];
     [handle closeFile];
-
     if (header.length < 4) return NO;
-
     const uint8_t *bytes = header.bytes;
-    // ZIP magic: 50 4B 03 04
     return (bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04);
 }
 
 - (NSString *)extractInfoPlistFromIPA:(NSString *)path {
-    // Create temporary directory
-    NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    [[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *cached = [self.plistPathCache objectForKey:path];
+    if (cached && [[NSFileManager defaultManager] fileExistsAtPath:cached]) return cached;
 
-    // Extract Info.plist using ProcessRunner (replaces raw posix_spawn)
+    NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    NSError *dirErr = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirErr]) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: failed to create temp dir: %@", dirErr.localizedDescription]];
+        return nil;
+    }
+
     NSString *cmd = @"/usr/bin/unzip";
     NSArray<NSString *> *args = @[@"-p", path, @"Payload/*/Info.plist"];
     CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd arguments:args timeout:60.0];
@@ -213,35 +196,44 @@ extern char **environ;
         return nil;
     }
 
-    NSString *infoPlist = result.stdoutText;
-    if (!infoPlist || infoPlist.length == 0) {
+    NSData *plistData = result.stdoutData;
+    if (!plistData || plistData.length == 0) {
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
         return nil;
     }
 
-    // Write to temp file for plist parsing
     NSString *tempPlist = [tempDir stringByAppendingPathComponent:@"Info.plist"];
-    [infoPlist writeToFile:tempPlist atomically:YES encoding:NSUTF8StringEncoding error:nil];
-
-    // Clean up temp dir after a delay
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+    if (![plistData writeToFile:tempPlist atomically:YES]) {
+        [[Logger sharedLogger] error:@"IPAValidator: failed to write plist data to temp file"];
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
+        return nil;
+    }
+
+    NSDictionary *testParse = [NSDictionary dictionaryWithContentsOfFile:tempPlist];
+    if (!testParse) {
+        [[Logger sharedLogger] error:@"IPAValidator: extracted plist does not parse as dictionary"];
+        [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
+        return nil;
+    }
+
+    [self.plistPathCache setObject:tempPlist forKey:path];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
+        [self.plistPathCache removeObjectForKey:path];
     });
 
     return tempPlist;
 }
 
-- (NSString *)executablePathForIPA:(NSString *)path {
-    NSString *infoPlist = [self extractInfoPlistFromIPA:path];
-    if (!infoPlist) return nil;
-
-    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlist];
+- (NSString *)executablePathForIPA:(NSString *)path usingInfoPlistPath:(NSString *)infoPlistPath {
+    if (!infoPlistPath) return nil;
+    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPlistPath];
     NSString *execName = info[@"CFBundleExecutable"];
     if (!execName) return nil;
 
-    // Extract the app bundle to find executable
     NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    [[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSError *dirErr = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirErr]) return nil;
 
     CommandResult *result = [[ProcessRunner sharedRunner] runCommand:@"/usr/bin/unzip"
                                                            arguments:@[@"-q", path, @"-d", tempDir]
@@ -260,7 +252,6 @@ extern char **environ;
             NSString *appPath = [payloadPath stringByAppendingPathComponent:item];
             NSString *execPath = [appPath stringByAppendingPathComponent:execName];
             if ([[NSFileManager defaultManager] fileExistsAtPath:execPath]) {
-                // Clean up after delay
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
                     [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
                 });
@@ -273,32 +264,39 @@ extern char **environ;
     return nil;
 }
 
+- (NSString *)executablePathForIPA:(NSString *)path {
+    NSString *infoPlistPath = [self extractInfoPlistFromIPA:path];
+    return [self executablePathForIPA:path usingInfoPlistPath:infoPlistPath];
+}
+
 - (BOOL)validateCodeSignature:(NSString *)path {
     CommandResult *result = [[ProcessRunner sharedRunner] runCommand:@"/usr/bin/codesign"
                                                            arguments:@[@"-v", path]
                                                              timeout:30.0];
-    // codesign -v returns 0 if valid, non-zero if invalid
     return result.success;
 }
 
 - (BOOL)validateExecutableArchitecture:(NSString *)path {
-    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:@"/usr/bin/file"
-                                                           arguments:@[path]
-                                                             timeout:30.0];
-    if (!result.success) return NO;
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (!handle) return NO;
+    NSData *header = [handle readDataOfLength:8];
+    [handle closeFile];
+    if (header.length < 4) return NO;
 
-    NSString *output = result.stdoutText;
-    if (!output || output.length == 0) return NO;
+    const uint8_t *bytes = header.bytes;
+    uint32_t magic = *(uint32_t *)bytes;
 
-    // Check for valid architectures
-    return ([output containsString:@"Mach-O"] ||
-            [output containsString:@"ARM64"] ||
-            [output containsString:@"ARMv7"] ||
-            [output containsString:@"x86_64"]);
+    if (magic == 0xfeedfacf || magic == 0xfeedface) {
+        if (header.length >= 8) {
+            uint32_t cputype = *(uint32_t *)(bytes + 4);
+            if (cputype == 0x0100000c || cputype == 0x0000000c) return YES;
+        }
+        return YES;
+    }
+    if (magic == 0xcafebabe || magic == 0xbebafeca || magic == 0xcafebabf) {
+        return YES;
+    }
+    return NO;
 }
-
-#pragma mark - Legacy runCmdOutput: (REMOVED)
-// The raw posix_spawn implementation previously here has been replaced by ProcessRunner.
-// All call sites now use [[ProcessRunner sharedRunner] runCommand:arguments:timeout:].
 
 @end
