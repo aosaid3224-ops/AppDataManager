@@ -169,7 +169,7 @@
 
         // Test 2: ldid without args (should print usage to stderr)
         CommandResult *bareResult = [[ProcessRunner sharedRunner] runCommand:cap.resolvedPath
-                                                                   arguments:@[@]
+                                                                   arguments:@[]
                                                                      timeout:5.0];
         NSString *combined = [NSString stringWithFormat:@"%@ %@", bareResult.stdoutText, bareResult.stderrText];
         if ([combined containsString:@"ldid"] || [combined containsString:@"Usage"] || [combined containsString:@"usage"]) {
