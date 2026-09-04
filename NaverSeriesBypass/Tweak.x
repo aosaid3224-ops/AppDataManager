@@ -119,7 +119,8 @@ static NSString *generateFakeDeviceID() {
 - (NSUUID *)identifierForVendor {
     if (!isEnabled || !spoofIDFV) return %orig;
     NSString *fake = generateFakeIDFV();
-    NBLog(@"[SPOOF] identifierForVendor: %@ -> %@", %orig, fake);
+    NSUUID *originalIdentifier = %orig;
+    NBLog(@"[SPOOF] identifierForVendor: %@ -> %@", originalIdentifier, fake);
     return [[NSUUID alloc] initWithUUIDString:fake];
 }
 
