@@ -36,7 +36,7 @@ The UI shows:
 make clean && make package
 
 # Install on device
-scp packages/com.aosaid.naverseriesbypass_2.1.3_iphoneos-arm64.deb root@DEVICE_IP:/tmp/
+scp packages/com.aosaid.naverseriesbypass_2.1.4_iphoneos-arm64.deb root@DEVICE_IP:/tmp/
 ssh root@DEVICE_IP "dpkg -i /tmp/*.deb && killall -9 SpringBoard"
 ```
 
