@@ -2,13 +2,15 @@
 #import <UIKit/UIKit.h>
 
 #define LOG_FILE @"/var/mobile/Documents/NaverBypass_Diagnostics.log"
-#define PREFS_FILE @"/var/mobile/Library/Preferences/com.aosaid.naverseriesbypass.plist"
 
 @interface NaverSeriesBypassPrefsListController : PSListController
-@property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UIView *statusCard;
+@property (nonatomic, strong) UILabel *statusTitle;
+@property (nonatomic, strong) UILabel *statusValue;
+@property (nonatomic, strong) UIView *statsCard;
 @property (nonatomic, strong) UILabel *statsLabel;
-@property (nonatomic, strong) UITextView *logTextView;
-@property (nonatomic, strong) NSTimer *refreshTimer;
+@property (nonatomic, strong) UITextView *logView;
+@property (nonatomic, strong) NSTimer *timer;
 @end
 
 @implementation NaverSeriesBypassPrefsListController
@@ -23,249 +25,215 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"نافر سيريس بايباس";
+    self.view.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.97 alpha:1.0];
 
-    // Arabic RTL
-    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-
-    // Setup UI
-    [self setupStatusView];
-    [self setupStatsView];
-    [self setupLogView];
-
-    // Start live refresh
-    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 
-                                                         target:self 
-                                                       selector:@selector(refreshAll) 
-                                                       userInfo:nil 
-                                                        repeats:YES];
-    [self refreshAll];
+    [self buildUI];
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
+    [self refresh];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    [self.refreshTimer invalidate];
+    [self.timer invalidate];
 }
 
-// ============================================
-// STATUS VIEW - حالة التطبيق
-// ============================================
-- (void)setupStatusView {
-    UIView *statusContainer = [[UIView alloc] initWithFrame:CGRectMake(15, 100, self.view.frame.size.width - 30, 80)];
-    statusContainer.backgroundColor = [UIColor colorWithRed:0.11 green:0.11 blue:0.12 alpha:1.0];
-    statusContainer.layer.cornerRadius = 12;
-    statusContainer.layer.borderWidth = 1;
-    statusContainer.layer.borderColor = [UIColor colorWithRed:0.2 green:0.2 blue:0.22 alpha:1.0].CGColor;
+- (void)buildUI {
+    CGFloat w = self.view.frame.size.width;
+    CGFloat margin = 16;
+    CGFloat top = 100;
 
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 10, statusContainer.frame.size.width - 30, 20)];
-    titleLabel.text = @"حالة التطبيق";
-    titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentRight;
+    // Status Card
+    self.statusCard = [[UIView alloc] initWithFrame:CGRectMake(margin, top, w - margin*2, 60)];
+    self.statusCard.backgroundColor = [UIColor whiteColor];
+    self.statusCard.layer.cornerRadius = 8;
+    self.statusCard.layer.shadowColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:0.06].CGColor;
+    self.statusCard.layer.shadowOffset = CGSizeMake(0, 2);
+    self.statusCard.layer.shadowRadius = 4;
 
-    self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 35, statusContainer.frame.size.width - 30, 30)];
-    self.statusLabel.font = [UIFont boldSystemFontOfSize:20];
-    self.statusLabel.textAlignment = NSTextAlignmentRight;
-    self.statusLabel.text = @"جاري التحقق...";
+    self.statusTitle = [[UILabel alloc] initWithFrame:CGRectMake(margin, 12, w - margin*4, 18)];
+    self.statusTitle.text = @"حالة التطبيق";
+    self.statusTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    self.statusTitle.textColor = [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:1.0];
+    self.statusTitle.textAlignment = NSTextAlignmentRight;
 
-    [statusContainer addSubview:titleLabel];
-    [statusContainer addSubview:self.statusLabel];
-    [self.view addSubview:statusContainer];
-}
+    self.statusValue = [[UILabel alloc] initWithFrame:CGRectMake(margin, 32, w - margin*4, 22)];
+    self.statusValue.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    self.statusValue.textAlignment = NSTextAlignmentRight;
 
-// ============================================
-// STATS VIEW - الإحصائيات
-// ============================================
-- (void)setupStatsView {
-    UIView *statsContainer = [[UIView alloc] initWithFrame:CGRectMake(15, 190, self.view.frame.size.width - 30, 120)];
-    statsContainer.backgroundColor = [UIColor colorWithRed:0.11 green:0.11 blue:0.12 alpha:1.0];
-    statsContainer.layer.cornerRadius = 12;
-    statsContainer.layer.borderWidth = 1;
-    statsContainer.layer.borderColor = [UIColor colorWithRed:0.2 green:0.2 blue:0.22 alpha:1.0].CGColor;
+    [self.statusCard addSubview:self.statusTitle];
+    [self.statusCard addSubview:self.statusValue];
+    [self.view addSubview:self.statusCard];
 
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 10, statsContainer.frame.size.width - 30, 20)];
-    titleLabel.text = @"الإحصائيات";
-    titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentRight;
+    // Stats Card
+    top += 76;
+    self.statsCard = [[UIView alloc] initWithFrame:CGRectMake(margin, top, w - margin*2, 130)];
+    self.statsCard.backgroundColor = [UIColor whiteColor];
+    self.statsCard.layer.cornerRadius = 8;
+    self.statsCard.layer.shadowColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:0.06].CGColor;
+    self.statsCard.layer.shadowOffset = CGSizeMake(0, 2);
+    self.statsCard.layer.shadowRadius = 4;
 
-    self.statsLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 35, statsContainer.frame.size.width - 30, 75)];
+    UILabel *statsTitle = [[UILabel alloc] initWithFrame:CGRectMake(margin, 12, w - margin*4, 18)];
+    statsTitle.text = @"الاحصائيات";
+    statsTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    statsTitle.textColor = [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:1.0];
+    statsTitle.textAlignment = NSTextAlignmentRight;
+
+    self.statsLabel = [[UILabel alloc] initWithFrame:CGRectMake(margin, 36, w - margin*4, 86)];
     self.statsLabel.font = [UIFont systemFontOfSize:13];
-    self.statsLabel.textColor = [UIColor colorWithRed:0.7 green:0.7 blue:0.7 alpha:1.0];
+    self.statsLabel.textColor = [UIColor colorWithRed:0.3 green:0.3 blue:0.3 alpha:1.0];
     self.statsLabel.numberOfLines = 0;
     self.statsLabel.textAlignment = NSTextAlignmentRight;
-    self.statsLabel.text = @"جاري جمع البيانات...";
+    self.statsLabel.lineBreakMode = NSLineBreakByWordWrapping;
 
-    [statsContainer addSubview:titleLabel];
-    [statsContainer addSubview:self.statsLabel];
-    [self.view addSubview:statsContainer];
-}
+    [self.statsCard addSubview:statsTitle];
+    [self.statsCard addSubview:self.statsLabel];
+    [self.view addSubview:self.statsCard];
 
-// ============================================
-// LOG VIEW - سجل الأحداث
-// ============================================
-- (void)setupLogView {
-    UIView *logContainer = [[UIView alloc] initWithFrame:CGRectMake(15, 320, self.view.frame.size.width - 30, 280)];
-    logContainer.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.07 alpha:1.0];
-    logContainer.layer.cornerRadius = 12;
-    logContainer.layer.borderWidth = 1;
-    logContainer.layer.borderColor = [UIColor colorWithRed:0.2 green:0.2 blue:0.22 alpha:1.0].CGColor;
+    // Log Card
+    top += 146;
+    UIView *logCard = [[UIView alloc] initWithFrame:CGRectMake(margin, top, w - margin*2, 240)];
+    logCard.backgroundColor = [UIColor whiteColor];
+    logCard.layer.cornerRadius = 8;
+    logCard.layer.shadowColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:0.06].CGColor;
+    logCard.layer.shadowOffset = CGSizeMake(0, 2);
+    logCard.layer.shadowRadius = 4;
 
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(15, 10, logContainer.frame.size.width - 30, 20)];
-    titleLabel.text = @"سجل الأحداث (Logs)";
-    titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentRight;
+    UILabel *logTitle = [[UILabel alloc] initWithFrame:CGRectMake(margin, 12, w - margin*4, 18)];
+    logTitle.text = @"سجل الاحداث";
+    logTitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    logTitle.textColor = [UIColor colorWithRed:0.4 green:0.4 blue:0.4 alpha:1.0];
+    logTitle.textAlignment = NSTextAlignmentRight;
 
-    self.logTextView = [[UITextView alloc] initWithFrame:CGRectMake(10, 35, logContainer.frame.size.width - 20, 200)];
-    self.logTextView.backgroundColor = [UIColor clearColor];
-    self.logTextView.textColor = [UIColor colorWithRed:0.4 green:0.8 blue:0.4 alpha:1.0];
-    self.logTextView.font = [UIFont fontWithName:@"Menlo" size:10];
-    self.logTextView.editable = NO;
-    self.logTextView.textAlignment = NSTextAlignmentRight;
-    self.logTextView.layoutManager.allowsNonContiguousLayout = NO;
+    self.logView = [[UITextView alloc] initWithFrame:CGRectMake(margin, 36, w - margin*4, 160)];
+    self.logView.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.06 alpha:1.0];
+    self.logView.textColor = [UIColor colorWithRed:0.6 green:0.85 blue:0.6 alpha:1.0];
+    self.logView.font = [UIFont fontWithName:@"SFMono-Regular" size:10];
+    self.logView.editable = NO;
+    self.logView.textAlignment = NSTextAlignmentRight;
+    self.logView.layer.cornerRadius = 4;
 
-    // Buttons
+    // Buttons row
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(logContainer.frame.size.width - 100, 240, 85, 30);
-    [copyBtn setTitle:@"📋 نسخ" forState:UIControlStateNormal];
-    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    copyBtn.frame = CGRectMake(w - margin*2 - 80, 204, 70, 28);
+    [copyBtn setTitle:@"نسخ" forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [copyBtn setTitleColor:[UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1.0] forState:UIControlStateNormal];
+    copyBtn.backgroundColor = [UIColor colorWithRed:0.93 green:0.95 blue:0.98 alpha:1.0];
+    copyBtn.layer.cornerRadius = 4;
     [copyBtn addTarget:self action:@selector(copyLogs) forControlEvents:UIControlEventTouchUpInside];
 
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15, 240, 85, 30);
-    [clearBtn setTitle:@"🗑 مسح" forState:UIControlStateNormal];
-    clearBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [clearBtn setTitleColor:[UIColor redColor] forState:UIControlStateNormal];
+    clearBtn.frame = CGRectMake(margin, 204, 70, 28);
+    [clearBtn setTitle:@"مسح" forState:UIControlStateNormal];
+    clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    [clearBtn setTitleColor:[UIColor colorWithRed:0.7 green:0.2 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
+    clearBtn.backgroundColor = [UIColor colorWithRed:0.98 green:0.93 blue:0.93 alpha:1.0];
+    clearBtn.layer.cornerRadius = 4;
     [clearBtn addTarget:self action:@selector(clearLogs) forControlEvents:UIControlEventTouchUpInside];
 
-    [logContainer addSubview:titleLabel];
-    [logContainer addSubview:self.logTextView];
-    [logContainer addSubview:copyBtn];
-    [logContainer addSubview:clearBtn];
-    [self.view addSubview:logContainer];
+    [logCard addSubview:logTitle];
+    [logCard addSubview:self.logView];
+    [logCard addSubview:copyBtn];
+    [logCard addSubview:clearBtn];
+    [self.view addSubview:logCard];
+
+    // Footer
+    top += 256;
+    UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(margin, top, w - margin*2, 30)];
+    footer.text = @"الاصدار 2.1  |  المطور: aosaid";
+    footer.font = [UIFont systemFontOfSize:11];
+    footer.textColor = [UIColor colorWithRed:0.6 green:0.6 blue:0.6 alpha:1.0];
+    footer.textAlignment = NSTextAlignmentCenter;
+    [self.view addSubview:footer];
 }
 
-// ============================================
-// REFRESH ALL - تحديث كل شيء
-// ============================================
-- (void)refreshAll {
+- (void)refresh {
     [self updateStatus];
     [self updateStats];
     [self updateLogs];
 }
 
 - (void)updateStatus {
-    NSString *logContent = [self readLogFile];
-
-    BOOL hasBlock = [logContent containsString:@"BLOCKED!"] || 
-                    [logContent containsString:@"BAN MESSAGE"] ||
-                    [logContent containsString:@"차단"];
-
-    BOOL hasSuccess = [logContent containsString:@"Response Status: 200"] ||
-                      [logContent containsString:@"[SPOOF]"];
+    NSString *log = [self readLog];
+    BOOL hasBlock = [log containsString:@"BLOCKED"] || [log containsString:@"BAN MESSAGE"];
+    BOOL hasSuccess = [log containsString:@"Status: 200"] || [log containsString:@"[SPOOF]"];
 
     if (hasBlock) {
-        self.statusLabel.text = @"❌ التطبيق محظور (خادمي)";
-        self.statusLabel.textColor = [UIColor redColor];
+        self.statusValue.text = @"التطبيق محظور - خادمي";
+        self.statusValue.textColor = [UIColor colorWithRed:0.75 green:0.2 blue:0.2 alpha:1.0];
+        self.statusCard.layer.borderColor = [UIColor colorWithRed:0.9 green:0.7 blue:0.7 alpha:1.0].CGColor;
+        self.statusCard.layer.borderWidth = 1;
     } else if (hasSuccess) {
-        self.statusLabel.text = @"✅ التطبيق يعمل (تم التجاوز)";
-        self.statusLabel.textColor = [UIColor colorWithRed:0.2 green:0.8 blue:0.2 alpha:1.0];
+        self.statusValue.text = @"يعمل - تم التجاوز";
+        self.statusValue.textColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.3 alpha:1.0];
+        self.statusCard.layer.borderColor = [UIColor colorWithRed:0.7 green:0.9 blue:0.7 alpha:1.0].CGColor;
+        self.statusCard.layer.borderWidth = 1;
     } else {
-        self.statusLabel.text = @"⏳ في انتظار الاستخدام...";
-        self.statusLabel.textColor = [UIColor orangeColor];
+        self.statusValue.text = @"في الانتظار...";
+        self.statusValue.textColor = [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
+        self.statusCard.layer.borderWidth = 0;
     }
 }
 
 - (void)updateStats {
-    NSString *logContent = [self readLogFile];
+    NSString *log = [self readLog];
+    NSArray *lines = [log componentsSeparatedByString:@"\n"];
 
-    int totalRequests = 0;
-    int blockedRequests = 0;
-    int spoofedItems = 0;
-    int jbBypass = 0;
-
-    NSArray *lines = [logContent componentsSeparatedByString:@"\n"];
+    int requests = 0, blocks = 0, spoofs = 0, jb = 0;
     for (NSString *line in lines) {
-        if ([line containsString:@"[NETWORK] Request"]) totalRequests++;
-        if ([line containsString:@"[ALERT] BLOCKED"]) blockedRequests++;
-        if ([line containsString:@"[SPOOF]"]) spoofedItems++;
-        if ([line containsString:@"[JB-BYPASS]"]) jbBypass++;
+        if ([line containsString:@"[NETWORK] Request"]) requests++;
+        if ([line containsString:@"[ALERT]"]) blocks++;
+        if ([line containsString:@"[SPOOF]"]) spoofs++;
+        if ([line containsString:@"[JB-BYPASS]"]) jb++;
     }
 
     NSString *stats = [NSString stringWithFormat:
-        @"📊 الطلبات المرسلة: %d\n"
-        @"🚫 محاولات الحظر: %d\n"
-        @"🔧 عناصر تم تغييرها: %d\n"
-        @"🛡️ JB-Bypass: %d\n"
-        @"📄 إجمالي الأسطر: %lu",
-        totalRequests, blockedRequests, spoofedItems, jbBypass, (unsigned long)lines.count];
+        @"الطلبات المرسلة: %d\n"
+        @"محاولات الحظر: %d\n"
+        @"العناصر المعدلة: %d\n"
+        @"تجاوز JB: %d\n"
+        @"اجمالي الاسطر: %lu",
+        requests, blocks, spoofs, jb, (unsigned long)lines.count];
 
     self.statsLabel.text = stats;
 }
 
 - (void)updateLogs {
-    NSString *logContent = [self readLogFile];
+    NSString *log = [self readLog];
+    NSArray *lines = [log componentsSeparatedByString:@"\n"];
+    NSArray *last = lines.count > 25 ? [lines subarrayWithRange:NSMakeRange(lines.count - 25, 25)] : lines;
+    self.logView.text = [last componentsJoinedByString:@"\n"];
 
-    // Get last 30 lines
-    NSArray *lines = [logContent componentsSeparatedByString:@"\n"];
-    NSArray *lastLines = lines;
-    if (lines.count > 30) {
-        lastLines = [lines subarrayWithRange:NSMakeRange(lines.count - 30, 30)];
-    }
-
-    NSString *display = [lastLines componentsJoinedByString:@"\n"];
-    self.logTextView.text = display;
-
-    // Auto-scroll to bottom
-    if (self.logTextView.text.length > 0) {
-        NSRange bottom = NSMakeRange(self.logTextView.text.length - 1, 1);
-        [self.logTextView scrollRangeToVisible:bottom];
+    if (self.logView.text.length > 0) {
+        NSRange bottom = NSMakeRange(self.logView.text.length - 1, 1);
+        [self.logView scrollRangeToVisible:bottom];
     }
 }
 
-// ============================================
-// HELPERS
-// ============================================
-- (NSString *)readLogFile {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:LOG_FILE]) {
-        return @"لا يوجد سجل بعد.\nافتح تطبيق Naver Series واضغط على فصل.";
+- (NSString *)readLog {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:LOG_FILE]) {
+        return @"لا يوجد سجل بعد. افتح Naver Series واضغط على فصل.";
     }
-
-    NSError *error = nil;
-    NSString *content = [NSString stringWithContentsOfFile:LOG_FILE 
-                                                   encoding:NSUTF8StringEncoding 
-                                                      error:&error];
-    if (error) {
-        return [NSString stringWithFormat:@"خطأ في القراءة: %@", error.localizedDescription];
-    }
-
-    return content.length > 0 ? content : @"السجل فارغ.";
+    NSError *err = nil;
+    NSString *content = [NSString stringWithContentsOfFile:LOG_FILE encoding:NSUTF8StringEncoding error:&err];
+    return err ? @"خطأ في القراءة" : (content.length > 0 ? content : @"السجل فارغ");
 }
 
 - (void)copyLogs {
-    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-    pasteboard.string = [self readLogFile];
-
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تم" 
-                                                                   message:@"تم نسخ السجل إلى الحافظة" 
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+    UIPasteboard.generalPasteboard.string = [self readLog];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تم" message:@"تم نسخ السجل" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"حسنا" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)clearLogs {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تأكيد" 
-                                                                   message:@"هل تريد مسح السجل؟" 
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"مسح" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        [fm removeItemAtPath:LOG_FILE error:nil];
-        [self refreshAll];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"تأكيد" message:@"مسح السجل؟" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"الغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"مسح" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+        [[NSFileManager defaultManager] removeItemAtPath:LOG_FILE error:nil];
+        [self refresh];
     }]];
-
     [self presentViewController:alert animated:YES completion:nil];
 }
 
