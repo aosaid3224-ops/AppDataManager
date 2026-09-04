@@ -13,10 +13,10 @@
             <string>افتح لوحة التحكم لمشاهدة الاحصائيات والسجل مباشرة</string>
         </dict>
         <dict>
-            <key>action</key>
-            <string>openDashboard</string>
             <key>cell</key>
-            <string>PSButtonCell</string>
+            <string>PSLinkCell</string>
+            <key>detail</key>
+            <string>NaverBypassDashboardVC</string>
             <key>label</key>
             <string>فتح لوحة التحكم</string>
         </dict>
@@ -103,10 +103,10 @@
             <string>يتم تحديث الاحصائيات كل 2 ثانية</string>
         </dict>
         <dict>
-            <key>action</key>
-            <string>openDashboard</string>
             <key>cell</key>
-            <string>PSButtonCell</string>
+            <string>PSLinkCell</string>
+            <key>detail</key>
+            <string>NaverBypassDashboardVC</string>
             <key>label</key>
             <string>فتح ملف السجل</string>
         </dict>
@@ -114,7 +114,7 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>footerText</key>
-            <string>المطور: aosaid | الاصدار 2.1.1</string>
+            <string>المطور: aosaid | الاصدار 2.1.3</string>
         </dict>
     </array>
     <key>title</key>
