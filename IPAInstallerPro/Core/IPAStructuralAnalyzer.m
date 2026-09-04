@@ -322,7 +322,7 @@ extern char **environ;
             NSString *frameworkName = [item stringByDeletingPathExtension];
             NSString *binaryPath = [itemPath stringByAppendingPathComponent:frameworkName];
             if ([fm fileExistsAtPath:binaryPath]) {
-                [result addMachOBinary:binaryPath];
+                [self addAnalyzedBinary:binaryPath result:result];
             }
         } else if (isDir && [item hasSuffix:@".appex"]) {
             NSString *infoPath = [itemPath stringByAppendingPathComponent:@"Info.plist"];
@@ -331,12 +331,12 @@ extern char **environ;
             if (execName.length > 0) {
                 NSString *binaryPath = [itemPath stringByAppendingPathComponent:execName];
                 if ([fm fileExistsAtPath:binaryPath]) {
-                    [result addMachOBinary:binaryPath];
+                    [self addAnalyzedBinary:binaryPath result:result];
                 }
             }
         } else if (!isDir) {
             if ([self isMachOBinary:itemPath]) {
-                [result addMachOBinary:itemPath];
+                [self addAnalyzedBinary:itemPath result:result];
             }
         }
     }
@@ -387,6 +387,96 @@ extern char **environ;
 
 - (void)cacheResult:(IPAStructuralResult *)result forPath:(NSString *)path {
     // Implementation would store to persistent cache if implemented
+}
+
+- (void)addAnalyzedBinary:(NSString *)path result:(IPAStructuralResult *)result {
+    [result addMachOBinary:path];
+
+    MachOAnalysisResult *analysis = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:path];
+    if (!analysis) return;
+
+    NSMutableArray *executables = [result.executables mutableCopy] ?: [NSMutableArray array];
+    for (NSUInteger i = 0; i < executables.count; i++) {
+        IPAStructuralExecutable *executable = executables[i];
+        if ([executable.path isEqualToString:path]) {
+            executable.parseStatus = (analysis.parseStatus == MachOParseSuccess) ? IPAStructuralParseSuccess :
+                                     (analysis.parseStatus == MachOParsePartial) ? IPAStructuralParsePartial :
+                                     (analysis.parseStatus == MachOParseFailed) ? IPAStructuralParseFailed : IPAStructuralParseNotAttempted;
+            executable.parseError = analysis.parseError;
+            executable.machOType = analysis.machOType;
+            executable.machOTypeName = analysis.machOTypeName;
+            executable.uuid = analysis.uuid;
+            executable.minOSVersion = analysis.minOSVersion;
+            executable.sdkVersion = analysis.sdkVersion;
+            executable.platform = analysis.platform;
+            executable.platformName = analysis.platformName;
+            executable.hasCodeSignature = analysis.hasCodeSignature;
+            executable.hasEncryptedSlice = analysis.hasEncryptedSlice;
+            executable.encryptedSliceCount = analysis.encryptedSliceCount;
+            executable.hasEncryptedArm64Slice = analysis.hasEncryptedArm64Slice;
+            executable.encryptedArm64SliceCount = analysis.encryptedArm64SliceCount;
+
+            NSMutableArray *slices = [NSMutableArray array];
+            for (MachOSlice *machSlice in analysis.slices) {
+                IPAStructuralExecutableSlice *slice = [[IPAStructuralExecutableSlice alloc] init];
+                slice.cputype = machSlice.cputype;
+                slice.cpusubtype = machSlice.cpusubtype;
+                slice.offset = machSlice.offset;
+                slice.size = machSlice.size;
+                slice.uuid = machSlice.uuid;
+                slice.architectureName = machSlice.architectureName;
+                [slices addObject:slice];
+            }
+            executable.slices = [slices copy];
+
+            // CRITICAL: Spider checks these two properties
+            executable.machOValid = (analysis.parseStatus == MachOParseSuccess || analysis.parseStatus == MachOParsePartial);
+
+            BOOL hasArm64 = NO;
+            for (MachOSlice *slice in analysis.slices) {
+                if (slice.cputype == 0x0100000c) { hasArm64 = YES; break; }
+            }
+            executable.arm64Compatible = hasArm64;
+
+            NSMutableArray *deps = [NSMutableArray array];
+            for (MachODependency *machDep in analysis.dependencies) {
+                IPAStructuralDependency *dep = [[IPAStructuralDependency alloc] init];
+                dep.rawInstallName = machDep.rawInstallName;
+                dep.isWeak = machDep.isWeak;
+                dep.sourceExecutablePath = machDep.sourceExecutablePath;
+                [deps addObject:dep];
+            }
+            executable.dependencies = [deps copy];
+
+            NSMutableArray *rpaths = [NSMutableArray array];
+            for (MachORPath *machRPath in analysis.rpaths) {
+                IPAStructuralRPath *rp = [[IPAStructuralRPath alloc] init];
+                rp.rawPath = machRPath.rawPath;
+                rp.sourceExecutablePath = machRPath.sourceExecutablePath;
+                [rpaths addObject:rp];
+            }
+            executable.rpaths = [rpaths copy];
+
+            NSMutableArray *lcs = [NSMutableArray array];
+            for (MachOLoadCommand *machLc in analysis.loadCommands) {
+                IPAStructuralLoadCommand *lc = [[IPAStructuralLoadCommand alloc] init];
+                lc.cmd = machLc.cmd;
+                lc.cmdsize = machLc.cmdsize;
+                lc.cmdDescription = machLc.cmdDescription;
+                [lcs addObject:lc];
+            }
+            executable.loadCommands = [lcs copy];
+
+            executables[i] = executable;
+            break;
+        }
+    }
+    result.executables = [executables copy];
+    result.executableCount = result.executables.count;
+
+    NSUInteger totalSlices = 0;
+    for (IPAStructuralExecutable *e in result.executables) totalSlices += e.slices.count;
+    result.sliceCount = totalSlices;
 }
 
 #pragma mark - Legacy runCmdOutput: (REMOVED)
