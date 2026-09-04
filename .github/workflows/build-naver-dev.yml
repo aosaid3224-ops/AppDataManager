@@ -66,9 +66,13 @@ jobs:
           else
             VERSION=$(dpkg-deb -f ../source/NaverSeriesBypass/packages/*.deb Version | head -1)
             git commit -m "NaverSeriesBypass ${VERSION} — dev build"
-            # repo-dev may receive updates from another workflow; rebase before pushing.
+            # repo-dev may receive generated-index updates from another workflow.
+            # Reset the index to the latest remote tree while preserving this workspace,
+            # then commit the complete regenerated repository without binary rebase conflicts.
             git fetch origin main
-            git rebase origin/main
+            git reset --mixed origin/main
+            git add -A
+            git commit --amend --no-edit
             git push origin main
           fi
 
