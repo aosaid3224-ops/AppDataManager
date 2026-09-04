@@ -125,13 +125,15 @@ static NSString *generateFakeDeviceID() {
 
 - (NSString *)name {
     if (!isEnabled) return %orig;
-    NBLog(@"[SPOOF] deviceName: %@ -> iPhone", %orig);
+    NSString *originalName = %orig;
+    NBLog(@"[SPOOF] deviceName: %@ -> iPhone", originalName);
     return @"iPhone";
 }
 
 - (NSString *)model {
     if (!isEnabled) return %orig;
-    NBLog(@"[SPOOF] model: %@ -> iPhone15,2", %orig);
+    NSString *originalModel = %orig;
+    NBLog(@"[SPOOF] model: %@ -> iPhone15,2", originalModel);
     return @"iPhone";
 }
 
@@ -141,7 +143,8 @@ static NSString *generateFakeDeviceID() {
 
 - (NSString *)systemVersion {
     if (!isEnabled) return %orig;
-    NBLog(@"[SPOOF] systemVersion: %@ -> 18.3.1", %orig);
+    NSString *originalSystemVersion = %orig;
+    NBLog(@"[SPOOF] systemVersion: %@ -> 18.3.1", originalSystemVersion);
     return @"18.3.1";
 }
 
@@ -580,7 +583,8 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 
 - (CGFloat)scale {
     if (!isEnabled) return %orig;
-    NBLog(@"[SPOOF] Screen scale: %f -> 3.0", %orig);
+    CGFloat originalScale = %orig;
+    NBLog(@"[SPOOF] Screen scale: %f -> 3.0", originalScale);
     return 3.0;
 }
 
