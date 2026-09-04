@@ -3,6 +3,23 @@
 
 #define LOG_FILE @"/var/mobile/Documents/NaverBypass_Diagnostics.log"
 
+static UIWindow *NBActiveWindow(void) {
+    UIApplication *application = [UIApplication sharedApplication];
+    for (UIScene *scene in application.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        for (UIWindow *window in windowScene.windows) {
+            if (window.isKeyWindow) return window;
+        }
+    }
+    for (UIScene *scene in application.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        if (windowScene.windows.firstObject) return windowScene.windows.firstObject;
+    }
+    return nil;
+}
+
 @interface NaverSeriesBypassPrefsListController : PSListController
 @end
 
@@ -16,14 +33,7 @@
 }
 
 - (void)openDashboard {
-    // Get key window
-    UIWindow *window = [[UIApplication sharedApplication] keyWindow];
-    if (!window) {
-        NSArray *windows = [[UIApplication sharedApplication] windows];
-        for (UIWindow *w in windows) {
-            if (w.isKeyWindow) { window = w; break; }
-        }
-    }
+    UIWindow *window = NBActiveWindow();
     if (!window) return;
 
     // Remove existing overlay if any
@@ -144,7 +154,7 @@
 
 - (void)refreshDashboard {
     @try {
-        UIWindow *window = [[UIApplication sharedApplication] keyWindow];
+        UIWindow *window = NBActiveWindow();
         UIView *overlay = [window viewWithTag:99999];
         if (!overlay) return;
 
