@@ -91,6 +91,8 @@ typedef NS_ENUM(NSInteger, IPAStructuralParseStatus) {
 @property (nonatomic, assign) uint32_t encryptedArm64SliceCount;
 @property (nonatomic, assign) IPAStructuralParseStatus parseStatus;
 @property (nonatomic, strong) NSString *parseError;
+@property (nonatomic, assign) BOOL machOValid;
+@property (nonatomic, assign) BOOL arm64Compatible;
 - (NSDictionary *)dictionaryRepresentation;
 @end
 
