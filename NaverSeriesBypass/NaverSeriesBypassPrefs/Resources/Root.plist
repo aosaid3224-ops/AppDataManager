@@ -11,10 +11,10 @@
             <string>لوحة التحكم</string>
         </dict>
         <dict>
+            <key>action</key>
+            <string>openDashboard</string>
             <key>cell</key>
-            <string>PSLinkCell</string>
-            <key>detail</key>
-            <string>DashboardViewController</string>
+            <string>PSButtonCell</string>
             <key>label</key>
             <string>فتح لوحة التحكم</string>
         </dict>
@@ -88,7 +88,7 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>footerText</key>
-            <string>المطور: aosaid | v2.2</string>
+            <string>المطور: aosaid | v2.3</string>
         </dict>
     </array>
     <key>title</key>
