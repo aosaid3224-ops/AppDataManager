@@ -48,23 +48,43 @@ static void NBLog(NSString *format, ...) {
                                                          timeStyle:NSDateFormatterMediumStyle];
     NSString *logLine = [NSString stringWithFormat:@"[%@] [NaverBypass] %@\n", timestamp, msg];
 
+    // Always log to NSLog (visible in system console)
     NSLog(@"%@", logLine);
 
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:LOG_FILE]) {
-        [fm createFileAtPath:LOG_FILE contents:nil attributes:nil];
+    // Try to write to file
+    @try {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *docsDir = @"/var/mobile/Documents";
+
+        // Ensure directory exists
+        if (![fm fileExistsAtPath:docsDir]) {
+            [fm createDirectoryAtPath:docsDir withIntermediateDirectories:YES attributes:@{NSFileOwnerAccountName:@"mobile", NSFileGroupOwnerAccountName:@"mobile"} error:nil];
+        }
+
+        // Create file if not exists
+        if (![fm fileExistsAtPath:LOG_FILE]) {
+            [fm createFileAtPath:LOG_FILE contents:[@"" dataUsingEncoding:NSUTF8StringEncoding] attributes:@{NSFileOwnerAccountName:@"mobile", NSFileGroupOwnerAccountName:@"mobile", NSFilePosixPermissions:@0644}];
+        }
+
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:LOG_FILE];
+        if (fh) {
+            [fh seekToEndOfFile];
+            [fh writeData:[logLine dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        } else {
+            NSLog(@"[NaverBypass] WARNING: Could not open log file for writing");
+        }
+
+        // Rotate if too big
+        NSDictionary *attrs = [fm attributesOfItemAtPath:LOG_FILE error:nil];
+        if (attrs && attrs.fileSize > MAX_LOG_SIZE) {
+            NSString *oldLog = [LOG_FILE stringByAppendingString:@".old"];
+            [fm removeItemAtPath:oldLog error:nil];
+            [fm moveItemAtPath:LOG_FILE toPath:oldLog error:nil];
+        }
     }
-
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:LOG_FILE];
-    [fh seekToEndOfFile];
-    [fh writeData:[logLine dataUsingEncoding:NSUTF8StringEncoding]];
-    [fh closeFile];
-
-    NSDictionary *attrs = [fm attributesOfItemAtPath:LOG_FILE error:nil];
-    if (attrs.fileSize > MAX_LOG_SIZE) {
-        NSString *oldLog = [LOG_FILE stringByAppendingString:@".old"];
-        [fm removeItemAtPath:oldLog error:nil];
-        [fm moveItemAtPath:LOG_FILE toPath:oldLog error:nil];
+    @catch (NSException *e) {
+        NSLog(@"[NaverBypass] ERROR writing log: %@", e.reason);
     }
 }
 
