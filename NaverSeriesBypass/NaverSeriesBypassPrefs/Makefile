@@ -1,5 +1,5 @@
 TARGET := iphone:clang:latest:15.0
-ARCHS = arm64
+ARCHS = arm64 arm64e
 
 include $(THEOS)/makefiles/common.mk
 
@@ -16,5 +16,5 @@ THEOS_PACKAGE_SCHEME = rootless
 include $(THEOS_MAKE_PATH)/bundle.mk
 
 internal-stage::
-    $(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences$(ECHO_END)
-    $(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/NaverSeriesBypassPrefs.plist$(ECHO_END)
+	$(ECHO_NOTHING)mkdir -p $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences$(ECHO_END)
+	$(ECHO_NOTHING)cp entry.plist $(THEOS_STAGING_DIR)/Library/PreferenceLoader/Preferences/NaverSeriesBypassPrefs.plist$(ECHO_END)
