@@ -242,6 +242,41 @@ extern char **environ;
                                                            arguments:@[@"-p", path, exactInfoPlistEntry]
                                                              timeout:60.0];
 
+    // Fallback: full extraction to disk if pipe-based methods failed
+    if (!result.success || !result.stdoutData || result.stdoutData.length == 0) {
+        NSString *fallbackTempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+        [[NSFileManager defaultManager] createDirectoryAtPath:fallbackTempDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+        CommandResult *extractResult = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                                       arguments:@[@"-q", path, @"-d", fallbackTempDir]
+                                                                         timeout:60.0];
+        if (extractResult.success) {
+            NSString *payloadPath = [fallbackTempDir stringByAppendingPathComponent:@"Payload"];
+            NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payloadPath error:nil];
+            for (NSString *item in contents) {
+                if ([item hasSuffix:@".app"]) {
+                    NSString *appPath = [payloadPath stringByAppendingPathComponent:item];
+                    NSString *plistPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+                    if ([[NSFileManager defaultManager] fileExistsAtPath:plistPath]) {
+                        NSString *tempPlist = [tempDir stringByAppendingPathComponent:@"Info.plist"];
+                        NSError *copyErr = nil;
+                        [[NSFileManager defaultManager] copyItemAtPath:plistPath toPath:tempPlist error:&copyErr];
+                        if (!copyErr) {
+                            [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
+                            [self.plistPathCache setObject:tempPlist forKey:path];
+                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+                                [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
+                                [self.plistPathCache removeObjectForKey:path];
+                            });
+                            return tempPlist;
+                        }
+                    }
+                }
+            }
+        }
+        [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
+    }
+
     if (!result.success) {
         [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: unzip failed | category=%@ | exit=%d | stderr=%@",
                                       result.failureCategory, result.exitCode, result.stderrText]];
