@@ -1909,7 +1909,7 @@ extern char **environ;
                         if (dictEnd.location != NSNotFound) {
                             NSString *entXml = [sub substringToIndex:dictEnd.location + 7];
                             if (entXml && entXml.length > 0) {
-                                NSString *wrapped = [NSString stringWithFormat:@"<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0">%@</plist>", entXml];
+                                NSString *wrapped = [NSString stringWithFormat:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\">%@</plist>", entXml];
                                 NSData *xmlData = [wrapped dataUsingEncoding:NSUTF8StringEncoding];
                                 if (xmlData && xmlData.length > 0) {
                                     NSError *err = nil;
