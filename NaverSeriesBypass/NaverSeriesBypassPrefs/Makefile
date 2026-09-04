@@ -8,7 +8,6 @@ BUNDLE_NAME = NaverSeriesBypassPrefs
 NaverSeriesBypassPrefs_FILES = NaverSeriesBypassPrefs.m
 NaverSeriesBypassPrefs_INSTALL_PATH = /Library/PreferenceBundles
 NaverSeriesBypassPrefs_FRAMEWORKS = UIKit
-NaverSeriesBypassPrefs_PRIVATE_FRAMEWORKS = Preferences
 NaverSeriesBypassPrefs_CFLAGS = -fobjc-arc
 
 THEOS_PACKAGE_SCHEME = rootless
