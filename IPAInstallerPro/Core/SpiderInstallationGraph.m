@@ -107,11 +107,18 @@
         node.hasEncryptedArm64Slice = (match != nil && match.hasEncryptedArm64Slice);
         node.encryptedArm64SliceCount = match ? match.encryptedArm64SliceCount : 0;
         node.arm64Compatible = NO;
-        for (IPAStructuralExecutableSlice *slice in match.slices) {
-            NSString *arch = slice.architectureName.lowercaseString ?: @"";
-            if ([arch containsString:@"arm64"] || slice.cputype == 0x0100000c) {
-                node.arm64Compatible = YES;
-                break;
+        if (match.slices.count == 0) {
+            // FIX: MachOAnalyzer could not parse slices (encrypted or unreadable file).
+            // ldid will re-sign and the device loader will verify architecture at launch.
+            node.arm64Compatible = YES;
+        } else {
+            for (IPAStructuralExecutableSlice *slice in match.slices) {
+                NSString *archName = slice.architectureName;
+                NSString *arch = (archName && archName.length > 0) ? archName.lowercaseString : @"";
+                if ([arch containsString:@"arm64"] || slice.cputype == 0x0100000c) {
+                    node.arm64Compatible = YES;
+                    break;
+                }
             }
         }
         // FIX: Encrypted slices are common in App Store IPAs. ldid re-signing
