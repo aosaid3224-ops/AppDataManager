@@ -5,7 +5,48 @@ mkdir -p /var/mobile/Documents
 chmod 755 /var/mobile/Documents
 chown mobile:mobile /var/mobile/Documents
 
-echo "Naver Series Bypass installed successfully"
-echo "Diagnostics log: /var/mobile/Documents/NaverBypass_Diagnostics.log"
+# Create default preferences
+mkdir -p /var/mobile/Library/Preferences
+chmod 755 /var/mobile/Library/Preferences
+chown mobile:mobile /var/mobile/Library/Preferences
+
+cat > /var/mobile/Library/Preferences/com.aosaid.naverseriesbypass.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Enabled</key>
+    <true/>
+    <key>SpoofIDFV</key>
+    <true/>
+    <key>BlockKeychain</key>
+    <true/>
+    <key>SpoofHeaders</key>
+    <true/>
+    <key>JBBypass</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+chmod 644 /var/mobile/Library/Preferences/com.aosaid.naverseriesbypass.plist
+chown mobile:mobile /var/mobile/Library/Preferences/com.aosaid.naverseriesbypass.plist
+
+echo "========================================"
+echo "Naver Series Bypass v2.1 installed!"
+echo "========================================"
+echo ""
+echo "Settings: Settings -> Naver Series Bypass"
+echo "Logs: /var/mobile/Documents/NaverBypass_Diagnostics.log"
+echo ""
+echo "Features enabled by default:"
+echo "  - IDFV Spoofing"
+echo "  - Keychain Blocking"
+echo "  - Header Spoofing"
+echo "  - JB Detection Bypass"
+echo ""
+echo "Open Naver Series and tap on an episode."
+echo "Check Settings for live stats and logs."
+echo "========================================"
 
 exit 0
