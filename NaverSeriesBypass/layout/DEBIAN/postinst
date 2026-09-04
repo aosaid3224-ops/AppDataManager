@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Create Documents directory for logs
+mkdir -p /var/mobile/Documents
+chmod 755 /var/mobile/Documents
+chown mobile:mobile /var/mobile/Documents
+
+echo "Naver Series Bypass installed successfully"
+echo "Diagnostics log: /var/mobile/Documents/NaverBypass_Diagnostics.log"
+
+exit 0
