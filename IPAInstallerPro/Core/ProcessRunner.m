@@ -164,6 +164,15 @@ extern char **environ;
         // Check if process has exited (non-blocking)
         pid_t waited = waitpid(pid, &status, WNOHANG);
         if (waited == pid) {
+            // FIX: Drain remaining pipe data before finishing to prevent truncated stdout
+            uint8_t drainBuf[4096];
+            ssize_t drainN;
+            while ((drainN = read(stdoutPipe[0], drainBuf, sizeof(drainBuf))) > 0) {
+                [stdoutData appendBytes:drainBuf length:(NSUInteger)drainN];
+            }
+            while ((drainN = read(stderrPipe[0], drainBuf, sizeof(drainBuf))) > 0) {
+                [stderrData appendBytes:drainBuf length:(NSUInteger)drainN];
+            }
             finished = YES;
         } else if (waited < 0 && errno != EINTR) {
             // Unexpected waitpid failure
