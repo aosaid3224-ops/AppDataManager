@@ -1186,7 +1186,9 @@ extern char **environ;
  if ([fm fileExistsAtPath:destApp]) {
      NSString *clearRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"clear destination before copy" target:destApp input:@"rm -rf" transactionID:txnID];
      BOOL cleared = hasH ? [self runRoot:self.rmPath args:@[@"-rf", destApp] opLog:opLog recordID:clearRec] : [fm removeItemAtPath:destApp error:nil];
-     if (!cleared || [fm fileExistsAtPath:destApp]) {
+     struct stat clearStat = {0};
+     BOOL destStillExists = (lstat(destApp.fileSystemRepresentation, &clearStat) == 0);
+     if (!cleared || destStillExists) {
          [opLog endPhase:clearRec exitCode:1 rawOutput:@"" rawError:@"Destination remained before copy" verification:@"destination must be absent" verified:NO duration:0];
          [fm removeItemAtPath:tmp error:nil];
          [self emitDiagnosticsReport:opLog txnID:txnID bundleID:bundleID];
@@ -1267,7 +1269,11 @@ extern char **environ;
  }
  NSString *promoteRec = [opLog beginPhase:OperationPhaseFileCopy operation:@"promote verified staging bundle" target:[NSString stringWithFormat:@"%@ -> %@", stagedDest, destApp] input:@"mv after verified copy" transactionID:txnID];
  BOOL promoted = hasH ? [self runRoot:self.mvPath args:@[stagedDest, destApp] opLog:opLog recordID:promoteRec] : [fm moveItemAtPath:stagedDest toPath:destApp error:nil];
- if (!promoted || ![fm fileExistsAtPath:destApp]) {
+ // FIX: fileExistsAtPath may return NO for root-owned files even when mv succeeded.
+ // Use lstat() which checks filesystem reality regardless of current user permissions.
+ struct stat promoteStat = {0};
+ BOOL destActuallyExists = (lstat(destApp.fileSystemRepresentation, &promoteStat) == 0);
+ if (!promoted || !destActuallyExists) {
      [fm removeItemAtPath:stagedDest error:nil];
      [self restoreBackup:backupPath to:destApp opLog:opLog txnID:txnID];
      [fm removeItemAtPath:tmp error:nil];
