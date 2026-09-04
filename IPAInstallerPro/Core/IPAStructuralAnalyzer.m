@@ -16,6 +16,7 @@
 #import "CommandResult.h"
 #import "Logger.h"
 #import "MachOAnalyzer.h"
+#import "MachOAnalyzer.h"
 
 #include <spawn.h>
 #include <sys/wait.h>
