@@ -15,6 +15,7 @@
 #import "ProcessRunner.h"
 #import "CommandResult.h"
 #import "Logger.h"
+#import "MachOAnalyzer.h"
 
 #include <spawn.h>
 #include <sys/wait.h>
@@ -248,18 +249,39 @@ extern char **environ;
 }
 
 - (void)analyzeAppBundle:(NSString *)appPath result:(IPAStructuralResult *)result {
-    // Analyze main executable
     NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    NSString *bundleID = nil;
+    NSString *execName = nil;
 
     if (info) {
-        result.bundleID = info[@"CFBundleIdentifier"];
+        bundleID = info[@"CFBundleIdentifier"];
+        result.bundleID = bundleID;
         result.bundleName = info[@"CFBundleName"];
         result.version = info[@"CFBundleShortVersionString"];
-        result.executableName = info[@"CFBundleExecutable"];
+        execName = info[@"CFBundleExecutable"];
+        result.executableName = execName;
     }
 
-    // Find all Mach-O binaries
+    // FIX: Add main app bundle — Spider requires this
+    IPAStructuralBundle *mainBundle = [[IPAStructuralBundle alloc] init];
+    mainBundle.path = appPath;
+    mainBundle.bundleType = @".app";
+    mainBundle.bundleIdentifier = bundleID;
+    mainBundle.executableName = execName;
+    if (execName.length > 0) {
+        mainBundle.executablePath = [appPath stringByAppendingPathComponent:execName];
+        mainBundle.executableExists = [[NSFileManager defaultManager] fileExistsAtPath:mainBundle.executablePath];
+    } else {
+        mainBundle.executableExists = NO;
+    }
+    mainBundle.nestingLevel = 0;
+
+    NSMutableArray *bundles = [result.bundles mutableCopy] ?: [NSMutableArray array];
+    [bundles insertObject:mainBundle atIndex:0];
+    result.bundles = [bundles copy];
+    result.bundleCount = result.bundles.count;
+
     [self findMachOBinariesInDirectory:appPath result:result];
 
     // Analyze frameworks
@@ -293,32 +315,28 @@ extern char **environ;
 
     for (NSString *item in contents) {
         NSString *itemPath = [directory stringByAppendingPathComponent:item];
-
         BOOL isDir = NO;
         [fm fileExistsAtPath:itemPath isDirectory:&isDir];
 
         if (isDir && [item hasSuffix:@".framework"]) {
-            // Analyze framework binary
             NSString *frameworkName = [item stringByDeletingPathExtension];
             NSString *binaryPath = [itemPath stringByAppendingPathComponent:frameworkName];
             if ([fm fileExistsAtPath:binaryPath]) {
-                [result addMachOBinary:binaryPath];
+                [self addAnalyzedBinary:binaryPath result:result];
             }
         } else if (isDir && [item hasSuffix:@".appex"]) {
-            // Analyze plug-in binary
             NSString *infoPath = [itemPath stringByAppendingPathComponent:@"Info.plist"];
             NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
             NSString *execName = info[@"CFBundleExecutable"];
-            if (execName) {
+            if (execName.length > 0) {
                 NSString *binaryPath = [itemPath stringByAppendingPathComponent:execName];
                 if ([fm fileExistsAtPath:binaryPath]) {
-                    [result addMachOBinary:binaryPath];
+                    [self addAnalyzedBinary:binaryPath result:result];
                 }
             }
         } else if (!isDir) {
-            // Check if it's a Mach-O binary
             if ([self isMachOBinary:itemPath]) {
-                [result addMachOBinary:itemPath];
+                [self addAnalyzedBinary:itemPath result:result];
             }
         }
     }
