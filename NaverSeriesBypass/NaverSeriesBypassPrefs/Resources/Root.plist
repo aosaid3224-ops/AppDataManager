@@ -8,6 +8,22 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
+            <string>لوحة التحكم</string>
+            <key>footerText</key>
+            <string>افتح لوحة التحكم لمشاهدة الاحصائيات والسجل مباشرة</string>
+        </dict>
+        <dict>
+            <key>action</key>
+            <string>openDashboard</string>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>فتح لوحة التحكم</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
             <string>معلومات</string>
             <key>footerText</key>
             <string>تويك متقدم لتجاوز حظر Naver Series على iOS 16-18</string>
@@ -84,11 +100,11 @@
             <key>label</key>
             <string>السجل والتشخيص</string>
             <key>footerText</key>
-            <string>يتم تحديث الإحصائيات كل 2 ثانية</string>
+            <string>يتم تحديث الاحصائيات كل 2 ثانية</string>
         </dict>
         <dict>
             <key>action</key>
-            <string>openLogFile</string>
+            <string>openDashboard</string>
             <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
@@ -98,7 +114,7 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>footerText</key>
-            <string>المطور: aosaid | الإصدار 2.0</string>
+            <string>المطور: aosaid | الاصدار 2.1.1</string>
         </dict>
     </array>
     <key>title</key>
