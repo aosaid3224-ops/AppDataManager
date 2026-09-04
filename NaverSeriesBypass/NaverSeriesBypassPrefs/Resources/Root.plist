@@ -9,14 +9,12 @@
             <string>PSGroupCell</string>
             <key>label</key>
             <string>لوحة التحكم</string>
-            <key>footerText</key>
-            <string>افتح لوحة التحكم لمشاهدة الاحصائيات والسجل مباشرة</string>
         </dict>
         <dict>
             <key>cell</key>
             <string>PSLinkCell</string>
             <key>detail</key>
-            <string>NaverBypassDashboardVC</string>
+            <string>DashboardViewController</string>
             <key>label</key>
             <string>فتح لوحة التحكم</string>
         </dict>
@@ -24,9 +22,7 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>معلومات</string>
-            <key>footerText</key>
-            <string>تويك متقدم لتجاوز حظر Naver Series على iOS 16-18</string>
+            <string>الإعدادات</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -42,12 +38,6 @@
         </dict>
         <dict>
             <key>cell</key>
-            <string>PSGroupCell</string>
-            <key>label</key>
-            <string>الإعدادات المتقدمة</string>
-        </dict>
-        <dict>
-            <key>cell</key>
             <string>PSSwitchCell</string>
             <key>default</key>
             <true/>
@@ -56,7 +46,7 @@
             <key>key</key>
             <string>SpoofIDFV</string>
             <key>label</key>
-            <string>تغيير معرف الجهاز (IDFV)</string>
+            <string>تغيير معرف الجهاز</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -80,7 +70,7 @@
             <key>key</key>
             <string>SpoofHeaders</string>
             <key>label</key>
-            <string>تغيير Headers الشبكة</string>
+            <string>تغيير Headers</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -97,24 +87,8 @@
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
-            <key>label</key>
-            <string>السجل والتشخيص</string>
             <key>footerText</key>
-            <string>يتم تحديث الاحصائيات كل 2 ثانية</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSLinkCell</string>
-            <key>detail</key>
-            <string>NaverBypassDashboardVC</string>
-            <key>label</key>
-            <string>فتح ملف السجل</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSGroupCell</string>
-            <key>footerText</key>
-            <string>المطور: aosaid | الاصدار 2.1.5</string>
+            <string>المطور: aosaid | v2.2</string>
         </dict>
     </array>
     <key>title</key>
