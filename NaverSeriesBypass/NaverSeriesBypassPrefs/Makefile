@@ -8,7 +8,10 @@ BUNDLE_NAME = NaverSeriesBypassPrefs
 NaverSeriesBypassPrefs_FILES = NaverSeriesBypassPrefs.m
 NaverSeriesBypassPrefs_INSTALL_PATH = /Library/PreferenceBundles
 NaverSeriesBypassPrefs_FRAMEWORKS = UIKit
-NaverSeriesBypassPrefs_PRIVATE_FRAMEWORKS = Preferences
+# Preferences.framework is private and supplied by the jailbreak runtime.
+# Resolve its symbols dynamically so current Xcode SDKs can build the bundle.
+NaverSeriesBypassPrefs_PRIVATE_FRAMEWORKS =
+NaverSeriesBypassPrefs_LDFLAGS = -undefined dynamic_lookup
 NaverSeriesBypassPrefs_CFLAGS = -fobjc-arc
 
 THEOS_PACKAGE_SCHEME = rootless
