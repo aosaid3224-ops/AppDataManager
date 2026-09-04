@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>معلومات</string>
+            <key>footerText</key>
+            <string>تويك متقدم لتجاوز حظر Naver Series على iOS 16-18</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.aosaid.naverseriesbypass</string>
+            <key>key</key>
+            <string>Enabled</string>
+            <key>label</key>
+            <string>تفعيل التويك</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>الإعدادات المتقدمة</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.aosaid.naverseriesbypass</string>
+            <key>key</key>
+            <string>SpoofIDFV</string>
+            <key>label</key>
+            <string>تغيير معرف الجهاز (IDFV)</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.aosaid.naverseriesbypass</string>
+            <key>key</key>
+            <string>BlockKeychain</string>
+            <key>label</key>
+            <string>حظر Keychain</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.aosaid.naverseriesbypass</string>
+            <key>key</key>
+            <string>SpoofHeaders</string>
+            <key>label</key>
+            <string>تغيير Headers الشبكة</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.aosaid.naverseriesbypass</string>
+            <key>key</key>
+            <string>JBBypass</string>
+            <key>label</key>
+            <string>تجاوز كشف الجيلبريك</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>السجل والتشخيص</string>
+            <key>footerText</key>
+            <string>يتم تحديث الإحصائيات كل 2 ثانية</string>
+        </dict>
+        <dict>
+            <key>action</key>
+            <string>openLogFile</string>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>فتح ملف السجل</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>footerText</key>
+            <string>المطور: aosaid | الإصدار 2.0</string>
+        </dict>
+    </array>
+    <key>title</key>
+    <string>نافر سيريس بايباس</string>
+</dict>
+</plist>
