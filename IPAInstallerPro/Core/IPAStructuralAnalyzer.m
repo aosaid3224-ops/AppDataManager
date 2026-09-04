@@ -322,7 +322,7 @@ extern char **environ;
             NSString *frameworkName = [item stringByDeletingPathExtension];
             NSString *binaryPath = [itemPath stringByAppendingPathComponent:frameworkName];
             if ([fm fileExistsAtPath:binaryPath]) {
-                [self addAnalyzedBinary:binaryPath result:result];
+                [result addMachOBinary:binaryPath];
             }
         } else if (isDir && [item hasSuffix:@".appex"]) {
             NSString *infoPath = [itemPath stringByAppendingPathComponent:@"Info.plist"];
@@ -331,12 +331,12 @@ extern char **environ;
             if (execName.length > 0) {
                 NSString *binaryPath = [itemPath stringByAppendingPathComponent:execName];
                 if ([fm fileExistsAtPath:binaryPath]) {
-                    [self addAnalyzedBinary:binaryPath result:result];
+                    [result addMachOBinary:binaryPath];
                 }
             }
         } else if (!isDir) {
             if ([self isMachOBinary:itemPath]) {
-                [self addAnalyzedBinary:itemPath result:result];
+                [result addMachOBinary:itemPath];
             }
         }
     }
