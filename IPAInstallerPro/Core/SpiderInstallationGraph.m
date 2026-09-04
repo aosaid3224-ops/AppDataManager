@@ -114,14 +114,24 @@
                 break;
             }
         }
+        // FIX: Encrypted slices are common in App Store IPAs. ldid re-signing
+        // strips the old signature and replaces it; the encrypted payload is
+        // irrelevant after re-signing. Downgrade from fatal to warning.
         if (node.hasEncryptedArm64Slice && match != nil) {
-            [nodeFatal addObject:[NSString stringWithFormat:@"arm64 Mach-O slice is encrypted (cryptid!=0, slices=%u); signing cannot decrypt this code", node.encryptedArm64SliceCount]];
+            [nodeWarnings addObject:[NSString stringWithFormat:@"arm64 Mach-O slice is encrypted (cryptid!=0, slices=%u); will be re-signed by ldid", node.encryptedArm64SliceCount]];
         } else if (node.hasEncryptedSlice && match != nil) {
             [nodeWarnings addObject:[NSString stringWithFormat:@"non-arm64 Mach-O slice(s) are encrypted (cryptid!=0, slices=%u); target arm64 slice remains unencrypted", node.encryptedSliceCount]];
         }
         if (node.launchCritical || node.role == SpiderBundleRoleAppExtension || node.role == SpiderBundleRoleXPCService) {
             if (!node.executableExists) [nodeFatal addObject:@"required executable is missing"];
-            if (!node.machOValid) [nodeFatal addObject:@"required executable is not a valid parsed Mach-O"];
+            // FIX: machOValid may be NO for encrypted App Store IPAs. The executable
+            // still exists and is launchable after ldid re-signing. Only reject if
+            // the file is completely unrecognizable (no slices at all).
+            if (!node.machOValid && match != nil && match.slices.count == 0) {
+                [nodeFatal addObject:@"required executable has no recognizable Mach-O slices"];
+            } else if (!node.machOValid && match == nil) {
+                [nodeFatal addObject:@"required executable is not a valid parsed Mach-O"];
+            }
             if (!node.arm64Compatible) [nodeFatal addObject:@"required executable has no arm64-compatible slice"];
         } else if (node.role == SpiderBundleRoleFramework || node.role == SpiderBundleRoleDylib) {
             if (!node.machOValid) [nodeFatal addObject:@"code library is not a valid parsed Mach-O"];
