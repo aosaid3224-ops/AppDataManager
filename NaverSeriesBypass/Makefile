@@ -1,0 +1,18 @@
+TARGET := iphone:clang:latest:15.0
+ARCHS = arm64
+
+include $(THEOS)/makefiles/common.mk
+
+TWEAK_NAME = NaverSeriesBypass
+
+NaverSeriesBypass_FILES = Tweak.x
+NaverSeriesBypass_CFLAGS = -fobjc-arc -Wno-error
+NaverSeriesBypass_FRAMEWORKS = UIKit Security Foundation WebKit
+NaverSeriesBypass_PRIVATE_FRAMEWORKS = 
+
+THEOS_PACKAGE_SCHEME = rootless
+
+include $(THEOS_MAKE_PATH)/tweak.mk
+
+after-install::
+	install.exec "killall -9 SpringBoard"
