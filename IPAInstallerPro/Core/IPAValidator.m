@@ -285,21 +285,54 @@ extern char **environ;
     }
 
     NSData *plistData = result.stdoutData;
-    if (!plistData || plistData.length == 0) {
-        [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
-        return nil;
-    }
-
     NSString *tempPlist = [tempDir stringByAppendingPathComponent:@"Info.plist"];
-    if (![plistData writeToFile:tempPlist atomically:YES]) {
-        [[Logger sharedLogger] error:@"IPAValidator: failed to write plist data to temp file"];
-        [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
-        return nil;
+    BOOL parsedOK = NO;
+
+    if (plistData && plistData.length > 0) {
+        if ([plistData writeToFile:tempPlist atomically:YES]) {
+            NSDictionary *testParse = [NSDictionary dictionaryWithContentsOfFile:tempPlist];
+            if (testParse) {
+                parsedOK = YES;
+            } else {
+                [[Logger sharedLogger] warning:@"IPAValidator: pipe-extracted plist is corrupted, will attempt disk fallback"];
+            }
+        }
     }
 
-    NSDictionary *testParse = [NSDictionary dictionaryWithContentsOfFile:tempPlist];
-    if (!testParse) {
-        [[Logger sharedLogger] error:@"IPAValidator: extracted plist does not parse as dictionary"];
+    // Fallback: full extraction to disk if pipe-based extraction failed or returned corrupted data
+    if (!parsedOK) {
+        NSString *fallbackTempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+        [[NSFileManager defaultManager] createDirectoryAtPath:fallbackTempDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+        CommandResult *extractResult = [[ProcessRunner sharedRunner] runCommand:cmd
+                                                                       arguments:@[@"-q", path, @"-d", fallbackTempDir]
+                                                                         timeout:60.0];
+        if (extractResult.success) {
+            NSString *payloadPath = [fallbackTempDir stringByAppendingPathComponent:@"Payload"];
+            NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payloadPath error:nil];
+            for (NSString *item in contents) {
+                if ([item hasSuffix:@".app"]) {
+                    NSString *appPath = [payloadPath stringByAppendingPathComponent:item];
+                    NSString *plistPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+                    if ([[NSFileManager defaultManager] fileExistsAtPath:plistPath]) {
+                        NSDictionary *fallbackParse = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+                        if (fallbackParse) {
+                            NSError *copyErr = nil;
+                            [[NSFileManager defaultManager] removeItemAtPath:tempPlist error:nil];
+                            [[NSFileManager defaultManager] copyItemAtPath:plistPath toPath:tempPlist error:&copyErr];
+                            if (!copyErr) {
+                                parsedOK = YES;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
+    }
+
+    if (!parsedOK) {
+        [[Logger sharedLogger] error:@"IPAValidator: failed to extract valid Info.plist via pipe and disk fallback"];
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
         return nil;
     }
