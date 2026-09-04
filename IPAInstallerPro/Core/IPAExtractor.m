@@ -169,7 +169,6 @@ extern char **environ;
     for (id name in legacyFiles) if ([name isKindOfClass:[NSString class]]) [names addObject:name];
     if (names.count == 0) [names addObject:@"AppIcon60x60"];
 
-    NSMutableArray<NSString *> *entries = [NSMutableArray array];
     NSString *prefix = [appRoot stringByAppendingString:@"/"];
     if (!prefix || prefix.length == 0) return entries;
     NSString *prefixLower = prefix.lowercaseString;
