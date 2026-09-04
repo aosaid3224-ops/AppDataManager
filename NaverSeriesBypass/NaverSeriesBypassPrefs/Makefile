@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = NaverSeriesBypassPrefs
 
-NaverSeriesBypassPrefs_FILES = NaverSeriesBypassPrefs.m
+NaverSeriesBypassPrefs_FILES = NaverSeriesBypassPrefs.m DashboardViewController.m
 NaverSeriesBypassPrefs_INSTALL_PATH = /Library/PreferenceBundles
 NaverSeriesBypassPrefs_FRAMEWORKS = UIKit
 NaverSeriesBypassPrefs_PRIVATE_FRAMEWORKS = Preferences
