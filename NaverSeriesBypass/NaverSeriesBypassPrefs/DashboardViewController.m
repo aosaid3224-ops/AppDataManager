@@ -85,7 +85,7 @@
     [p addSubview:l];
 }
 
-- (UILabel *)addValue:(NSString *)text to:(UIView)p y:(CGFloat)y color:(UIColor *)c {
+- (UILabel *)addValue:(NSString *)text to:(UIView *)p y:(CGFloat)y color:(UIColor *)c {
     UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, y, p.frame.size.width - 32, 22)];
     l.text = text;
     l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
