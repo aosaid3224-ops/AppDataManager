@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Clean up logs (optional - comment out to keep logs)
+# rm -f /var/mobile/Documents/NaverBypass_Diagnostics.log
+# rm -f /var/mobile/Documents/NaverBypass_Diagnostics.log.old
+
+echo "Naver Series Bypass removed"
+
+exit 0
