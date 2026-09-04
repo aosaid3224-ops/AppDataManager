@@ -1,6 +1,6 @@
 //
 //  IPAValidator.m
-//  IPAInstallerPro — Commit 2: Binary-safe validation & Mach-O header check
+//  IPAInstallerPro — Commit 6: Rootless path resolution for unzip/codesign
 //
 //  FIXES:
 //  1. extractInfoPlistFromIPA now uses stdoutData (NSData) instead of stdoutText (NSString).
@@ -15,6 +15,7 @@
 #import "ProcessRunner.h"
 #import "CommandResult.h"
 #import "Logger.h"
+#import "RootlessManager.h"
 
 #include <spawn.h>
 #include <sys/wait.h>
@@ -188,7 +189,7 @@ extern char **environ;
     // FIX(wildcard): unzip -p Payload/*/Info.plist extracts ALL matching files
     // concatenated, corrupting data when IPA contains WatchKit/AppClip extensions.
     // Step 1: List archive contents to find the exact path of the MAIN app's Info.plist.
-    NSString *cmd = @"/usr/bin/unzip";
+    NSString *cmd = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
     CommandResult *listResult = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-l", path] timeout:30.0];
     NSString *exactInfoPlistEntry = nil;
     if (listResult.success) {
@@ -283,7 +284,8 @@ extern char **environ;
     NSError *dirErr = nil;
     if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirErr]) return nil;
 
-    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:@"/usr/bin/unzip"
+    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:unzipPath
                                                            arguments:@[@"-q", path, @"-d", tempDir]
                                                              timeout:60.0];
     if (!result.success) {
@@ -318,7 +320,8 @@ extern char **environ;
 }
 
 - (BOOL)validateCodeSignature:(NSString *)path {
-    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:@"/usr/bin/codesign"
+    NSString *codesignPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/codesign"];
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:codesignPath
                                                            arguments:@[@"-v", path]
                                                              timeout:30.0];
     return result.success;
