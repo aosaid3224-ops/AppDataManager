@@ -88,11 +88,16 @@ extern char **environ;
         NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (entry.length == 0) continue;
         NSString *lower = entry.lowercaseString;
+        if (!lower || lower.length == 0) continue;
         if (![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
 
         NSArray<NSString *> *components = [entry pathComponents];
-        if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+        if (components.count < 3) continue;
+        NSString *component1 = components[1];
+        if (!component1 || component1.length == 0) continue;
+        if (![component1.lowercaseString hasSuffix:@".app"]) continue;
         NSString *candidateRoot = [NSString stringWithFormat:@"%@/%@", components[0], components[1]];
+        if (!candidateRoot || candidateRoot.length == 0) continue;
         if (!fallbackEntry) {
             fallbackEntry = entry;
             fallbackRoot = candidateRoot;
@@ -109,6 +114,7 @@ extern char **environ;
         if (candidateExecutable.length == 0) continue;
 
         NSString *expectedExecutable = [[candidateRoot stringByAppendingPathComponent:candidateExecutable] lowercaseString];
+        if (!expectedExecutable || expectedExecutable.length == 0) continue;
         BOOL executableExists = NO;
         for (NSString *candidateRawLine in lines) {
             NSString *candidateEntry = [candidateRawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -147,6 +153,9 @@ extern char **environ;
 }
 
 - (NSArray<NSString *> *)iconEntriesFromListing:(NSString *)listing appRoot:(NSString *)appRoot info:(NSDictionary *)plist {
+    NSMutableArray<NSString *> *entries = [NSMutableArray array];
+    if (!listing || listing.length == 0 || !appRoot || appRoot.length == 0) return entries;
+
     NSMutableArray<NSString *> *names = [NSMutableArray array];
     NSString *iconName = [plist[@"CFBundleIconName"] isKindOfClass:[NSString class]] ? plist[@"CFBundleIconName"] : nil;
     if (iconName.length > 0) [names addObject:iconName];
@@ -162,10 +171,15 @@ extern char **environ;
 
     NSMutableArray<NSString *> *entries = [NSMutableArray array];
     NSString *prefix = [appRoot stringByAppendingString:@"/"];
+    if (!prefix || prefix.length == 0) return entries;
+    NSString *prefixLower = prefix.lowercaseString;
+    if (!prefixLower) return entries;
     for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
         NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (entry.length == 0) continue;
         NSString *lower = entry.lowercaseString;
-        if (![lower hasPrefix:prefix.lowercaseString]) continue;
+        if (!lower) continue;
+        if (![lower hasPrefix:prefixLower]) continue;
         NSString *extension = lower.pathExtension;
         if (![@[@"png", @"jpg", @"jpeg"] containsObject:extension]) continue;
 
