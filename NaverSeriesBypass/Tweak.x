@@ -6,13 +6,38 @@
 #import <Foundation/Foundation.h>
 
 // ============================================
+// PREFERENCES - Settings from Arabic UI
+// ============================================
+
+#define PREFS_PATH @"/var/mobile/Library/Preferences/com.aosaid.naverseriesbypass.plist"
+
+static BOOL isEnabled = YES;
+static BOOL spoofIDFV = YES;
+static BOOL blockKeychain = YES;
+static BOOL spoofHeaders = YES;
+static BOOL jbBypass = YES;
+
+static void loadPrefs() {
+    NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    if (prefs) {
+        isEnabled = [prefs[@"Enabled"] boolValue];
+        spoofIDFV = [prefs[@"SpoofIDFV"] boolValue];
+        blockKeychain = [prefs[@"BlockKeychain"] boolValue];
+        spoofHeaders = [prefs[@"SpoofHeaders"] boolValue];
+        jbBypass = [prefs[@"JBBypass"] boolValue];
+    }
+}
+
+// ============================================
 // DIAGNOSTIC ENGINE - Built-in Logger
 // ============================================
 
 #define LOG_FILE @"/var/mobile/Documents/NaverBypass_Diagnostics.log"
-#define MAX_LOG_SIZE (5 * 1024 * 1024) // 5MB
+#define MAX_LOG_SIZE (5 * 1024 * 1024)
 
 static void NBLog(NSString *format, ...) {
+    if (!isEnabled) return;
+
     va_list args;
     va_start(args, format);
     NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
@@ -23,10 +48,8 @@ static void NBLog(NSString *format, ...) {
                                                          timeStyle:NSDateFormatterMediumStyle];
     NSString *logLine = [NSString stringWithFormat:@"[%@] [NaverBypass] %@\n", timestamp, msg];
 
-    // NSLog for console
     NSLog(@"%@", logLine);
 
-    // File logging
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:LOG_FILE]) {
         [fm createFileAtPath:LOG_FILE contents:nil attributes:nil];
@@ -37,7 +60,6 @@ static void NBLog(NSString *format, ...) {
     [fh writeData:[logLine dataUsingEncoding:NSUTF8StringEncoding]];
     [fh closeFile];
 
-    // Rotate if too big
     NSDictionary *attrs = [fm attributesOfItemAtPath:LOG_FILE error:nil];
     if (attrs.fileSize > MAX_LOG_SIZE) {
         NSString *oldLog = [LOG_FILE stringByAppendingString:@".old"];
@@ -59,7 +81,6 @@ static NSString *generateFakeADID() {
 }
 
 static NSString *generateFakeDeviceID() {
-    // Format like real device IDs
     NSString *chars = @"abcdefghijklmnopqrstuvwxyz0123456789";
     NSMutableString *result = [NSMutableString stringWithCapacity:32];
     for (int i = 0; i < 32; i++) {
@@ -76,17 +97,20 @@ static NSString *generateFakeDeviceID() {
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
+    if (!isEnabled || !spoofIDFV) return %orig;
     NSString *fake = generateFakeIDFV();
     NBLog(@"[SPOOF] identifierForVendor: %@ -> %@", %orig, fake);
     return [[NSUUID alloc] initWithUUIDString:fake];
 }
 
 - (NSString *)name {
+    if (!isEnabled) return %orig;
     NBLog(@"[SPOOF] deviceName: %@ -> iPhone", %orig);
     return @"iPhone";
 }
 
 - (NSString *)model {
+    if (!isEnabled) return %orig;
     NBLog(@"[SPOOF] model: %@ -> iPhone15,2", %orig);
     return @"iPhone";
 }
@@ -96,6 +120,7 @@ static NSString *generateFakeDeviceID() {
 }
 
 - (NSString *)systemVersion {
+    if (!isEnabled) return %orig;
     NBLog(@"[SPOOF] systemVersion: %@ -> 18.3.1", %orig);
     return @"18.3.1";
 }
@@ -126,6 +151,7 @@ static NSString *generateFakeDeviceID() {
 
 static BOOL isNaverKeychainItem(NSDictionary *dict) {
     if (!dict) return NO;
+    if (!isEnabled || !blockKeychain) return NO;
 
     NSString *account = dict[(__bridge NSString *)kSecAttrAccount];
     NSString *service = dict[(__bridge NSString *)kSecAttrService];
@@ -151,49 +177,49 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 }
 
 %hookf(OSStatus, SecItemCopyMatching, CFDictionaryRef query, CFTypeRef *result) {
-    NSDictionary *dict = (__bridge NSDictionary *)query;
+    if (!isEnabled || !blockKeychain) return %orig;
 
+    NSDictionary *dict = (__bridge NSDictionary *)query;
     if (isNaverKeychainItem(dict)) {
         NSString *account = dict[(__bridge NSString *)kSecAttrAccount] ?: @"(nil)";
         NSString *service = dict[(__bridge NSString *)kSecAttrService] ?: @"(nil)";
         NBLog(@"[BLOCK] SecItemCopyMatching - Account:%@ Service:%@ -> errSecItemNotFound", account, service);
         return errSecItemNotFound;
     }
-
     return %orig;
 }
 
 %hookf(OSStatus, SecItemAdd, CFDictionaryRef attributes, CFTypeRef *result) {
-    NSDictionary *dict = (__bridge NSDictionary *)attributes;
+    if (!isEnabled || !blockKeychain) return %orig;
 
+    NSDictionary *dict = (__bridge NSDictionary *)attributes;
     if (isNaverKeychainItem(dict)) {
         NSString *account = dict[(__bridge NSString *)kSecAttrAccount] ?: @"(nil)";
         NBLog(@"[BLOCK] SecItemAdd - Account:%@ -> Fake Success", account);
         return errSecSuccess;
     }
-
     return %orig;
 }
 
 %hookf(OSStatus, SecItemUpdate, CFDictionaryRef query, CFDictionaryRef attributesToUpdate) {
-    NSDictionary *dict = (__bridge NSDictionary *)query;
+    if (!isEnabled || !blockKeychain) return %orig;
 
+    NSDictionary *dict = (__bridge NSDictionary *)query;
     if (isNaverKeychainItem(dict)) {
         NBLog(@"[BLOCK] SecItemUpdate -> Fake Success");
         return errSecSuccess;
     }
-
     return %orig;
 }
 
 %hookf(OSStatus, SecItemDelete, CFDictionaryRef query) {
-    NSDictionary *dict = (__bridge NSDictionary *)query;
+    if (!isEnabled || !blockKeychain) return %orig;
 
+    NSDictionary *dict = (__bridge NSDictionary *)query;
     if (isNaverKeychainItem(dict)) {
         NBLog(@"[BLOCK] SecItemDelete -> Fake Success");
         return errSecSuccess;
     }
-
     return %orig;
 }
 
@@ -204,6 +230,8 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %hook NSUserDefaults
 
 - (id)objectForKey:(NSString *)defaultName {
+    if (!isEnabled) return %orig;
+
     NSArray *blockedKeys = @[
         @"naver", @"series", @"device", @"ban", @"block",
         @"safety", @"action", @"previous", @"idfv", @"fingerprint"
@@ -224,6 +252,11 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 }
 
 - (void)setObject:(id)value forKey:(NSString *)defaultName {
+    if (!isEnabled) {
+        %orig;
+        return;
+    }
+
     for (NSString *keyword in @[@"ban", @"block", @"device_id", @"fingerprint"]) {
         if ([defaultName rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
             NBLog(@"[BLOCK] NSUserDefaults setObject:forKey:%@ -> Skipped", defaultName);
@@ -240,6 +273,8 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 // ============================================
 
 %hookf(int, uname, struct utsname *value) {
+    if (!isEnabled) return %orig;
+
     int result = %orig;
     if (result == 0 && value) {
         strncpy(value->machine, "iPhone15,2", sizeof(value->machine) - 1);
@@ -253,7 +288,7 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 }
 
 %hookf(int, sysctl, int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    // Log sysctl calls for analysis
+    if (!isEnabled) return %orig;
     if (name && namelen >= 2) {
         NBLog(@"[INFO] sysctl called: name[0]=%d name[1]=%d", name[0], name[1]);
     }
@@ -261,6 +296,7 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 }
 
 %hookf(int, sysctlbyname, const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    if (!isEnabled) return %orig;
     if (name) {
         NSString *nameStr = [NSString stringWithUTF8String:name];
         NBLog(@"[INFO] sysctlbyname called: %@", nameStr);
@@ -275,6 +311,8 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %hook NSFileManager
 
 - (BOOL)fileExistsAtPath:(NSString *)path {
+    if (!isEnabled || !jbBypass) return %orig;
+
     NSArray *jailbreakPaths = @[
         @"/Applications/Cydia.app",
         @"/Applications/blackra1n.app",
@@ -299,11 +337,12 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
             return NO;
         }
     }
-
     return %orig;
 }
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
+    if (!isEnabled || !jbBypass) return %orig;
+
     NSArray *jailbreakPaths = @[
         @"/Applications/Cydia.app",
         @"/Library/MobileSubstrate",
@@ -317,7 +356,6 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
             return NO;
         }
     }
-
     return %orig;
 }
 
@@ -326,6 +364,8 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %hook UIApplication
 
 - (BOOL)canOpenURL:(NSURL *)url {
+    if (!isEnabled || !jbBypass) return %orig;
+
     if (url) {
         NSString *scheme = url.scheme;
         if ([scheme isEqualToString:@"cydia"] || 
@@ -347,6 +387,11 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %hook NSMutableURLRequest
 
 - (void)setValue:(NSString *)value forHTTPHeaderField:(NSString *)field {
+    if (!isEnabled || !spoofHeaders) {
+        %orig;
+        return;
+    }
+
     NSString *lowerField = [field lowercaseString];
 
     if ([lowerField isEqualToString:@"x-consumer-id"]) {
@@ -390,6 +435,7 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
                             completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    if (!isEnabled) return %orig;
 
     NSURL *url = request.URL;
     NBLog(@"[NETWORK] Request: %@ %@", request.HTTPMethod, url.absoluteString);
@@ -406,13 +452,11 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
         }
     }
 
-    // Check if this is a viewer/content request (episode access)
     if ([url.absoluteString containsString:@"viewer"] || 
         [url.absoluteString containsString:@"episode"] ||
         [url.absoluteString containsString:@"content"]) {
         NBLog(@"[DETECT] Content request detected - Monitoring response");
 
-        // Wrap completion handler to log response
         void (^wrappedCompletion)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
             NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
             if (httpResponse) {
@@ -429,7 +473,6 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
                 if (responseBody) {
                     NBLog(@"[NETWORK] Response Body: %@", responseBody);
 
-                    // Detect ban message in response
                     if ([responseBody containsString:@"안전조치"] || 
                         [responseBody containsString:@"차단"] ||
                         [responseBody containsString:@"보호"] ||
@@ -458,13 +501,15 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %end
 
 // ============================================
-// 8. WebView Monitoring (for web-based content)
+// 8. WebView Monitoring
 // ============================================
 
 %hook WKWebView
 
 - (void)loadRequest:(NSURLRequest *)request {
-    NBLog(@"[WEBVIEW] loadRequest: %@", request.URL.absoluteString);
+    if (isEnabled) {
+        NBLog(@"[WEBVIEW] loadRequest: %@", request.URL.absoluteString);
+    }
     %orig;
 }
 
@@ -478,7 +523,9 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 
 + (instancetype)UUID {
     NSUUID *uuid = %orig;
-    NBLog(@"[SPOOF] NSUUID.UUID generated: %@", uuid.UUIDString);
+    if (isEnabled) {
+        NBLog(@"[SPOOF] NSUUID.UUID generated: %@", uuid.UUIDString);
+    }
     return uuid;
 }
 
@@ -491,25 +538,28 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %hook NSProcessInfo
 
 - (NSString *)operatingSystemVersionString {
+    if (!isEnabled) return %orig;
     return @"Version 18.3.1 (Build 22D72)";
 }
 
 %end
 
 // ============================================
-// 11. UIScreen Spoofing (Resolution Fingerprinting)
+// 11. UIScreen Spoofing
 // ============================================
 
 %hook UIScreen
 
 - (CGRect)bounds {
     CGRect orig = %orig;
-    // iPhone 15 Pro resolution
-    NBLog(@"[SPOOF] Screen bounds: %@", NSStringFromCGRect(orig));
+    if (isEnabled) {
+        NBLog(@"[SPOOF] Screen bounds: %@", NSStringFromCGRect(orig));
+    }
     return orig;
 }
 
 - (CGFloat)scale {
+    if (!isEnabled) return %orig;
     NBLog(@"[SPOOF] Screen scale: %f -> 3.0", %orig);
     return 3.0;
 }
@@ -517,19 +567,34 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 %end
 
 // ============================================
-// 12. Advanced: Hook specific Naver classes if found
+// 12. CONSTRUCTOR
 // ============================================
 
-// Try to hook Naver-specific classes dynamically
 %ctor {
+    loadPrefs();
+
+    // Watch for preference changes
+    CFNotificationCenterAddObserver(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        NULL,
+        (CFNotificationCallback)loadPrefs,
+        CFSTR("com.aosaid.naverseriesbypass/prefsChanged"),
+        NULL,
+        CFNotificationSuspensionBehaviorCoalesce
+    );
+
     NBLog(@"========================================");
-    NBLog(@"NaverSeriesBypass v2.0 - ROOTLESS");
+    NBLog(@"NaverSeriesBypass v2.1 - ROOTLESS");
     NBLog(@"Target: com.naver.series");
     NBLog(@"iOS Support: 16.x - 18.x");
-    NBLog(@"Features: IDFV|Keychain|Headers|JB-Bypass|Diagnostics");
+    NBLog(@"Status: %@", isEnabled ? @"ENABLED" : @"DISABLED");
+    NBLog(@"Features: IDFV=%@ | Keychain=%@ | Headers=%@ | JB=%@",
+          spoofIDFV ? @"ON" : @"OFF",
+          blockKeychain ? @"ON" : @"OFF",
+          spoofHeaders ? @"ON" : @"OFF",
+          jbBypass ? @"ON" : @"OFF");
     NBLog(@"========================================");
 
-    // List all Naver-related classes for analysis
     int numClasses = objc_getClassList(NULL, 0);
     Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
     objc_getClassList(classes, numClasses);
@@ -545,7 +610,6 @@ static BOOL isNaverKeychainItem(NSDictionary *dict) {
 
     free(classes);
 
-    // Create Documents directory if needed
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *docsPath = @"/var/mobile/Documents";
     if (![fm fileExistsAtPath:docsPath]) {
