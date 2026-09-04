@@ -114,7 +114,7 @@ static UIWindow *NBActiveWindow(void) {
 }
 
 - (void)closeDashboard {
-    UIWindow *window = [[UIApplication sharedApplication] keyWindow];
+    UIWindow *window = NBActiveWindow();
     UIView *overlay = [window viewWithTag:99999];
     if (overlay) {
         [UIView animateWithDuration:0.2 animations:^{
