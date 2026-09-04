@@ -66,6 +66,9 @@ jobs:
           else
             VERSION=$(dpkg-deb -f ../source/NaverSeriesBypass/packages/*.deb Version | head -1)
             git commit -m "NaverSeriesBypass ${VERSION} — dev build"
+            # repo-dev may receive updates from another workflow; rebase before pushing.
+            git fetch origin main
+            git rebase origin/main
             git push origin main
           fi
 
