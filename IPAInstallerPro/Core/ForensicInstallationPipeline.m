@@ -29,10 +29,21 @@
 
 - (NSDictionary *)inputFactsAtPath:(NSString *)ipaPath {
     NSFileManager *fm = [NSFileManager defaultManager];
+    if (!ipaPath || ipaPath.length == 0) {
+        return @{
+            @"path": @"",
+            @"exists": @NO,
+            @"regularFile": @NO,
+            @"size": @0,
+            @"modifiedAt": @"",
+            @"readable": @NO,
+            @"extension": @""
+        };
+    }
     NSDictionary *attrs = [fm attributesOfItemAtPath:ipaPath error:nil];
     BOOL regular = [attrs[NSFileType] isEqualToString:NSFileTypeRegular];
     return @{
-        @"path": ipaPath ?: @"",
+        @"path": ipaPath,
         @"exists": @([fm fileExistsAtPath:ipaPath]),
         @"regularFile": @(regular),
         @"size": attrs[NSFileSize] ?: @0,
@@ -80,7 +91,7 @@
 
     NSString *inputRecord = [log beginPhase:OperationPhaseIPAOpen operation:@"forensic live input inspection" target:ipaPath ?: @"" input:@"NSFileManager attributes/readability" transactionID:transactionID];
     NSDictionary *inputFacts = [self inputFactsAtPath:ipaPath];
-    BOOL inputOK = [inputFacts[@"exists"] boolValue] && [inputFacts[@"regularFile"] boolValue] && [inputFacts[@"readable"] boolValue] && [inputFacts[@"extension"] isEqualToString:@"ipa"];
+    BOOL inputOK = inputFacts && [inputFacts[@"exists"] boolValue] && [inputFacts[@"regularFile"] boolValue] && [inputFacts[@"readable"] boolValue] && [inputFacts[@"extension"] isEqualToString:@"ipa"];
     [log endPhase:inputRecord exitCode:inputOK ? 0 : 1 rawOutput:@"" rawError:inputOK ? @"" : @"Input is not a readable regular IPA file" verification:inputOK ? @"Input facts captured" : @"Input inspection failed" verified:inputOK duration:0 context:inputFacts];
 
     if (!inputOK || !bundleID.length) {
