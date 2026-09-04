@@ -1897,24 +1897,28 @@ extern char **environ;
     NSString *provPath = [appPath stringByAppendingPathComponent:@"embedded.mobileprovision"];
     if ([fm fileExistsAtPath:provPath]) {
         NSData *provData = [NSData dataWithContentsOfFile:provPath];
-        if (provData) {
+        if (provData && provData.length > 0) {
             NSString *provStr = [[NSString alloc] initWithData:provData encoding:NSASCIIStringEncoding];
-            if (provStr) {
+            if (provStr && provStr.length > 0) {
                 // Find Entitlements dict in the plist portion of .mobileprovision
                 NSRange entRange = [provStr rangeOfString:@"<key>Entitlements</key>"];
                 if (entRange.location != NSNotFound) {
                     NSString *sub = [provStr substringFromIndex:entRange.location];
-                    NSRange dictEnd = [sub rangeOfString:@"</dict>"];
-                    if (dictEnd.location != NSNotFound) {
-                        NSString *entXml = [sub substringToIndex:dictEnd.location + 7];
-                        NSString *wrapped = [NSString stringWithFormat:@"<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\">%@</plist>", entXml];
-                        NSData *xmlData = [wrapped dataUsingEncoding:NSUTF8StringEncoding];
-                        if (xmlData) {
-                            NSError *err = nil;
-                            id plist = [NSPropertyListSerialization propertyListWithData:xmlData options:NSPropertyListImmutable format:NULL error:&err];
-                            if ([plist isKindOfClass:[NSDictionary class]]) {
-                                NSLog(@"[IPAInstallerPro] Found entitlements in embedded.mobileprovision (%lu keys)", (unsigned long)[(NSDictionary *)plist count]);
-                                return (NSDictionary *)plist;
+                    if (sub && sub.length > 0) {
+                        NSRange dictEnd = [sub rangeOfString:@"</dict>"];
+                        if (dictEnd.location != NSNotFound) {
+                            NSString *entXml = [sub substringToIndex:dictEnd.location + 7];
+                            if (entXml && entXml.length > 0) {
+                                NSString *wrapped = [NSString stringWithFormat:@"<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0">%@</plist>", entXml];
+                                NSData *xmlData = [wrapped dataUsingEncoding:NSUTF8StringEncoding];
+                                if (xmlData && xmlData.length > 0) {
+                                    NSError *err = nil;
+                                    id plist = [NSPropertyListSerialization propertyListWithData:xmlData options:NSPropertyListImmutable format:NULL error:&err];
+                                    if ([plist isKindOfClass:[NSDictionary class]]) {
+                                        NSLog(@"[IPAInstallerPro] Found entitlements in embedded.mobileprovision (%lu keys)", (unsigned long)[(NSDictionary *)plist count]);
+                                        return (NSDictionary *)plist;
+                                    }
+                                }
                             }
                         }
                     }
