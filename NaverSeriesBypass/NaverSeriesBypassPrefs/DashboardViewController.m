@@ -12,33 +12,41 @@
 
 @implementation DashboardViewController
 
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        self.title = @"لوحة التحكم";
+    }
+    return self;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"لوحة التحكم";
     self.view.backgroundColor = [UIColor blackColor];
 
-    CGFloat w = self.view.frame.size.width;
+    CGFloat w = [[UIScreen mainScreen] bounds].size.width;
     CGFloat m = 16;
     CGFloat y = 20;
 
-    // Status
-    UIView *sCard = [self card:y w:w h:70];
-    [self addTitle:@"حالة التطبيق" to:sCard];
-    _statusLabel = [self addValue:@"في الانتظار..." to:sCard y:34 color:[UIColor grayColor]];
+    // Status Card
+    UIView *sCard = [self cardAtY:y width:w height:70];
+    [self addTitle:@"حالة التطبيق" toView:sCard];
+    _statusLabel = [self addValue:@"في الانتظار..." toView:sCard atY:34];
+    _statusLabel.textColor = [UIColor grayColor];
     [self.view addSubview:sCard];
     y += 86;
 
-    // Stats
-    UIView *stCard = [self card:y w:w h:140];
-    [self addTitle:@"الاحصائيات" to:stCard];
-    _statsLabel = [self addValue:@"افتح Naver Series واضغط على فصل" to:stCard y:34 color:[UIColor lightGrayColor]];
+    // Stats Card
+    UIView *stCard = [self cardAtY:y width:w height:140];
+    [self addTitle:@"الاحصائيات" toView:stCard];
+    _statsLabel = [self addValue:@"افتح Naver Series واضغط على فصل" toView:stCard atY:34];
     _statsLabel.numberOfLines = 0;
     [self.view addSubview:stCard];
     y += 156;
 
-    // Logs
-    UIView *lCard = [self card:y w:w h:270];
-    [self addTitle:@"سجل الاحداث" to:lCard];
+    // Log Card
+    UIView *lCard = [self cardAtY:y width:w height:270];
+    [self addTitle:@"سجل الاحداث" toView:lCard];
 
     _logView = [[UITextView alloc] initWithFrame:CGRectMake(m, 34, lCard.frame.size.width - m*2, 180)];
     _logView.backgroundColor = [UIColor colorWithRed:0.02 green:0.02 blue:0.03 alpha:1.0];
@@ -49,53 +57,62 @@
     _logView.text = @"لا يوجد سجل بعد...";
     [lCard addSubview:_logView];
 
-    UIButton *cpy = [self btn:@"نسخ" x:lCard.frame.size.width - m - 60 y:222 color:[UIColor colorWithRed:0.3 green:0.5 blue:1.0 alpha:1.0]];
+    UIButton *cpy = [self buttonWithTitle:@"نسخ" x:lCard.frame.size.width - m - 60 y:222 color:[UIColor colorWithRed:0.3 green:0.5 blue:1.0 alpha:1.0]];
     [cpy addTarget:self action:@selector(doCopy) forControlEvents:UIControlEventTouchUpInside];
     [lCard addSubview:cpy];
 
-    UIButton *clr = [self btn:@"مسح" x:m y:222 color:[UIColor redColor]];
+    UIButton *clr = [self buttonWithTitle:@"مسح" x:m y:222 color:[UIColor redColor]];
     [clr addTarget:self action:@selector(doClear) forControlEvents:UIControlEventTouchUpInside];
     [lCard addSubview:clr];
 
     [self.view addSubview:lCard];
 
-    _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
+    // Timer on main thread
+    [self performSelectorOnMainThread:@selector(startTimer) withObject:nil waitUntilDone:NO];
     [self refresh];
+}
+
+- (void)startTimer {
+    _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    if (_timer) { [_timer invalidate]; _timer = nil; }
+    if (_timer) {
+        [_timer invalidate];
+        _timer = nil;
+    }
 }
 
 // MARK: - UI Helpers
-- (UIView *)card:(CGFloat)y w:(CGFloat)w h:(CGFloat)h {
+- (UIView *)cardAtY:(CGFloat)y width:(CGFloat)w height:(CGFloat)h {
     UIView *v = [[UIView alloc] initWithFrame:CGRectMake(16, y, w - 32, h)];
     v.backgroundColor = [UIColor colorWithRed:0.11 green:0.11 blue:0.12 alpha:1.0];
     v.layer.cornerRadius = 10;
     return v;
 }
 
-- (void)addTitle:(NSString *)text to:(UIView *)p {
-    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, p.frame.size.width - 32, 18)];
+- (void)addTitle:(NSString *)text toView:(UIView *)v {
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, v.frame.size.width - 32, 18)];
     l.text = text;
     l.font = [UIFont systemFontOfSize:12];
     l.textColor = [UIColor colorWithRed:0.5 green:0.5 blue:0.5 alpha:1.0];
     l.textAlignment = NSTextAlignmentRight;
-    [p addSubview:l];
+    [v addSubview:l];
 }
 
-- (UILabel *)addValue:(NSString *)text to:(UIView)p y:(CGFloat)y color:(UIColor *)c {
-    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, y, p.frame.size.width - 32, 22)];
+- (UILabel *)addValue:(NSString *)text toView:(UIView *)v atY:(CGFloat)y {
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16, y, v.frame.size.width - 32, 22)];
     l.text = text;
     l.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    l.textColor = c;
+    l.textColor = [UIColor lightGrayColor];
     l.textAlignment = NSTextAlignmentRight;
-    [p addSubview:l];
+    [v addSubview:l];
     return l;
 }
 
-- (UIButton *)btn:(NSString *)t x:(CGFloat)x y:(CGFloat)y color:(UIColor *)c {
+- (UIButton *)buttonWithTitle:(NSString *)t x:(CGFloat)x y:(CGFloat)y color:(UIColor *)c {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(x, y, 55, 26);
     [b setTitle:t forState:UIControlStateNormal];
@@ -104,7 +121,7 @@
     return b;
 }
 
-// MARK: - Data
+// MARK: - Data & Logic
 - (void)refresh {
     NSString *log = [self readLog];
 
