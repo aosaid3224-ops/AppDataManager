@@ -4,7 +4,7 @@
 #define LOG_FILE @"/var/mobile/Documents/NaverBypass_Diagnostics.log"
 
 // ============================================
-// DASHBOARD - Plain UIViewController
+// DASHBOARD VIEW CONTROLLER (UIViewController)
 // ============================================
 @interface NaverBypassDashboardVC : UIViewController {
     UILabel *_statusValue;
@@ -25,7 +25,7 @@
     CGFloat m = 16;
     CGFloat y = 20;
 
-    // Status
+    // Status Card
     UIView *sCard = [self cardAt:y w:w m:m h:70];
     [self label:@"حالة التطبيق" y:12 parent:sCard];
     _statusValue = [self valueLabelAt:34 parent:sCard];
@@ -34,7 +34,7 @@
     [self.view addSubview:sCard];
     y += 86;
 
-    // Stats
+    // Stats Card
     UIView *stCard = [self cardAt:y w:w m:m h:130];
     [self label:@"الاحصائيات" y:12 parent:stCard];
     _statsLabel = [self valueLabelAt:34 parent:stCard];
@@ -44,7 +44,7 @@
     [self.view addSubview:stCard];
     y += 146;
 
-    // Logs
+    // Log Card
     UIView *lCard = [self cardAt:y w:w m:m h:280];
     [self label:@"سجل الاحداث" y:12 parent:lCard];
 
@@ -68,7 +68,7 @@
 
     [self.view addSubview:lCard];
 
-    // Timer
+    // Refresh timer
     _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
     [self refresh];
 }
@@ -198,11 +198,6 @@
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
     }
     return _specifiers;
-}
-
-- (void)openDashboard {
-    NaverBypassDashboardVC *dash = [[NaverBypassDashboardVC alloc] init];
-    [self.navigationController pushViewController:dash animated:YES];
 }
 
 @end
