@@ -200,9 +200,13 @@ extern char **environ;
             NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             if (entry.length == 0) continue;
             NSString *lower = entry.lowercaseString;
+            if (!lower || lower.length == 0) continue;
             if (![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
             NSArray<NSString *> *components = [entry pathComponents];
-            if (components.count < 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+            if (components.count < 3) continue;
+            NSString *component1 = components[1];
+            if (!component1 || component1.length == 0) continue;
+            if (![component1.lowercaseString hasSuffix:@".app"]) continue;
             // Prefer main app (CFBundlePackageType == APPL) over extensions
             bestEntry = entry;
             // If we can peek at this plist without extracting, do so
