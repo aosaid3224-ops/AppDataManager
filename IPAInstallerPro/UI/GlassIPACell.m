@@ -38,12 +38,47 @@
     ]];
 }
 
+
 - (void)configureWithIPAInfo:(IPAExtractedInfo *)info {
     self.titleLabel.text = info.displayName ?: info.name ?: [info.filePath lastPathComponent];
-    NSString *date = @""; NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:info.filePath error:nil]; NSDate *modified = attrs[NSFileModificationDate]; if (modified) { NSDateFormatter *formatter = [[NSDateFormatter alloc] init]; formatter.dateFormat = @"dd/MM/yyyy"; date = [formatter stringFromDate:modified]; }
-    NSString *first = [NSString stringWithFormat:@"%@  •  %@", info.version ?: @"غير معروف", info.formattedSize ?: @"غير معروف"]; self.metadataLabel.text = date.length ? [NSString stringWithFormat:@"%@\n%@  •", first, date] : first;
-    self.ipaIconView.image = info.icon ?: [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:1 alpha:.7]];
+
+    NSString *date = @"";
+    if (info.modifiedDate) {
+        static NSDateFormatter *formatter = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            formatter = [[NSDateFormatter alloc] init];
+            formatter.dateFormat = @"dd/MM/yyyy";
+        });
+        date = [formatter stringFromDate:info.modifiedDate];
+    }
+
+    NSString *first = [NSString stringWithFormat:@"%@  •  %@", info.version ?: @"غير معروف", info.formattedSize ?: @"غير معروف"];
+    self.metadataLabel.text = date.length ? [NSString stringWithFormat:@"%@\n%@  •", first, date] : first;
+
+    if (info.icon) {
+        self.ipaIconView.image = info.icon;
+        self.ipaIconView.alpha = 1;
+    } else {
+        self.ipaIconView.image = [[UIImage systemImageNamed:@"doc.zipper"] imageWithTintColor:[UIColor colorWithWhite:1 alpha:.7]];
+        self.ipaIconView.alpha = 1;
+    }
 }
+
+- (void)setIconImage:(UIImage *)icon animated:(BOOL)animated {
+    if (!icon) return;
+    if (animated) {
+        self.ipaIconView.alpha = 0;
+        self.ipaIconView.image = icon;
+        [UIView animateWithDuration:0.25 animations:^{
+            self.ipaIconView.alpha = 1;
+        }];
+    } else {
+        self.ipaIconView.image = icon;
+        self.ipaIconView.alpha = 1;
+    }
+}
+
 - (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated { [super setHighlighted:highlighted animated:animated]; void (^changes)(void) = ^{ self.glassView.transform = highlighted ? CGAffineTransformMakeScale(.975, .975) : CGAffineTransformIdentity; self.glassView.alpha = highlighted ? .72 : 1.0; }; if (animated) [UIView animateWithDuration:.26 delay:0 usingSpringWithDamping:.72 initialSpringVelocity:.2 options:UIViewAnimationOptionAllowUserInteraction animations:changes completion:nil]; else changes(); }
 - (void)playEntranceAnimationWithDelay:(NSTimeInterval)delay { self.glassView.alpha = 0; self.glassView.transform = CGAffineTransformMakeTranslation(0, 18); [UIView animateWithDuration:.58 delay:delay usingSpringWithDamping:.82 initialSpringVelocity:.25 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self.glassView.alpha = 1; self.glassView.transform = CGAffineTransformIdentity; } completion:nil]; }
 @end
