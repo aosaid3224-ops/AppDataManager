@@ -132,11 +132,11 @@ extern char **environ;
     }
     // FIX(iOS16+): allInstalledApplications is deprecated/removed on iOS 16+.
     // Use allApplications instead for cross-version compatibility.
-    SEL allAppsSel = nil;
-    if (@available(iOS 16.0, *)) {
+    SEL allAppsSel = @selector(allInstalledApplications);
+    // Resolve the available LaunchServices selector by capability rather than
+    // @available, because this target is built with an older rootless SDK.
+    if (workspace && [workspace respondsToSelector:@selector(allApplications)]) {
         allAppsSel = @selector(allApplications);
-    } else {
-        allAppsSel = @selector(allInstalledApplications);
     }
     if (workspace && [workspace respondsToSelector:allAppsSel]) {
         facts[@"workspaceEnumerationSupported"] = @YES;
