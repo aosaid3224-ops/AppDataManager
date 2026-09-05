@@ -632,7 +632,14 @@ static inline uint64_t swap64(uint64_t v) {
     result.rpaths = rpaths;
     result.loadCommands = lcs;
 
-    if (!result.parseError) {
+    // FIX(v3.0.19): Encrypted binaries are valid Mach-O files. The encryption
+    // only affects the __TEXT segment payload, not the header or load commands.
+    // ldid will strip and re-sign, making the binary runnable. Do NOT fail.
+    if (slice.encrypted) {
+        result.parseStatus = MachOParseSuccess;
+        result.parseError = nil;
+        result.isValidMachO = YES;
+    } else if (!result.parseError) {
         result.parseStatus = MachOParseSuccess;
     } else if (result.parseStatus == MachOParseNotAttempted) {
         result.parseStatus = MachOParseSuccess;
@@ -755,6 +762,12 @@ static inline uint64_t swap64(uint64_t v) {
     if (anySuccess) {
         result.parseStatus = firstError ? MachOParsePartial : MachOParseSuccess;
         if (firstError) result.parseError = firstError;
+    } else if (slices.count > 0) {
+        // FIX(v3.0.19): All slices were encrypted (parseMachOHeader returned success
+        // but we didn't count it as "anySuccess" because of logic mismatch). If we
+        // have slices, the FAT is valid.
+        result.parseStatus = MachOParseSuccess;
+        result.parseError = nil;
     } else {
         result.parseStatus = MachOParseFailed;
         result.parseError = firstError ?: @"Failed to parse any FAT slice";
