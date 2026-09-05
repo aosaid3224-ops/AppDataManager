@@ -43,6 +43,7 @@ extern char **environ;
 @property (nonatomic, strong) NSString *chmodPath;
 @property (nonatomic, strong) NSString *chownPath;
 @property (nonatomic, strong) NSString *rmPath;
+@property (nonatomic, strong) NSString *cpPath;
 @property (nonatomic, strong) NSString *unzipPath;
 @property (nonatomic, strong) NSString *whoamiPath;
 @property (nonatomic, strong) NSString *helperPath;
@@ -92,6 +93,7 @@ extern char **environ;
  self.chmodPath = [rm resolvePath:@"/usr/bin/chmod"];
  self.chownPath = [rm resolvePath:@"/usr/sbin/chown"];
  self.rmPath = [rm resolvePath:@"/bin/rm"];
+ self.cpPath = [rm resolvePath:@"/bin/cp"];
  if (![[NSFileManager defaultManager] isExecutableFileAtPath:self.rmPath]) {
      NSArray<NSString *> *rmCandidates = @[
          @"/var/jb/usr/bin/rm",
@@ -102,6 +104,20 @@ extern char **environ;
      for (NSString *candidate in rmCandidates) {
          if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
              self.rmPath = candidate;
+             break;
+         }
+     }
+ }
+ if (![[NSFileManager defaultManager] isExecutableFileAtPath:self.cpPath]) {
+     NSArray<NSString *> *cpCandidates = @[
+         @"/var/jb/usr/bin/cp",
+         @"/var/jb/bin/cp",
+         @"/usr/bin/cp",
+         @"/bin/cp"
+     ];
+     for (NSString *candidate in cpCandidates) {
+         if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+             self.cpPath = candidate;
              break;
          }
      }
@@ -1358,8 +1374,6 @@ extern char **environ;
       if (completion) completion([InstallationResult failureResult:@"Verified bundle promotion failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
       return;
   }
- }
-
 
  // PHASE 5: PERMISSION
  NSLog(@"[IPAInstallerPro] === PHASE 5: PERMISSION ===");
