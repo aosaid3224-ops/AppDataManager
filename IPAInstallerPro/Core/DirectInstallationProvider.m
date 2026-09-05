@@ -1397,8 +1397,6 @@ extern char **environ;
       if (completion) completion([InstallationResult failureResult:@"Verified bundle promotion failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:nil]);
       return;
   }
- }
-
 
  // PHASE 5: PERMISSION
  NSLog(@"[IPAInstallerPro] === PHASE 5: PERMISSION ===");
