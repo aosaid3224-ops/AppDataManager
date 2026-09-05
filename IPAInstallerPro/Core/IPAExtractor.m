@@ -13,6 +13,7 @@
 #import "Logger.h"
 #import "RootlessManager.h"
 #import "ProcessRunner.h"
+#import "CommandResult.h"
 
 extern char **environ;
 
