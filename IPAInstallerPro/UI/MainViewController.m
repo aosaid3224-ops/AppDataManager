@@ -6,21 +6,10 @@
 #import "GlassIPACell.h"
 
 @interface MainViewController () <UIDocumentPickerDelegate>
-@property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) NSMutableArray *ipaFiles;
-@property (nonatomic, strong) UILabel *emptyLabel;
-@property (nonatomic, strong) UIRefreshControl *refreshControl;
 @property (nonatomic, strong) UIView *toastView;
 @property (nonatomic, strong) UILabel *toastLabel;
-@property (nonatomic, strong) UIActivityIndicatorView *loadingIndicator;
-@property (nonatomic, assign) BOOL isLoading;
-@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *ipaMetadataCache;
-@property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
-@property (nonatomic, assign) NSUInteger ipaLoadGeneration;
 @property (nonatomic, strong) UIView *dashboardHeader;
 @property (nonatomic, assign) BOOL hasShownAutoAbout;
-@property (nonatomic, strong) UILabel *appsCountLabel;
-@property (nonatomic, strong) UILabel *totalSizeLabel;
 @property (nonatomic, strong) UILabel *trustedCountLabel;
 @property (nonatomic, strong) UILabel *installedCountLabel;
 @property (nonatomic, strong) UISearchBar *searchBar;
