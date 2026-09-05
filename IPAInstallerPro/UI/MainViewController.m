@@ -36,6 +36,8 @@
     self.ipaFiles = [NSMutableArray array];
     self.isLoading = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
+    self.ipaIconCache = [[NSCache alloc] init];
+    self.ipaIconCache.countLimit = 100;
     self.ipaCacheQueue = dispatch_queue_create("com.aosaid.ipainstallerpro.ipa-metadata-cache", DISPATCH_QUEUE_SERIAL);
 
     [self setupNavigationBar];
@@ -200,6 +202,11 @@
     return [NSString stringWithFormat:@"%@|%llu|%.6f|%llu", path, size, modified, fileNumber];
 }
 
+
+- (NSString *)iconCacheKeyForPath:(NSString *)path key:(NSString *)cacheKey {
+    return [NSString stringWithFormat:@"%@|%@", path, cacheKey];
+}
+
 - (IPAExtractedInfo *)placeholderInfoForIPAPath:(NSString *)path size:(NSNumber *)size {
     IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
     info.filePath = path;
@@ -217,6 +224,7 @@
     return info;
 }
 
+
 - (void)loadIPAFiles {
     if (self.isLoading) return;
     self.isLoading = YES;
@@ -229,8 +237,6 @@
         self.emptyLabel.hidden = YES;
     });
 
-    // Phase 1: enumerate files and show the list immediately. IPA parsing is
-    // deliberately deferred so a large archive cannot block first paint.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableArray<IPAExtractedInfo *> *foundFiles = [NSMutableArray array];
         NSMutableArray<NSDictionary *> *pending = [NSMutableArray array];
@@ -271,12 +277,12 @@
                 } else {
                     IPAExtractedInfo *placeholder = [self placeholderInfoForIPAPath:path size:attrs[NSFileSize]];
                     [foundFiles addObject:placeholder];
-                    [pending addObject:@{ @"path": path, @"key": cacheKey ?: @"", @"placeholder": placeholder }];
+                    [pending addObject:@{@"path": path, @"key": cacheKey ?: @"", @"index": @(foundFiles.count - 1)}];
                 }
             }
         }
 
-        // Phase 1 UI commit: discovery is complete; do not wait for unzip/icon work.
+        // Phase 1 UI commit: show placeholders immediately
         dispatch_async(dispatch_get_main_queue(), ^{
             if (loadGeneration != self.ipaLoadGeneration) return;
             [self.ipaFiles removeAllObjects];
@@ -291,36 +297,131 @@
             self.isLoading = NO;
         });
 
-        // Phase 2: enrich only uncached/changed files. Each result is committed
-        // only if the file still has the same size, mtime and inode.
         if (pending.count == 0) return;
+
+        // Phase 2: metadata enrichment (limited concurrency, no icons)
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            dispatch_semaphore_t metaSem = dispatch_semaphore_create(4);
+            dispatch_group_t metaGroup = dispatch_group_create();
+            NSMutableArray<NSIndexPath *> *batchPaths = [NSMutableArray array];
+            NSLock *batchLock = [[NSLock alloc] init];
+
             for (NSDictionary *job in pending) {
-                NSString *path = job[@"path"];
-                NSString *originalKey = job[@"key"];
-                IPAExtractedInfo *parsed = [[IPAExtractor sharedExtractor] extractInfoFromIPA:path];
-                if (!parsed) continue;
+                dispatch_semaphore_wait(metaSem, DISPATCH_TIME_FOREVER);
+                dispatch_group_enter(metaGroup);
 
-                NSDictionary *currentAttrs = [fm attributesOfItemAtPath:path error:nil];
-                NSString *currentKey = [self ipaCacheKeyForPath:path attributes:currentAttrs];
-                if (![currentKey isEqualToString:originalKey]) continue;
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    @autoreleasepool {
+                        NSString *path = job[@"path"];
+                        NSString *originalKey = job[@"key"];
+                        IPAExtractedInfo *parsed = [[IPAExtractor sharedExtractor] extractMetadataFromIPA:path];
 
-                dispatch_sync(self.ipaCacheQueue, ^{
-                    self.ipaMetadataCache[path] = @{ @"key": originalKey, @"info": parsed };
-                });
+                        if (parsed) {
+                            NSDictionary *currentAttrs = [fm attributesOfItemAtPath:path error:nil];
+                            NSString *currentKey = [self ipaCacheKeyForPath:path attributes:currentAttrs];
+                            if ([currentKey isEqualToString:originalKey]) {
+                                dispatch_sync(self.ipaCacheQueue, ^{
+                                    self.ipaMetadataCache[path] = @{@"key": originalKey, @"info": parsed};
+                                });
+                            }
 
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (loadGeneration != self.ipaLoadGeneration) return;
-                    NSUInteger index = [self.ipaFiles indexOfObjectPassingTest:^BOOL(IPAExtractedInfo *obj, NSUInteger idx, BOOL *stop) {
-                        return [obj.filePath isEqualToString:path];
-                    }];
-                    if (index != NSNotFound) {
-                        self.ipaFiles[index] = parsed;
-                        [self.tableView reloadData];
-                        [self updateDashboardStatistics];
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                if (loadGeneration == self.ipaLoadGeneration) {
+                                    NSUInteger index = [job[@"index"] unsignedIntegerValue];
+                                    if (index < self.ipaFiles.count) {
+                                        IPAExtractedInfo *existing = self.ipaFiles[index];
+                                        if ([existing.filePath isEqualToString:path]) {
+                                            self.ipaFiles[index] = parsed;
+                                            [batchLock lock];
+                                            [batchPaths addObject:[NSIndexPath indexPathForRow:index inSection:0]];
+                                            if (batchPaths.count >= 5) {
+                                                NSArray *toReload = [batchPaths copy];
+                                                [batchPaths removeAllObjects];
+                                                [batchLock unlock];
+                                                [self.tableView reloadRowsAtIndexPaths:toReload withRowAnimation:UITableViewRowAnimationNone];
+                                            } else {
+                                                [batchLock unlock];
+                                            }
+                                        }
+                                    }
+                                }
+                                dispatch_semaphore_signal(metaSem);
+                                dispatch_group_leave(metaGroup);
+                            });
+                        } else {
+                            dispatch_semaphore_signal(metaSem);
+                            dispatch_group_leave(metaGroup);
+                        }
                     }
                 });
             }
+
+            dispatch_group_wait(metaGroup, DISPATCH_TIME_FOREVER);
+
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (loadGeneration == self.ipaLoadGeneration && batchPaths.count > 0) {
+                    [batchLock lock];
+                    NSArray *toReload = [batchPaths copy];
+                    [batchPaths removeAllObjects];
+                    [batchLock unlock];
+                    [self.tableView reloadRowsAtIndexPaths:toReload withRowAnimation:UITableViewRowAnimationNone];
+                }
+                [self updateDashboardStatistics];
+            });
+
+            // Phase 3: icon enrichment (background, limited concurrency)
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
+                dispatch_semaphore_t iconSem = dispatch_semaphore_create(2);
+                dispatch_group_t iconGroup = dispatch_group_create();
+
+                for (NSDictionary *job in pending) {
+                    dispatch_semaphore_wait(iconSem, DISPATCH_TIME_FOREVER);
+                    dispatch_group_enter(iconGroup);
+
+                    dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
+                        @autoreleasepool {
+                            NSString *path = job[@"path"];
+                            NSString *originalKey = job[@"key"];
+
+                            NSString *iconCacheKey = [self iconCacheKeyForPath:path key:originalKey];
+                            UIImage *icon = [self.ipaIconCache objectForKey:iconCacheKey];
+
+                            if (!icon) {
+                                icon = [[IPAExtractor sharedExtractor] extractIconFromIPA:path];
+                                if (icon) {
+                                    [self.ipaIconCache setObject:icon forKey:iconCacheKey];
+                                }
+                            }
+
+                            if (icon) {
+                                dispatch_async(dispatch_get_main_queue(), ^{
+                                    if (loadGeneration == self.ipaLoadGeneration) {
+                                        NSUInteger index = [job[@"index"] unsignedIntegerValue];
+                                        if (index < self.ipaFiles.count) {
+                                            IPAExtractedInfo *info = self.ipaFiles[index];
+                                            if ([info.filePath isEqualToString:path] && !info.icon) {
+                                                info.icon = icon;
+                                                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:0];
+                                                GlassIPACell *cell = [self.tableView cellForRowAtIndexPath:indexPath];
+                                                if ([cell isKindOfClass:[GlassIPACell class]]) {
+                                                    [cell setIconImage:icon animated:YES];
+                                                }
+                                            }
+                                        }
+                                    }
+                                    dispatch_semaphore_signal(iconSem);
+                                    dispatch_group_leave(iconGroup);
+                                });
+                            } else {
+                                dispatch_semaphore_signal(iconSem);
+                                dispatch_group_leave(iconGroup);
+                            }
+                        }
+                    });
+                }
+
+                dispatch_group_wait(iconGroup, DISPATCH_TIME_FOREVER);
+            });
         });
     });
 }
@@ -464,5 +565,6 @@
 
     return [UISwipeActionsConfiguration configurationWithActions:@[deleteAction]];
 }
+
 
 @end
