@@ -457,6 +457,15 @@ extern char **environ;
     return nil;
 }
 
+#pragma mark - Compatibility metadata + icon extraction
+
+- (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath {
+    IPAExtractedInfo *info = [self extractMetadataFromIPA:ipaPath];
+    if (!info || ipaPath.length == 0) return info;
+    info.icon = [self extractIconFromIPA:ipaPath];
+    return info;
+}
+
 - (BOOL)containsDangerousPath:(NSString *)path {
     if (!path) return YES;
     if ([path containsString:@".."] || [path containsString:@"~"] || [path hasPrefix:@"/"]) return YES;
@@ -608,7 +617,7 @@ extern char **environ;
 
     id (*initWithURL)(id, SEL, id, id) = (id (*)(id, SEL, id, id))[catalog methodForSelector:initWithURLErrorSel];
     if (initWithURL) {
-        NSError *error = nil;
+        id error = nil;
         id result = initWithURL(catalog, initWithURLErrorSel, assetsURL, &error);
         if (!result || error) return nil;
         catalog = result;
