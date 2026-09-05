@@ -638,7 +638,6 @@ static inline uint64_t swap64(uint64_t v) {
     if (slice.encrypted) {
         result.parseStatus = MachOParseSuccess;
         result.parseError = nil;
-        result.isValidMachO = YES;
     } else if (!result.parseError) {
         result.parseStatus = MachOParseSuccess;
     } else if (result.parseStatus == MachOParseNotAttempted) {
