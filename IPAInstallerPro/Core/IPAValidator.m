@@ -386,8 +386,8 @@ extern char **environ;
 - (BOOL)validateExecutableArchitecture:(NSString *)path {
     NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
     if (!handle) {
-        // FIX: If we cannot read the file (e.g. encrypted or root-owned), assume valid.
-        // ldid will handle decryption/re-signing during installation.
+        // FIX(v3.0.19): Cannot read file (encrypted, root-owned, or sandboxed).
+        // ldid handles decryption/re-signing during installation.
         return YES;
     }
     NSData *header = [handle readDataOfLength:8];

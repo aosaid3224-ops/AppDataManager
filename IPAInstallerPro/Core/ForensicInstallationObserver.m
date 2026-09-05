@@ -109,7 +109,14 @@
 }
 
 - (ForensicInstallState)stateForRecord:(OperationRecord *)record result:(ForensicEventResult *)resultOut {
-    BOOL isPendingBegin = (record.result == OperationResultPending || record.exitCode == -1) && record.rawOutput.length == 0 && record.rawError.length == 0;
+    // FIX(v3.0.19): Detect stale pending records. If a record has been pending
+    // for >10 minutes, or if it's a Complete phase with exitCode -1, treat as failed.
+    BOOL isStalePending = NO;
+    if (record.result == OperationResultPending && record.timestamp) {
+        if ([[NSDate date] timeIntervalSinceDate:record.timestamp] > 600) isStalePending = YES;
+        if (record.phase == OperationPhaseComplete && record.exitCode == -1) isStalePending = YES;
+    }
+    BOOL isPendingBegin = ((record.result == OperationResultPending || record.exitCode == -1) && record.rawOutput.length == 0 && record.rawError.length == 0) && !isStalePending;
     BOOL successful = record.verified && record.exitCode == 0 && record.result != OperationResultFailed;
     ForensicEventResult result = isPendingBegin ? ForensicEventResultPending : (successful ? ForensicEventResultSuccess : (record.result == OperationResultPartial ? ForensicEventResultPartial : ForensicEventResultFailure));
     ForensicInstallState state = isPendingBegin ? self.currentState : self.currentState;

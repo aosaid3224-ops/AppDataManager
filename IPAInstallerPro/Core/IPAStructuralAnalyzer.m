@@ -431,7 +431,8 @@ extern char **environ;
             executable.slices = [slices copy];
 
             // CRITICAL: Spider checks these two properties
-            executable.machOValid = (analysis.parseStatus == MachOParseSuccess || analysis.parseStatus == MachOParsePartial);
+            // FIX(v3.0.19): Encrypted binaries are valid. The encryption is stripped by ldid.
+            executable.machOValid = (analysis.parseStatus == MachOParseSuccess || analysis.parseStatus == MachOParsePartial || analysis.hasEncryptedSlice);
 
             BOOL hasArm64 = NO;
             for (MachOSlice *slice in analysis.slices) {
