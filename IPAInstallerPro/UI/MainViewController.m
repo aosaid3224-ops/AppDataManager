@@ -13,6 +13,9 @@
 @property (nonatomic, strong) UILabel *trustedCountLabel;
 @property (nonatomic, strong) UILabel *installedCountLabel;
 @property (nonatomic, strong) UISearchBar *searchBar;
+@property (nonatomic, strong) UIView *importOverlayView;
+@property (nonatomic, strong) UIActivityIndicatorView *importSpinner;
+@property (nonatomic, strong) UILabel *importLabel;
 @end
 
 @implementation MainViewController
@@ -36,21 +39,19 @@
     [self setupAddButton];
     [self setupToast];
     [self setupLoadingIndicator];
+    [self setupImportOverlay];
     [self loadIPAFiles];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     self.navigationController.navigationBarHidden = YES;
-    // Don't reload here to avoid lag — use pull-to-refresh instead
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if (self.hasShownAutoAbout) return;
     self.hasShownAutoAbout = YES;
-
-    // Wait until the first frame is visible so the alert never blocks app launch.
     dispatch_async(dispatch_get_main_queue(), ^{
         [self presentAutomaticAboutIfNeeded];
     });
@@ -103,7 +104,7 @@
     NSMutableAttributedString *styledTitle = [[NSMutableAttributedString alloc] initWithString:@"ملفات IPA" attributes:@{NSFontAttributeName:[UIFont systemFontOfSize:27 weight:UIFontWeightBold], NSForegroundColorAttributeName:UIColor.whiteColor}];
     [styledTitle addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.22 blue:0.18 alpha:1.0] range:NSMakeRange(6, 3)]; title.attributedText = styledTitle; title.textAlignment = NSTextAlignmentCenter; title.autoresizingMask = UIViewAutoresizingFlexibleWidth; [self.dashboardHeader addSubview:title];
     UIButton *add = [UIButton buttonWithType:UIButtonTypeSystem]; add.frame = CGRectMake(width - 64, 34, 44, 44); add.layer.cornerRadius = 15; add.layer.borderWidth = 0.7; add.layer.borderColor = [UIColor colorWithWhite:1 alpha:.16].CGColor; add.backgroundColor = [UIColor colorWithWhite:1 alpha:.025]; [add setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal]; add.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [add addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside]; [self.dashboardHeader addSubview:add];
-    UIButton *viewMode = [UIButton buttonWithType:UIButtonTypeSystem]; viewMode.frame = CGRectMake(24, 34, 48, 48); viewMode.layer.cornerRadius = 17; viewMode.layer.borderWidth = 1; viewMode.layer.borderColor = [UIColor colorWithWhite:1 alpha:.14].CGColor; [viewMode setImage:[UIImage systemImageNamed:@"list.bullet"] forState:UIControlStateNormal]; viewMode.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [self.dashboardHeader addSubview:viewMode];
+    UIButton *viewMode = [UIButton buttonWithType:UIButtonTypeSystem]; viewMode.frame = CGRectMake(24, 34, 48, 48); viewMode.layer.cornerRadius = 17; viewMode.layer.borderWidth = 1; viewMode.layer.borderColor = [UIColor colorWithWhite:1 alpha:.14].CGColor; [viewMode setImage:[UIImage systemImageNamed:@"list.bullet"] forState:UIControlStateNormal]; viewMode.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [viewMode addTarget:self action:@selector(toggleViewMode:) forControlEvents:UIControlEventTouchUpInside]; [self.dashboardHeader addSubview:viewMode];
     self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(8, 91, MAX(width - 16, 1), 42)]; self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth; self.searchBar.placeholder = @"البحث في الملفات..."; self.searchBar.searchBarStyle = UISearchBarStyleMinimal; self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; self.searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft; [self.dashboardHeader addSubview:self.searchBar];
     UIView *stats = [[UIView alloc] initWithFrame:CGRectMake(8, 139, MAX(width - 16, 1), 74)]; stats.autoresizingMask = UIViewAutoresizingFlexibleWidth; stats.backgroundColor = [UIColor colorWithRed:.065 green:.066 blue:.075 alpha:1]; stats.layer.cornerRadius = 17; stats.layer.borderWidth = 1; stats.layer.borderColor = [UIColor colorWithRed:.42 green:.08 blue:.09 alpha:.65].CGColor; [self.dashboardHeader addSubview:stats];
     NSArray *icons = @[@"cube", @"chart.pie", @"shield", @"arrow.down.circle"]; NSArray *labels = @[@"التطبيقات", @"إجمالي الحجم", @"موثوقة", @"تم التثبيت"]; NSMutableArray *values = [NSMutableArray array];
@@ -162,6 +163,55 @@
     [self.view addSubview:self.loadingIndicator];
 }
 
+- (void)setupImportOverlay {
+    self.importOverlayView = [[UIView alloc] initWithFrame:self.view.bounds];
+    self.importOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.importOverlayView.backgroundColor = [UIColor colorWithRed:0.0 green:0.0 blue:0.0 alpha:0.55];
+    self.importOverlayView.alpha = 0.0;
+    self.importOverlayView.hidden = YES;
+    [self.view addSubview:self.importOverlayView];
+
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 220, 120)];
+    card.center = CGPointMake(self.importOverlayView.bounds.size.width / 2, self.importOverlayView.bounds.size.height / 2);
+    card.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+    card.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.10 alpha:1.0];
+    card.layer.cornerRadius = 20;
+    card.layer.borderWidth = 0.8;
+    card.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.12].CGColor;
+    [self.importOverlayView addSubview:card];
+
+    self.importSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.importSpinner.center = CGPointMake(card.bounds.size.width / 2, 38);
+    self.importSpinner.color = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1];
+    [card addSubview:self.importSpinner];
+
+    self.importLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 64, 200, 40)];
+    self.importLabel.textAlignment = NSTextAlignmentCenter;
+    self.importLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    self.importLabel.textColor = [UIColor colorWithWhite:0.75 alpha:1.0];
+    self.importLabel.text = @"جارٍ استيراد الملفات...";
+    [card addSubview:self.importLabel];
+}
+
+- (void)showImportOverlay:(BOOL)show {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (show) {
+            self.importOverlayView.hidden = NO;
+            [self.importSpinner startAnimating];
+            [UIView animateWithDuration:0.25 animations:^{
+                self.importOverlayView.alpha = 1.0;
+            }];
+        } else {
+            [UIView animateWithDuration:0.25 animations:^{
+                self.importOverlayView.alpha = 0.0;
+            } completion:^(BOOL finished) {
+                self.importOverlayView.hidden = YES;
+                [self.importSpinner stopAnimating];
+            }];
+        }
+    });
+}
+
 - (void)showToast:(NSString *)message isError:(BOOL)isError {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.toastLabel.text = message;
@@ -191,7 +241,6 @@
     return [NSString stringWithFormat:@"%@|%llu|%.6f|%llu", path, size, modified, fileNumber];
 }
 
-
 - (NSString *)iconCacheKeyForPath:(NSString *)path key:(NSString *)cacheKey {
     return [NSString stringWithFormat:@"%@|%@", path, cacheKey];
 }
@@ -212,7 +261,6 @@
     info.architectures = @[];
     return info;
 }
-
 
 - (void)loadIPAFiles {
     if (self.isLoading) return;
@@ -439,66 +487,95 @@
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray *)urls {
     if (urls.count == 0) return;
 
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *destDir = @"/var/mobile/Documents/IPAInstaller";
+    // 1. UI feedback IMMEDIATELY on Main Thread — user sees response within 16ms
+    [self showImportOverlay:YES];
 
-    if (![fm fileExistsAtPath:destDir]) {
-        NSError *dirError = nil;
-        [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:&dirError];
-        if (dirError) {
-            [self showToast:@"فشل إنشاء مجلد التخزين" isError:YES];
-            return;
+    // 2. Increment generation to cancel any stale loadIPAFiles
+    self.ipaLoadGeneration += 1;
+    NSUInteger importGeneration = self.ipaLoadGeneration;
+
+    // 3. Copy files on background — NEVER block Main Thread
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *destDir = @"/var/mobile/Documents/IPAInstaller";
+
+        if (![fm fileExistsAtPath:destDir]) {
+            [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
         }
-    }
 
-    __block NSInteger successCount = 0;
-    __block NSInteger failCount = 0;
+        NSInteger successCount = 0;
+        NSInteger failCount = 0;
+        NSMutableArray<NSString *> *importedPaths = [NSMutableArray array];
 
-    // Process imports on background thread
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         for (NSURL *url in urls) {
-            [url startAccessingSecurityScopedResource];
+            BOOL accessGranted = [url startAccessingSecurityScopedResource];
 
-            NSString *fileName = url.lastPathComponent;
-            if (!fileName || fileName.length == 0) {
-                fileName = @"imported.ipa";
-            }
-            if (![fileName.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
-                fileName = [fileName stringByAppendingPathExtension:@"ipa"];
-            }
-
-            NSString *destPath = [destDir stringByAppendingPathComponent:fileName];
-            if ([fm fileExistsAtPath:destPath]) {
-                [fm removeItemAtPath:destPath error:nil];
-                dispatch_sync(self.ipaCacheQueue, ^{
-                    [self.ipaMetadataCache removeObjectForKey:destPath];
-                });
-            }
-
-            NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
-            [coordinator coordinateReadingItemAtURL:url options:NSFileCoordinatorReadingForUploading error:nil byAccessor:^(NSURL *newURL) {
-                NSError *copyError = nil;
-                BOOL copied = [fm copyItemAtPath:newURL.path toPath:destPath error:&copyError];
-                if (copied) {
-                    successCount++;
-                    [[Logger sharedLogger] info:[NSString stringWithFormat:@"Imported %@ to %@", fileName, destPath]];
-                } else {
-                    failCount++;
-                    [[Logger sharedLogger] error:[NSString stringWithFormat:@"Failed to import %@: %@", fileName, copyError.localizedDescription]];
+            @try {
+                NSString *fileName = url.lastPathComponent;
+                if (!fileName || fileName.length == 0) {
+                    fileName = @"imported.ipa";
                 }
-            }];
+                if (![fileName.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
+                    fileName = [fileName stringByAppendingPathExtension:@"ipa"];
+                }
 
-            [url stopAccessingSecurityScopedResource];
+                NSString *destPath = [destDir stringByAppendingPathComponent:fileName];
+
+                // Remove stale cache entry if overwriting
+                if ([fm fileExistsAtPath:destPath]) {
+                    [fm removeItemAtPath:destPath error:nil];
+                    dispatch_async(self.ipaCacheQueue, ^{
+                        [self.ipaMetadataCache removeObjectForKey:destPath];
+                    });
+                }
+
+                // Use NSFileCoordinator correctly — iOS 16/17 safe
+                NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+                __block NSError *coordError = nil;
+                [coordinator coordinateReadingItemAtURL:url
+                                                options:NSFileCoordinatorReadingWithoutChanges
+                                                  error:&coordError
+                                             byAccessor:^(NSURL *newURL) {
+                    NSError *copyError = nil;
+                    BOOL copied = [fm copyItemAtPath:newURL.path toPath:destPath error:&copyError];
+                    if (copied) {
+                        successCount++;
+                        [importedPaths addObject:destPath];
+                        [[Logger sharedLogger] info:[NSString stringWithFormat:@"Imported %@ to %@", fileName, destPath]];
+                    } else {
+                        failCount++;
+                        [[Logger sharedLogger] error:[NSString stringWithFormat:@"Failed to import %@: %@", fileName, copyError.localizedDescription]];
+                    }
+                }];
+
+                if (coordError) {
+                    failCount++;
+                    [[Logger sharedLogger] error:[NSString stringWithFormat:@"Coordinator failed for %@: %@", fileName, coordError.localizedDescription]];
+                }
+            } @catch (NSException *exception) {
+                failCount++;
+                [[Logger sharedLogger] error:[NSString stringWithFormat:@"Exception importing %@: %@", url.lastPathComponent, exception.reason]];
+            } @finally {
+                if (accessGranted) {
+                    [url stopAccessingSecurityScopedResource];
+                }
+            }
         }
 
+        // 4. Reload UI on Main Thread
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self loadIPAFiles];
+            [self showImportOverlay:NO];
+
+            // Only reload if this is still the latest generation
+            if (importGeneration == self.ipaLoadGeneration) {
+                [self loadIPAFiles];
+            }
 
             if (successCount > 0 && failCount == 0) {
                 [self showToast:[NSString stringWithFormat:@"تمت إضافة %ld ملف IPA", (long)successCount] isError:NO];
             } else if (successCount > 0 && failCount > 0) {
                 [self showToast:[NSString stringWithFormat:@"%ld نجح، %ld فشل", (long)successCount, (long)failCount] isError:YES];
-            } else {
+            } else if (failCount > 0) {
                 [self showToast:@"فشل إضافة الملفات" isError:YES];
             }
         });
@@ -506,6 +583,8 @@
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    // Dismiss overlay if somehow visible
+    [self showImportOverlay:NO];
 }
 
 #pragma mark - UITableViewDataSource
@@ -542,7 +621,7 @@
                                                                              handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
         IPAExtractedInfo *info = self.ipaFiles[indexPath.row];
         [[NSFileManager defaultManager] removeItemAtPath:info.filePath error:nil];
-        dispatch_sync(self.ipaCacheQueue, ^{
+        dispatch_async(self.ipaCacheQueue, ^{
             [self.ipaMetadataCache removeObjectForKey:info.filePath];
         });
         [self.ipaFiles removeObjectAtIndex:indexPath.row];
@@ -555,5 +634,8 @@
     return [UISwipeActionsConfiguration configurationWithActions:@[deleteAction]];
 }
 
+- (void)toggleViewMode:(id)sender {
+    // Placeholder for future view mode toggle
+}
 
 @end
