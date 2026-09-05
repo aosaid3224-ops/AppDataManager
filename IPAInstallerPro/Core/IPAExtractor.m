@@ -233,6 +233,10 @@ extern char **environ;
 
 #pragma mark - Metadata extraction
 
+- (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath {
+    return [self extractMetadataFromIPA:ipaPath];
+}
+
 - (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath {
     IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
     info.filePath = ipaPath;
@@ -456,7 +460,7 @@ extern char **environ;
     id catalog = [[CUICatalogClass alloc] init];
     NSURL *assetsURL = [NSURL fileURLWithPath:assetsPath];
 
-    id (*initWithURL)(id, SEL, id, id) = (id (*)(id, SEL, id, id))[catalog methodForSelector:initWithURLErrorSel];
+    id (*initWithURL)(id, SEL, id, NSError **) = (id (*)(id, SEL, id, NSError **))[catalog methodForSelector:initWithURLErrorSel];
     if (initWithURL) {
         NSError *error = nil;
         id result = initWithURL(catalog, initWithURLErrorSel, assetsURL, &error);
