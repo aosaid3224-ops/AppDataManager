@@ -18,6 +18,12 @@
 @property (nonatomic, strong) NSArray<NSString *> *architectures;
 @property (nonatomic, strong) NSString *appDirectoryPath;
 @property (nonatomic, strong) NSDictionary *rawInfoPlist;
+@property (nonatomic, strong) NSDate *modifiedDate;
+@end
+
+@interface IPAExtractor (Performance)
+- (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath;
+- (UIImage *)extractIconFromIPA:(NSString *)ipaPath;
 @end
 
 @interface IPAExtractor : NSObject
