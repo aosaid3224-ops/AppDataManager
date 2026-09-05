@@ -12,6 +12,7 @@
 #include <unistd.h>
 #import "Logger.h"
 #import "RootlessManager.h"
+#import "ProcessRunner.h"
 
 extern char **environ;
 
@@ -79,6 +80,16 @@ extern char **environ;
     waitpid(pid, &waitStatus, 0);
     if (!WIFEXITED(waitStatus) || WEXITSTATUS(waitStatus) != 0 || data.length == 0) return nil;
     return [data copy];
+}
+
+- (NSString *)runUnzipListingForIPA:(NSString *)ipaPath {
+    if (ipaPath.length == 0) return nil;
+    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:unzipPath]) unzipPath = @"/usr/bin/unzip";
+    if (![[NSFileManager defaultManager] isExecutableFileAtPath:unzipPath]) return nil;
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:unzipPath arguments:@[@"-Z1", ipaPath] timeout:30.0];
+    if (!result.success || result.stdoutText.length == 0) return nil;
+    return result.stdoutText;
 }
 
 - (NSString *)findAppInfoEntryInListing:(NSString *)listing ipaPath:(NSString *)ipaPath appRoot:(NSString **)appRootOut {
