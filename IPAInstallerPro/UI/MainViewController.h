@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import "../Core/IPAExtractor.h"
 
 @interface MainViewController : UIViewController <UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
