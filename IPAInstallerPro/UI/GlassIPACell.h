@@ -4,5 +4,5 @@
 
 @interface GlassIPACell : UITableViewCell
 - (void)configureWithIPAInfo:(IPAExtractedInfo *)info;
-- (void)playEntranceAnimationWithDelay:(NSTimeInterval)delay;
+- (void)setIconImage:(UIImage *)icon animated:(BOOL)animated;
 @end
