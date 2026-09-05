@@ -196,48 +196,21 @@ extern char **environ;
 
 #pragma mark - Metadata extraction
 
-- (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath {
-    [[Logger sharedLogger] info:[NSString stringWithFormat:@"Extracting IPA info: %@", ipaPath]];
 
+- (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath {
     IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
     info.filePath = ipaPath;
 
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:ipaPath error:nil];
     info.fileSize = attrs[@"NSFileSize"] ?: @0;
     info.formattedSize = [self formatFileSize:[info.fileSize longLongValue]];
+    info.modifiedDate = attrs[NSFileModificationDate];
 
-    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:unzipPath]) unzipPath = @"/usr/bin/unzip";
-    NSString *listingEntry = @"";
-
-    // Read the ZIP directory once through unzip -Z1. This avoids extracting the archive.
-    int pipefd[2];
-    if (pipe(pipefd) != 0) return info;
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, pipefd[0]);
-    posix_spawn_file_actions_addclose(&actions, pipefd[1]);
-    const char *unzipC = unzipPath.UTF8String;
-    char *argv[] = {(char *)unzipC, (char *)"-Z1", (char *)ipaPath.UTF8String, NULL};
-    pid_t pid = 0;
-    int spawnStatus = posix_spawn(&pid, unzipC, &actions, NULL, argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    close(pipefd[1]);
-    if (spawnStatus != 0) { close(pipefd[0]); return info; }
-    NSMutableData *listingDataRaw = [NSMutableData data];
-    uint8_t buffer[32768];
-    ssize_t count = 0;
-    while ((count = read(pipefd[0], buffer, sizeof(buffer))) > 0) [listingDataRaw appendBytes:buffer length:(NSUInteger)count];
-    close(pipefd[0]);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return info;
-    NSString *listing = [[NSString alloc] initWithData:listingDataRaw encoding:NSUTF8StringEncoding];
+    NSString *listing = [self runUnzipListingForIPA:ipaPath];
     if (listing.length == 0) return info;
 
     NSString *appRoot = nil;
-    listingEntry = [self findAppInfoEntryInListing:listing ipaPath:ipaPath appRoot:&appRoot];
+    NSString *listingEntry = [self findAppInfoEntryInListing:listing ipaPath:ipaPath appRoot:&appRoot];
     if (listingEntry.length == 0 || appRoot.length == 0) return info;
 
     NSData *plistData = [self runUnzipDataForIPA:ipaPath entry:listingEntry];
@@ -254,24 +227,44 @@ extern char **environ;
     info.bundleExecutable = [plist[@"CFBundleExecutable"] isKindOfClass:[NSString class]] ? plist[@"CFBundleExecutable"] : @"";
     info.teamIdentifier = [plist[@"TeamIdentifier"] isKindOfClass:[NSString class]] ? plist[@"TeamIdentifier"] : @"غير موقّع";
     info.supportedDevices = [plist[@"UISupportedDevices"] isKindOfClass:[NSArray class]] ? plist[@"UISupportedDevices"] : @[];
-
-    // Do not extract the main executable while listing files. IPAValidator performs the
-    // authoritative executable check only when the user opens the install screen.
-    // This keeps the list fast even for very large applications.
     info.architectures = @[];
+
+    return info;
+}
+
+- (UIImage *)extractIconFromIPA:(NSString *)ipaPath {
+    NSString *listing = [self runUnzipListingForIPA:ipaPath];
+    if (listing.length == 0) return nil;
+
+    NSString *appRoot = nil;
+    NSString *listingEntry = [self findAppInfoEntryInListing:listing ipaPath:ipaPath appRoot:&appRoot];
+    if (listingEntry.length == 0 || appRoot.length == 0) return nil;
+
+    NSData *plistData = [self runUnzipDataForIPA:ipaPath entry:listingEntry];
+    NSDictionary *plist = plistData.length > 0 ? [NSPropertyListSerialization propertyListWithData:plistData options:NSPropertyListImmutable format:NULL error:nil] : nil;
+    if (![plist isKindOfClass:[NSDictionary class]]) return nil;
 
     NSArray<NSString *> *iconEntries = [self iconEntriesFromListing:listing appRoot:appRoot info:plist];
     for (NSString *iconEntry in iconEntries) {
         NSData *iconData = [self runUnzipDataForIPA:ipaPath entry:iconEntry];
         UIImage *image = [UIImage imageWithData:iconData];
-        if (image) { info.icon = image; break; }
+        if (image) return image;
+    }
+    return nil;
+}
+
+- (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath {
+    IPAExtractedInfo *info = [self extractMetadataFromIPA:ipaPath];
+    if (!info) return nil;
+
+    if (!info.icon) {
+        UIImage *icon = [self extractIconFromIPA:ipaPath];
+        if (icon) info.icon = icon;
     }
 
-    // The old implementation exposed a temporary extracted path that was deleted before use.
-    // Keep this nil so callers cannot use a stale path; validation now works from the IPA itself.
-    info.appDirectoryPath = nil;
     return info;
 }
+
 
 - (BOOL)containsDangerousPath:(NSString *)path {
     if (!path) return YES;
