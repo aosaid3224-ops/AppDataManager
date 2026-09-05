@@ -21,14 +21,14 @@
 @property (nonatomic, strong) NSDate *modifiedDate;
 @end
 
-@interface IPAExtractor (Performance)
-- (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath;
-- (UIImage *)extractIconFromIPA:(NSString *)ipaPath;
-@end
-
 @interface IPAExtractor : NSObject
 + (instancetype)sharedExtractor;
 - (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath;
 - (UIImage *)extractIconFromAppDirectory:(NSString *)appDir infoPlist:(NSDictionary *)plist;
 - (NSString *)formatFileSize:(long long)bytes;
+@end
+
+@interface IPAExtractor (Performance)
+- (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath;
+- (UIImage *)extractIconFromIPA:(NSString *)ipaPath;
 @end
