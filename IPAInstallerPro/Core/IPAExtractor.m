@@ -615,9 +615,9 @@ extern char **environ;
     id catalog = [[CUICatalogClass alloc] init];
     NSURL *assetsURL = [NSURL fileURLWithPath:assetsPath];
 
-    id (*initWithURL)(id, SEL, id, id) = (id (*)(id, SEL, id, id))[catalog methodForSelector:initWithURLErrorSel];
+    id (*initWithURL)(id, SEL, id, NSError *__autoreleasing *) = (id (*)(id, SEL, id, NSError *__autoreleasing *))[catalog methodForSelector:initWithURLErrorSel];
     if (initWithURL) {
-        id error = nil;
+        NSError *__autoreleasing error = nil;
         id result = initWithURL(catalog, initWithURLErrorSel, assetsURL, &error);
         if (!result || error) return nil;
         catalog = result;
