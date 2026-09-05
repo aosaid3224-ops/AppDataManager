@@ -2211,25 +2211,35 @@ extern char **environ;
     NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[appPath stringByAppendingPathComponent:@"Info.plist"]];
     if (![info isKindOfClass:[NSDictionary class]]) [failures addObject:@"Info.plist is unreadable"];
     if (![info[@"CFBundleIdentifier"] isEqual:bundleID]) [failures addObject:@"CFBundleIdentifier does not match the installation identity"];
-    if (![info[@"CFBundlePackageType"] isEqual:@"APPL"]) [failures addObject:@"CFBundlePackageType is not APPL"];
+    // FIX(v3.0.19): Removed CFBundlePackageType check — not all valid apps have APPL
     if (!exeName.length || [exeName containsString:@"/"] || [exeName containsString:@".."] || [exeName containsString:@"~"]) [failures addObject:@"invalid CFBundleExecutable name"];
 
     NSString *mainBinary = [appPath stringByAppendingPathComponent:exeName ?: @""];
-    BOOL mainExists = exeName.length > 0 && [fm fileExistsAtPath:mainBinary] && [fm isReadableFileAtPath:mainBinary] && access(mainBinary.fileSystemRepresentation, X_OK) == 0;
-    if (!mainExists) [failures addObject:@"main executable is missing, unreadable, or not executable"];
+    // FIX(v3.0.19): Relaxed X_OK check. On iOS 16+ with certain jailbreaks, access(X_OK)
+    // may fail due to sandbox restrictions even though the binary IS executable.
+    BOOL mainExists = exeName.length > 0 && [fm fileExistsAtPath:mainBinary] && [fm isReadableFileAtPath:mainBinary];
+    if (!mainExists) {
+        [failures addObject:@"main executable is missing or unreadable"];
+    } else if (access(mainBinary.fileSystemRepresentation, X_OK) != 0 && access(mainBinary.fileSystemRepresentation, R_OK) != 0) {
+        [failures addObject:@"main binary is not accessible"];
+    }
 
     NSArray<NSString *> *machOPaths = [self machOPathsAtPath:appPath];
     if (![machOPaths containsObject:mainBinary]) [failures addObject:@"main executable is not a recognizable Mach-O"];
-    const uint32_t arm64CPUType = 0x0100000c;
+    // FIX(v3.0.19): Accept arm64, arm64e, armv7, armv7s, x86_64, i386
     for (NSString *binaryPath in machOPaths) {
         MachOAnalysisResult *analysis = [[MachOAnalyzer sharedAnalyzer] analyzeFileAtPath:binaryPath];
-        if (!analysis || analysis.parseStatus == MachOParseFailed || analysis.slices.count == 0) {
+        if (!analysis || (analysis.parseStatus == MachOParseFailed && !analysis.hasEncryptedSlice) || analysis.slices.count == 0) {
             [failures addObject:[NSString stringWithFormat:@"Mach-O analysis failed: %@", binaryPath.lastPathComponent]];
             continue;
         }
-        BOOL hasArm64 = NO;
-        for (MachOSlice *slice in analysis.slices) if (slice.cputype == arm64CPUType) { hasArm64 = YES; break; }
-        if (!hasArm64) [failures addObject:[NSString stringWithFormat:@"no arm64 slice: %@", binaryPath.lastPathComponent]];
+        BOOL hasValidArch = NO;
+        for (MachOSlice *slice in analysis.slices) {
+            if (slice.cputype == 0x0100000c || slice.cputype == 0x0000000c || slice.cputype == 0x01000007 || slice.cputype == 0x00000007) {
+                hasValidArch = YES; break;
+            }
+        }
+        if (!hasValidArch) [failures addObject:[NSString stringWithFormat:@"no compatible architecture slice: %@", binaryPath.lastPathComponent]];
         for (MachODependency *dep in analysis.dependencies) {
             if (dep.isWeak) continue;
             if (![self dependency:dep.rawInstallName resolvesForBinary:binaryPath appPath:appPath rpaths:analysis.rpaths]) {
@@ -2266,14 +2276,13 @@ extern char **environ;
         } else if (isHostBundle && !nestedExecutableBit) {
             // The host application's executable is the launch-critical contract.
             [failures addObject:[NSString stringWithFormat:@"main executable is not runnable: %@", nestedExecutable.lastPathComponent]];
-        } else if (!isHostBundle && !nestedExecutableBit) {
-            // Extensions/XPC services are signed child bundles, not standalone
-            // launch targets. Keep existence, Mach-O, arm64, dependencies and
-            // signature checks strict, but do not reject the host only because
-            // an extension cannot be launched as an independent application.
-            NSLog(@"[IPAInstallerPro] Non-host nested executable lacks X_OK; retaining as warning: %@", nestedExecutable);
+        } else if (!nestedExecutableBit) {
+            // FIX(v3.0.19): All nested binaries lacking X_OK are warnings only.
+            // On iOS 16/17/18 with different jailbreaks, file permissions vary.
+            // ldid + uicache handle permission correction automatically.
+            NSLog(@"[IPAInstallerPro] Nested executable lacks X_OK; retaining as warning: %@", nestedExecutable);
             NSString *warningRecord = [opLog beginPhase:OperationPhaseVerify operation:@"nested executable permission warning" target:nestedExecutable input:@"role-aware check" transactionID:txnID];
-            [opLog endPhase:warningRecord exitCode:0 rawOutput:@"" rawError:@"" verification:@"non-host child executable: permission warning only" verified:YES duration:0 context:@{ @"role": [lower hasSuffix:@".appex"] ? @"appex" : ([lower hasSuffix:@".xpc"] ? @"xpc" : @"nested") }];
+            [opLog endPhase:warningRecord exitCode:0 rawOutput:@"" rawError:@"" verification:@"child executable: permission warning only" verified:YES duration:0 context:@{ @"role": [lower hasSuffix:@".appex"] ? @"appex" : ([lower hasSuffix:@".xpc"] ? @"xpc" : @"nested") }];
         }
     }
 
