@@ -15,6 +15,10 @@
 
 extern char **environ;
 
+@interface IPAExtractor ()
+- (NSString *)runUnzipListingForIPA:(NSString *)ipaPath;
+@end
+
 @implementation IPAExtractedInfo
 @end
 
