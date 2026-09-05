@@ -503,8 +503,8 @@
             [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
         }
 
-        NSInteger successCount = 0;
-        NSInteger failCount = 0;
+        __block NSInteger successCount = 0;
+        __block NSInteger failCount = 0;
         NSMutableArray<NSString *> *importedPaths = [NSMutableArray array];
 
         for (NSURL *url in urls) {
