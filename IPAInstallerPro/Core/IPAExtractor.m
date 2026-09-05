@@ -1,9 +1,11 @@
 //
 //  IPAExtractor.m
-//  IPAInstallerPro — Commit 2: Binary-safe metadata extraction
+//  IPAInstallerPro — Commit 3: Universal Icon Extraction (iOS 16/17/18 Rootless)
 //
-//  FIX: findAppInfoEntryInListing now prefers CFBundlePackageType == APPL
-//  to avoid selecting WatchKit extensions or AppClips as the main app.
+//  FIX: Added full Assets.car / NSBundle / CoreUI support for iOS 16+ icons.
+//  Previous code only searched for loose PNG files inside ZIP, which fails
+//  when apps use CFBundleIconName pointing to Assets.car (common on iOS 16+).
+//  This fix is comprehensive, backward-compatible, and Rootless-safe.
 //
 
 #import "IPAExtractor.h"
@@ -19,6 +21,10 @@ extern char **environ;
 
 @interface IPAExtractor ()
 - (NSString *)runUnzipListingForIPA:(NSString *)ipaPath;
+- (UIImage *)extractTraditionalIconFromIPA:(NSString *)ipaPath;
+- (UIImage *)extractIconFromAssetsCatalogInIPA:(NSString *)ipaPath;
+- (UIImage *)loadIconFromAssetsCar:(NSString *)assetsPath infoPlist:(NSDictionary *)plist;
+- (NSArray<NSString *> *)sortIconEntriesByResolution:(NSArray<NSString *> *)entries;
 @end
 
 @implementation IPAExtractedInfo
@@ -142,7 +148,8 @@ extern char **environ;
         if (executableExists) {
             BOOL hasAppTraits = (candidateInfo[@"UIRequiredDeviceCapabilities"] != nil ||
                                  candidateInfo[@"CFBundleIconFiles"] != nil ||
-                                 candidateInfo[@"CFBundleIcons"] != nil);
+                                 candidateInfo[@"CFBundleIcons"] != nil ||
+                                 candidateInfo[@"CFBundleIconName"] != nil);
             if (hasAppTraits || !bestEntry) {
                 bestEntry = entry;
                 bestRoot = candidateRoot;
@@ -210,8 +217,21 @@ extern char **environ;
     return entries;
 }
 
-#pragma mark - Metadata extraction
+- (NSArray<NSString *> *)sortIconEntriesByResolution:(NSArray<NSString *> *)entries {
+    return [entries sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        BOOL a3x = [a containsString:@"@3x"];
+        BOOL b3x = [b containsString:@"@3x"];
+        BOOL a2x = [a containsString:@"@2x"];
+        BOOL b2x = [b containsString:@"@2x"];
+        if (a3x && !b3x) return NSOrderedAscending;
+        if (!a3x && b3x) return NSOrderedDescending;
+        if (a2x && !b2x) return NSOrderedAscending;
+        if (!a2x && b2x) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+}
 
+#pragma mark - Metadata extraction
 
 - (IPAExtractedInfo *)extractMetadataFromIPA:(NSString *)ipaPath {
     IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
@@ -248,7 +268,7 @@ extern char **environ;
     return info;
 }
 
-- (UIImage *)extractIconFromIPA:(NSString *)ipaPath {
+- (UIImage *)extractTraditionalIconFromIPA:(NSString *)ipaPath {
     NSString *listing = [self runUnzipListingForIPA:ipaPath];
     if (listing.length == 0) return nil;
 
@@ -261,7 +281,8 @@ extern char **environ;
     if (![plist isKindOfClass:[NSDictionary class]]) return nil;
 
     NSArray<NSString *> *iconEntries = [self iconEntriesFromListing:listing appRoot:appRoot info:plist];
-    for (NSString *iconEntry in iconEntries) {
+    NSArray<NSString *> *sortedEntries = [self sortIconEntriesByResolution:iconEntries];
+    for (NSString *iconEntry in sortedEntries) {
         NSData *iconData = [self runUnzipDataForIPA:ipaPath entry:iconEntry];
         UIImage *image = [UIImage imageWithData:iconData];
         if (image) return image;
@@ -269,18 +290,60 @@ extern char **environ;
     return nil;
 }
 
-- (IPAExtractedInfo *)extractInfoFromIPA:(NSString *)ipaPath {
-    IPAExtractedInfo *info = [self extractMetadataFromIPA:ipaPath];
-    if (!info) return nil;
+- (UIImage *)extractIconFromAssetsCatalogInIPA:(NSString *)ipaPath {
+    NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"IPAIconExtract-%@", [[NSUUID UUID] UUIDString]]];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:nil];
 
-    if (!info.icon) {
-        UIImage *icon = [self extractIconFromIPA:ipaPath];
-        if (icon) info.icon = icon;
+    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
+    if (![fm isExecutableFileAtPath:unzipPath]) unzipPath = @"/usr/bin/unzip";
+
+    CommandResult *extractResult = [[ProcessRunner sharedRunner] runCommand:unzipPath
+                                                                   arguments:@[@"-q", @"-o", ipaPath, @"-d", tempDir]
+                                                                     timeout:60.0];
+    if (!extractResult.success) {
+        [fm removeItemAtPath:tempDir error:nil];
+        return nil;
     }
 
-    return info;
+    NSString *payloadPath = [tempDir stringByAppendingPathComponent:@"Payload"];
+    NSArray *payloadItems = [fm contentsOfDirectoryAtPath:payloadPath error:nil];
+    NSString *appPath = nil;
+    for (NSString *item in payloadItems) {
+        if ([item hasSuffix:@".app"]) {
+            appPath = [payloadPath stringByAppendingPathComponent:item];
+            break;
+        }
+    }
+
+    if (!appPath) {
+        [fm removeItemAtPath:tempDir error:nil];
+        return nil;
+    }
+
+    NSString *infoPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+    if (!plist) {
+        [fm removeItemAtPath:tempDir error:nil];
+        return nil;
+    }
+
+    UIImage *icon = [self extractIconFromAppDirectory:appPath infoPlist:plist];
+
+    [fm removeItemAtPath:tempDir error:nil];
+    return icon;
 }
 
+- (UIImage *)extractIconFromIPA:(NSString *)ipaPath {
+    // Phase 1: Fast path — direct ZIP extraction for traditional PNG icons
+    UIImage *icon = [self extractTraditionalIconFromIPA:ipaPath];
+    if (icon) return icon;
+
+    // Phase 2: Comprehensive path — full extraction for Assets.car / NSBundle / CoreUI
+    icon = [self extractIconFromAssetsCatalogInIPA:ipaPath];
+
+    return icon;
+}
 
 - (BOOL)containsDangerousPath:(NSString *)path {
     if (!path) return YES;
@@ -290,21 +353,130 @@ extern char **environ;
 
 - (UIImage *)extractIconFromAppDirectory:(NSString *)appDir infoPlist:(NSDictionary *)plist {
     if (appDir.length == 0 || plist.count == 0) return nil;
+
+    // Phase 1: Traditional PNG/JPEG files
     NSArray *iconFiles = nil;
     NSDictionary *iconsDict = plist[@"CFBundleIcons"];
     NSDictionary *primaryIcon = iconsDict[@"CFBundlePrimaryIcon"];
     iconFiles = primaryIcon[@"CFBundleIconFiles"];
     if (!iconFiles) iconFiles = plist[@"CFBundleIconFiles"];
     if (!iconFiles || iconFiles.count == 0) iconFiles = @[@"AppIcon60x60"];
+
     for (NSString *iconName in [iconFiles reverseObjectEnumerator]) {
         for (NSString *scale in @[@"@3x", @"@2x", @""]) {
             for (NSString *ext in @[@".png", @".jpg", @".jpeg"]) {
                 NSString *path = [appDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@%@%@", iconName, scale, ext]];
-                if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return [UIImage imageWithContentsOfFile:path];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                    UIImage *img = [UIImage imageWithContentsOfFile:path];
+                    if (img) return img;
+                }
             }
         }
     }
+
+    // Phase 2: CFBundleIconName (Assets.car) via NSBundle + UIImage
+    NSString *iconName = plist[@"CFBundleIconName"];
+    if ([iconName isKindOfClass:[NSString class]] && iconName.length > 0) {
+        NSBundle *bundle = [NSBundle bundleWithPath:appDir];
+        if (bundle) {
+            UITraitCollection *trait3x = [UITraitCollection traitCollectionWithDisplayScale:3.0];
+            UIImage *img = [UIImage imageNamed:iconName inBundle:bundle compatibleWithTraitCollection:trait3x];
+            if (img) return img;
+
+            UITraitCollection *trait2x = [UITraitCollection traitCollectionWithDisplayScale:2.0];
+            img = [UIImage imageNamed:iconName inBundle:bundle compatibleWithTraitCollection:trait2x];
+            if (img) return img;
+
+            img = [UIImage imageNamed:iconName inBundle:bundle compatibleWithTraitCollection:nil];
+            if (img) return img;
+        }
+    }
+
+    // Phase 3: CoreUI CUICatalog direct access (fallback)
+    NSString *assetsPath = [appDir stringByAppendingPathComponent:@"Assets.car"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:assetsPath]) {
+        UIImage *img = [self loadIconFromAssetsCar:assetsPath infoPlist:plist];
+        if (img) return img;
+    }
+
+    // Phase 4: Any AppIcon* file in bundle root (last resort)
+    NSArray *bundleContents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appDir error:nil];
+    for (NSString *file in bundleContents) {
+        NSString *lower = file.lowercaseString;
+        if ([lower hasPrefix:@"appicon"] && ([lower hasSuffix:@".png"] || [lower hasSuffix:@".jpg"] || [lower hasSuffix:@".jpeg"])) {
+            NSString *path = [appDir stringByAppendingPathComponent:file];
+            UIImage *img = [UIImage imageWithContentsOfFile:path];
+            if (img) return img;
+        }
+    }
+
     return nil;
+}
+
+- (UIImage *)loadIconFromAssetsCar:(NSString *)assetsPath infoPlist:(NSDictionary *)plist {
+    static dispatch_once_t onceToken;
+    static Class CUICatalogClass = nil;
+    static SEL initWithURLErrorSel = NULL;
+    static SEL imageWithNameScaleFactorDeviceIdiomSel = NULL;
+
+    dispatch_once(&onceToken, ^{
+        NSBundle *coreUIBundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/CoreUI.framework"];
+        if (coreUIBundle) {
+            [coreUIBundle load];
+            CUICatalogClass = NSClassFromString(@"CUICatalog");
+            if (CUICatalogClass) {
+                initWithURLErrorSel = NSSelectorFromString(@"initWithURL:error:");
+                imageWithNameScaleFactorDeviceIdiomSel = NSSelectorFromString(@"imageWithName:scaleFactor:deviceIdiom:");
+            }
+        }
+    });
+
+    if (!CUICatalogClass || !initWithURLErrorSel) return nil;
+
+    NSString *iconName = nil;
+    id iconNameValue = plist[@"CFBundleIconName"];
+    if ([iconNameValue isKindOfClass:[NSString class]]) iconName = iconNameValue;
+
+    if (!iconName) {
+        NSDictionary *iconsDict = plist[@"CFBundleIcons"];
+        if ([iconsDict isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *primaryIcon = iconsDict[@"CFBundlePrimaryIcon"];
+            if ([primaryIcon isKindOfClass:[NSDictionary class]]) {
+                NSArray *iconFiles = primaryIcon[@"CFBundleIconFiles"];
+                if ([iconFiles isKindOfClass:[NSArray class]] && iconFiles.count > 0) {
+                    id lastFile = iconFiles.lastObject;
+                    if ([lastFile isKindOfClass:[NSString class]]) iconName = lastFile;
+                }
+            }
+        }
+    }
+
+    if (!iconName) return nil;
+
+    id catalog = [[CUICatalogClass alloc] init];
+    NSURL *assetsURL = [NSURL fileURLWithPath:assetsPath];
+
+    id (*initWithURL)(id, SEL, id, id) = (id (*)(id, SEL, id, id))[catalog methodForSelector:initWithURLErrorSel];
+    if (initWithURL) {
+        NSError *error = nil;
+        id result = initWithURL(catalog, initWithURLErrorSel, assetsURL, &error);
+        if (!result || error) return nil;
+        catalog = result;
+    }
+
+    if (!imageWithNameScaleFactorDeviceIdiomSel) return nil;
+
+    UIImage *(*getImage)(id, SEL, NSString *, CGFloat, NSInteger) = (UIImage *(*)(id, SEL, NSString *, CGFloat, NSInteger))[catalog methodForSelector:imageWithNameScaleFactorDeviceIdiomSel];
+    if (!getImage) return nil;
+
+    UIImage *icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 3.0, 0);
+    if (!icon) icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 2.0, 0);
+    if (!icon) icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 1.0, 0);
+    if (!icon) icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 3.0, 1);
+    if (!icon) icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 2.0, 1);
+    if (!icon) icon = getImage(catalog, imageWithNameScaleFactorDeviceIdiomSel, iconName, 1.0, 1);
+
+    return icon;
 }
 
 - (NSArray *)extractArchitectures:(NSString *)executablePath {
