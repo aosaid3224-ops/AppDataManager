@@ -752,7 +752,6 @@ extern char **environ;
           verification:@"NSFileManager backup success" verified:YES duration:0];
       }
   }
-  }
  if (!backedUp) {
  [opLog endPhase:rec exitCode:1 rawOutput:@"" rawError:@"Backup failed"
  verification:@"Could not backup existing app" verified:NO duration:0];
