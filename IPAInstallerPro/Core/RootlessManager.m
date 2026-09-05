@@ -47,21 +47,20 @@
         return path;
     }
 
-    // If rootless, try prepending bootstrap path
+    // FIX(v3.0.26): In rootless, ALWAYS prepend bootstrap path.
+    // resolvePath must be deterministic based on runtime environment (jbroot), NOT file existence.
+    // New destinations that don't exist yet must resolve to the same namespace as staging.
+    // This ensures staging (/var/jb/var/tmp/...) and destApp (/var/jb/Applications/...)
+    // are always on the same logical filesystem, regardless of whether the file exists.
     if (rt.isRootless && rt.bootstrapPath) {
-        NSString *resolved = [rt.bootstrapPath stringByAppendingPathComponent:path];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:resolved]) {
-            return resolved;
-        }
-
-        // Also try without leading slash (e.g., /usr/bin/ldid → /var/jb/usr/bin/ldid)
+        NSString *resolved;
         if ([path hasPrefix:@"/"]) {
             NSString *relativePath = [path substringFromIndex:1];
-            NSString *altResolved = [rt.bootstrapPath stringByAppendingPathComponent:relativePath];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:altResolved]) {
-                return altResolved;
-            }
+            resolved = [rt.bootstrapPath stringByAppendingPathComponent:relativePath];
+        } else {
+            resolved = [rt.bootstrapPath stringByAppendingPathComponent:path];
         }
+        return resolved;
     }
 
     // Fallback: return original path (caller handles non-existence)

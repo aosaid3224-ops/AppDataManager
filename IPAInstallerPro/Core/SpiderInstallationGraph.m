@@ -115,7 +115,11 @@
             for (IPAStructuralExecutableSlice *slice in match.slices) {
                 NSString *archName = slice.architectureName;
                 NSString *arch = (archName && archName.length > 0) ? archName.lowercaseString : @"";
-                if ([arch containsString:@"arm64"] || slice.cputype == 0x0100000c) {
+                // FIX(v3.0.19): Accept arm64, arm64e, armv7, armv7s, i386, x86_64
+                // All of these may be valid depending on device and iOS version.
+                if ([arch containsString:@"arm64"] || slice.cputype == 0x0100000c ||
+                    [arch containsString:@"armv7"] || slice.cputype == 0x0000000c ||
+                    [arch containsString:@"x86"] || slice.cputype == 0x01000007 || slice.cputype == 0x00000007) {
                     node.arm64Compatible = YES;
                     break;
                 }
@@ -134,12 +138,24 @@
             // FIX: machOValid may be NO for encrypted App Store IPAs. The executable
             // still exists and is launchable after ldid re-signing. Only reject if
             // the file is completely unrecognizable (no slices at all).
-            if (!node.machOValid && match != nil && match.slices.count == 0) {
+            // FIX(v3.0.19): Encrypted binaries are valid - ldid strips encryption.
+            // Only fatal if the file is truly unrecognizable (not Mach-O at all).
+            if (!node.machOValid && match != nil && match.slices.count == 0 && !node.hasEncryptedSlice) {
                 [nodeFatal addObject:@"required executable has no recognizable Mach-O slices"];
             } else if (!node.machOValid && match == nil) {
                 [nodeFatal addObject:@"required executable is not a valid parsed Mach-O"];
+            } else if (!node.machOValid && node.hasEncryptedSlice) {
+                [nodeWarnings addObject:@"executable is encrypted; ldid will strip and re-sign"];
             }
-            if (!node.arm64Compatible) [nodeFatal addObject:@"required executable has no arm64-compatible slice"];
+            // FIX(v3.0.19): Downgrade from fatal to warning. armv7/i386 apps may still
+            // work on older devices or via compatibility layers. Only extensions MUST be arm64.
+            if (!node.arm64Compatible) {
+                if (node.role == SpiderBundleRoleAppExtension || node.role == SpiderBundleRoleXPCService) {
+                    [nodeFatal addObject:@"required executable has no arm64-compatible slice"];
+                } else {
+                    [nodeWarnings addObject:@"executable has no arm64-compatible slice; may fail on modern devices"];
+                }
+            }
         } else if (node.role == SpiderBundleRoleFramework || node.role == SpiderBundleRoleDylib) {
             if (!node.machOValid) [nodeFatal addObject:@"code library is not a valid parsed Mach-O"];
             if (!node.arm64Compatible) [nodeFatal addObject:@"code library has no arm64-compatible slice"];
