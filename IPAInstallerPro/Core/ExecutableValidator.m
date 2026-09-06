@@ -226,8 +226,14 @@
     [paths addObject:@"/usr/local/bin"];
 
     // 3. Fallback: known rootless paths (for environments not yet characterized)
-    [paths addObject:@"/var/jb/usr/bin"];
-    [paths addObject:@"/var/jb/bin"];
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    if (rt.bootstrapPath) {
+        [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin"]];
+        [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin"]];
+    } else {
+        [paths addObject:@"/var/jb/usr/bin"];
+        [paths addObject:@"/var/jb/bin"];
+    }
     [paths addObject:@"/var/LIY/usr/bin"];
     [paths addObject:@"/var/LIY/bin"];
     [paths addObject:@"/opt/procursus/bin"];
