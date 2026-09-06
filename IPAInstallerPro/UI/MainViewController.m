@@ -4,6 +4,7 @@
 #import "Core/IPAExtractor.h"
 #import "Core/Logger.h"
 #import "GlassIPACell.h"
+#import "RuntimeEnvironment.h"
 
 @interface MainViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UIView *toastView;
@@ -116,7 +117,7 @@
 
 - (void)updateDashboardStatistics {
     NSUInteger trusted = 0; unsigned long long total = 0; for (IPAExtractedInfo *info in self.ipaFiles) { total += info.fileSize.unsignedLongLongValue; if (info.teamIdentifier.length > 0 && ![info.teamIdentifier isEqualToString:@"غير معروف"]) trusted++; }
-    NSUInteger installed = 0; NSFileManager *fm = [NSFileManager defaultManager]; for (NSString *root in @[@"/Applications", @"/var/jb/Applications"]) { for (NSString *item in [fm contentsOfDirectoryAtPath:root error:nil]) if ([item.pathExtension.lowercaseString isEqualToString:@"app"]) installed++; }
+    NSUInteger installed = 0; NSFileManager *fm = [NSFileManager defaultManager]; RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment]; NSMutableArray *appRoots = [NSMutableArray arrayWithObject:@"/Applications"]; if (rt.bootstrapPath) { [appRoots addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"Applications"]]; } else { [appRoots addObject:@"/var/jb/Applications"]; } for (NSString *root in appRoots) { for (NSString *item in [fm contentsOfDirectoryAtPath:root error:nil]) if ([item.pathExtension.lowercaseString isEqualToString:@"app"]) installed++; }
     self.appsCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)self.ipaFiles.count]; self.totalSizeLabel.text = [[IPAExtractor sharedExtractor] formatFileSize:(long long)total]; self.trustedCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)trusted]; self.installedCountLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)installed];
 }
 
