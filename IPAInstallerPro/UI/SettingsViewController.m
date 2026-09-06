@@ -1,21 +1,19 @@
 //
 //  SettingsViewController.m
-//  IPAInstallerPro — Redesigned Settings UI
+//  IPAInstallerPro — Unified Settings UI
 //
 
 #import "SettingsViewController.h"
 #import "CapabilityManager.h"
 #import "JailbreakEnvironment.h"
 #import "IPTheme.h"
-#import <objc/runtime.h>
 #import "RuntimeEnvironment.h"
+#import <objc/runtime.h>
 
 @interface SettingsViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
-@property (nonatomic, strong) UIStackView *mainStack;
-@property (nonatomic, strong) UIView *envCard;
-@property (nonatomic, strong) UIView *capCard;
-@property (nonatomic, strong) UIView *aboutCard;
+@property (nonatomic, strong) UIView *mainCard;
+@property (nonatomic, strong) UIStackView *contentStack;
 @end
 
 @implementation SettingsViewController
@@ -27,7 +25,6 @@
     self.title = @"الإعدادات";
     self.view.backgroundColor = [IPTheme backgroundColor];
     [self setupUI];
-    [self refreshData];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -38,7 +35,6 @@
 #pragma mark - UI Setup
 
 - (void)setupUI {
-    // ScrollView
     self.scrollView = [[UIScrollView alloc] init];
     self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     self.scrollView.backgroundColor = [UIColor clearColor];
@@ -48,316 +44,98 @@
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [self.scrollView.topAnchor constraintEqualToAnchor:safe.topAnchor],
-        [self.scrollView.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
-        [self.scrollView.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],
+        [self.scrollView.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12],
+        [self.scrollView.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12],
         [self.scrollView.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor]
     ]];
 
-    // Main Stack
-    self.mainStack = [[UIStackView alloc] init];
-    self.mainStack.translatesAutoresizingMaskIntoConstraints = NO;
-    self.mainStack.axis = UILayoutConstraintAxisVertical;
-    self.mainStack.spacing = 20;
-    self.mainStack.alignment = UIStackViewAlignmentFill;
-    [self.scrollView addSubview:self.mainStack];
+    // Main unified card
+    self.mainCard = [[UIView alloc] init];
+    self.mainCard.translatesAutoresizingMaskIntoConstraints = NO;
+    self.mainCard.backgroundColor = [IPTheme cardColor];
+    self.mainCard.layer.cornerRadius = 20;
+    self.mainCard.layer.borderWidth = 0.5;
+    self.mainCard.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
+    self.mainCard.clipsToBounds = YES;
+    [self.scrollView addSubview:self.mainCard];
+
+    self.contentStack = [[UIStackView alloc] init];
+    self.contentStack.translatesAutoresizingMaskIntoConstraints = NO;
+    self.contentStack.axis = UILayoutConstraintAxisVertical;
+    self.contentStack.spacing = 0;
+    self.contentStack.alignment = UIStackViewAlignmentFill;
+    [self.mainCard addSubview:self.contentStack];
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.mainStack.topAnchor constraintEqualToAnchor:self.scrollView.topAnchor constant:16],
-        [self.mainStack.leadingAnchor constraintEqualToAnchor:self.scrollView.leadingAnchor],
-        [self.mainStack.trailingAnchor constraintEqualToAnchor:self.scrollView.trailingAnchor],
-        [self.mainStack.bottomAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor constant:-24],
-        [self.mainStack.widthAnchor constraintEqualToAnchor:self.scrollView.widthAnchor]
+        [self.mainCard.topAnchor constraintEqualToAnchor:self.scrollView.topAnchor constant:12],
+        [self.mainCard.leadingAnchor constraintEqualToAnchor:self.scrollView.leadingAnchor],
+        [self.mainCard.trailingAnchor constraintEqualToAnchor:self.scrollView.trailingAnchor],
+        [self.mainCard.bottomAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor constant:-12],
+        [self.mainCard.widthAnchor constraintEqualToAnchor:self.scrollView.widthAnchor],
+
+        [self.contentStack.topAnchor constraintEqualToAnchor:self.mainCard.topAnchor constant:8],
+        [self.contentStack.leadingAnchor constraintEqualToAnchor:self.mainCard.leadingAnchor],
+        [self.contentStack.trailingAnchor constraintEqualToAnchor:self.mainCard.trailingAnchor],
+        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.mainCard.bottomAnchor constant:-8]
     ]];
-
-    // Build Cards
-    self.envCard = [self buildEnvironmentCard];
-    self.capCard = [self buildCapabilitiesCard];
-    self.aboutCard = [self buildAboutCard];
-
-    [self.mainStack addArrangedSubview:self.envCard];
-    [self.mainStack addArrangedSubview:self.capCard];
-    [self.mainStack addArrangedSubview:self.aboutCard];
 }
 
-#pragma mark - Card Builders
+#pragma mark - Row Builders
 
-- (UIView *)buildEnvironmentCard {
-    UIView *card = [self baseCard];
-
-    // Header
-    UIView *header = [self cardHeaderWithTitle:@"بيئة التشغيل"
-                                      subtitle:@"معلومات النظام والجلبريك"
-                                          icon:@"terminal.fill"];
-    [card addSubview:header];
-
-    // Divider
-    UIView *divider = [self divider];
-    [card addSubview:divider];
-
-    // Info Rows Stack
-    UIStackView *rows = [[UIStackView alloc] init];
-    rows.translatesAutoresizingMaskIntoConstraints = NO;
-    rows.axis = UILayoutConstraintAxisVertical;
-    rows.spacing = 0;
-    [card addSubview:rows];
-
-    // Constraints
-    [NSLayoutConstraint activateConstraints:@[
-        [header.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
-        [header.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [header.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-
-        [divider.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
-        [divider.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [divider.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [divider.heightAnchor constraintEqualToConstant:0.5],
-
-        [rows.topAnchor constraintEqualToAnchor:divider.bottomAnchor constant:8],
-        [rows.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [rows.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [rows.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16]
-    ]];
-
-    // Store reference to populate later
-    objc_setAssociatedObject(card, @"rowsStack", rows, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    return card;
-}
-
-- (UIView *)buildCapabilitiesCard {
-    UIView *card = [self baseCard];
-
-    // Header
-    UIView *header = [self cardHeaderWithTitle:@"القدرات"
-                                      subtitle:@"حالة الأدوات والخدمات المتوفرة"
-                                          icon:@"checkmark.shield.fill"];
-    [card addSubview:header];
-
-    // Divider
-    UIView *divider = [self divider];
-    [card addSubview:divider];
-
-    // Tools Rows Stack
-    UIStackView *rows = [[UIStackView alloc] init];
-    rows.translatesAutoresizingMaskIntoConstraints = NO;
-    rows.axis = UILayoutConstraintAxisVertical;
-    rows.spacing = 0;
-    [card addSubview:rows];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [header.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
-        [header.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [header.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-
-        [divider.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
-        [divider.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [divider.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [divider.heightAnchor constraintEqualToConstant:0.5],
-
-        [rows.topAnchor constraintEqualToAnchor:divider.bottomAnchor constant:8],
-        [rows.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [rows.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [rows.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16]
-    ]];
-
-    objc_setAssociatedObject(card, @"rowsStack", rows, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    return card;
-}
-
-- (UIView *)buildAboutCard {
-    UIView *card = [self baseCard];
-    card.userInteractionEnabled = YES;
-
-    // Tap gesture
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(showAbout)];
-    [card addGestureRecognizer:tap];
-
-    // Icon
-    UIImageView *iconView = [[UIImageView alloc] init];
-    iconView.translatesAutoresizingMaskIntoConstraints = NO;
-    iconView.image = [UIImage systemImageNamed:@"info.circle.fill"];
-    iconView.tintColor = [IPTheme accentColor];
-    iconView.contentMode = UIViewContentModeScaleAspectFit;
-    [card addSubview:iconView];
-
-    // Labels
-    UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    titleLabel.text = @"حول الأداة";
-    titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentRight;
-    [card addSubview:titleLabel];
-
-    UILabel *subLabel = [[UILabel alloc] init];
-    subLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    subLabel.text = @"معلومات عن IPAInstallerPro";
-    subLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
-    subLabel.textColor = [IPTheme mutedTextColor];
-    subLabel.textAlignment = NSTextAlignmentRight;
-    [card addSubview:subLabel];
-
-    // Chevron
-    UIImageView *chevron = [[UIImageView alloc] init];
-    chevron.translatesAutoresizingMaskIntoConstraints = NO;
-    chevron.image = [UIImage systemImageNamed:@"chevron.left"];
-    chevron.tintColor = [UIColor colorWithWhite:0.4 alpha:1];
-    chevron.contentMode = UIViewContentModeScaleAspectFit;
-    [card addSubview:chevron];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [iconView.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
-        [iconView.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
-        [iconView.widthAnchor constraintEqualToConstant:28],
-        [iconView.heightAnchor constraintEqualToConstant:28],
-
-        [chevron.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
-        [chevron.centerYAnchor constraintEqualToAnchor:card.centerYAnchor],
-        [chevron.widthAnchor constraintEqualToConstant:14],
-        [chevron.heightAnchor constraintEqualToConstant:14],
-
-        [titleLabel.trailingAnchor constraintEqualToAnchor:chevron.leadingAnchor constant:-12],
-        [titleLabel.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:12],
-        [titleLabel.topAnchor constraintEqualToAnchor:card.topAnchor constant:16],
-
-        [subLabel.trailingAnchor constraintEqualToAnchor:titleLabel.trailingAnchor],
-        [subLabel.leadingAnchor constraintEqualToAnchor:titleLabel.leadingAnchor],
-        [subLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:4],
-        [subLabel.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16]
-    ]];
-
-    // Height
-    [card.heightAnchor constraintGreaterThanOrEqualToConstant:72].active = YES;
-
-    return card;
-}
-
-#pragma mark - Helpers
-
-- (UIView *)baseCard {
-    UIView *card = [[UIView alloc] init];
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.backgroundColor = [IPTheme cardColor];
-    card.layer.cornerRadius = 16;
-    card.layer.borderWidth = 0.5;
-    card.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    card.clipsToBounds = YES;
-    return card;
-}
-
-- (UIView *)divider {
-    UIView *v = [[UIView alloc] init];
-    v.translatesAutoresizingMaskIntoConstraints = NO;
-    v.backgroundColor = [IPTheme dividerColor];
-    return v;
-}
-
-- (UIView *)cardHeaderWithTitle:(NSString *)title subtitle:(NSString *)subtitle icon:(NSString *)iconName {
-    UIView *container = [[UIView alloc] init];
-    container.translatesAutoresizingMaskIntoConstraints = NO;
-
-    // Icon background
-    UIView *iconBg = [[UIView alloc] init];
-    iconBg.translatesAutoresizingMaskIntoConstraints = NO;
-    iconBg.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:1];
-    iconBg.layer.cornerRadius = 10;
-    [container addSubview:iconBg];
-
-    UIImageView *iconView = [[UIImageView alloc] init];
-    iconView.translatesAutoresizingMaskIntoConstraints = NO;
-    iconView.image = [UIImage systemImageNamed:iconName];
-    iconView.tintColor = [IPTheme accentColor];
-    iconView.contentMode = UIViewContentModeScaleAspectFit;
-    [iconBg addSubview:iconView];
-
-    UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    titleLabel.text = title;
-    titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentRight;
-    [container addSubview:titleLabel];
-
-    UILabel *subLabel = [[UILabel alloc] init];
-    subLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    subLabel.text = subtitle;
-    subLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
-    subLabel.textColor = [IPTheme mutedTextColor];
-    subLabel.textAlignment = NSTextAlignmentRight;
-    [container addSubview:subLabel];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [iconBg.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
-        [iconBg.topAnchor constraintEqualToAnchor:container.topAnchor],
-        [iconBg.widthAnchor constraintEqualToConstant:40],
-        [iconBg.heightAnchor constraintEqualToConstant:40],
-
-        [iconView.centerXAnchor constraintEqualToAnchor:iconBg.centerXAnchor],
-        [iconView.centerYAnchor constraintEqualToAnchor:iconBg.centerYAnchor],
-        [iconView.widthAnchor constraintEqualToConstant:22],
-        [iconView.heightAnchor constraintEqualToConstant:22],
-
-        [titleLabel.trailingAnchor constraintEqualToAnchor:iconBg.leadingAnchor constant:-12],
-        [titleLabel.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-        [titleLabel.topAnchor constraintEqualToAnchor:container.topAnchor constant:2],
-
-        [subLabel.trailingAnchor constraintEqualToAnchor:titleLabel.trailingAnchor],
-        [subLabel.leadingAnchor constraintEqualToAnchor:titleLabel.leadingAnchor],
-        [subLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:4],
-        [subLabel.bottomAnchor constraintEqualToAnchor:container.bottomAnchor]
-    ]];
-
-    return container;
-}
-
-- (UIView *)infoRowWithLabel:(NSString *)label value:(NSString *)value icon:(NSString *)iconName {
+- (UIView *)infoRowWithIcon:(NSString *)iconName label:(NSString *)label value:(NSString *)value {
     UIView *row = [[UIView alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
 
-    // Icon
     UIImageView *iconView = [[UIImageView alloc] init];
     iconView.translatesAutoresizingMaskIntoConstraints = NO;
     iconView.image = [UIImage systemImageNamed:iconName];
-    iconView.tintColor = [IPTheme mutedTextColor];
+    iconView.tintColor = [UIColor colorWithWhite:0.55 alpha:1];
     iconView.contentMode = UIViewContentModeScaleAspectFit;
     [row addSubview:iconView];
 
-    // Label
     UILabel *labelLbl = [[UILabel alloc] init];
     labelLbl.translatesAutoresizingMaskIntoConstraints = NO;
     labelLbl.text = label;
-    labelLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
-    labelLbl.textColor = [IPTheme mutedTextColor];
+    labelLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
+    labelLbl.textColor = [UIColor colorWithWhite:0.6 alpha:1];
     labelLbl.textAlignment = NSTextAlignmentRight;
     [row addSubview:labelLbl];
 
-    // Value
     UILabel *valueLbl = [[UILabel alloc] init];
     valueLbl.translatesAutoresizingMaskIntoConstraints = NO;
-    valueLbl.text = value ?: @"غير معروف";
+    valueLbl.text = value ?: @"—";
     valueLbl.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     valueLbl.textColor = [UIColor whiteColor];
     valueLbl.textAlignment = NSTextAlignmentLeft;
     valueLbl.numberOfLines = 1;
     valueLbl.adjustsFontSizeToFitWidth = YES;
-    valueLbl.minimumScaleFactor = 0.7;
+    valueLbl.minimumScaleFactor = 0.75;
     [row addSubview:valueLbl];
 
+    UIView *sep = [[UIView alloc] init];
+    sep.translatesAutoresizingMaskIntoConstraints = NO;
+    sep.backgroundColor = [IPTheme dividerColor];
+    [row addSubview:sep];
+
     [NSLayoutConstraint activateConstraints:@[
-        [iconView.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
+        [iconView.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
         [iconView.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [iconView.widthAnchor constraintEqualToConstant:18],
-        [iconView.heightAnchor constraintEqualToConstant:18],
+        [iconView.widthAnchor constraintEqualToConstant:20],
+        [iconView.heightAnchor constraintEqualToConstant:20],
 
         [labelLbl.trailingAnchor constraintEqualToAnchor:iconView.leadingAnchor constant:-10],
         [labelLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
 
-        [valueLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [valueLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
         [valueLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [valueLbl.trailingAnchor constraintLessThanOrEqualToAnchor:labelLbl.leadingAnchor constant:-12],
+        [valueLbl.trailingAnchor constraintLessThanOrEqualToAnchor:labelLbl.leadingAnchor constant:-10],
 
-        [row.heightAnchor constraintEqualToConstant:42]
+        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
+        [sep.heightAnchor constraintEqualToConstant:0.5],
+
+        [row.heightAnchor constraintEqualToConstant:48]
     ]];
 
     return row;
@@ -367,87 +145,142 @@
     UIView *row = [[UIView alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
 
-    // Status indicator
-    UIView *statusDot = [[UIView alloc] init];
-    statusDot.translatesAutoresizingMaskIntoConstraints = NO;
-    statusDot.backgroundColor = available ? [UIColor colorWithRed:0.2 green:0.8 blue:0.4 alpha:1] : [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1];
-    statusDot.layer.cornerRadius = 5;
-    [row addSubview:statusDot];
+    UIView *dot = [[UIView alloc] init];
+    dot.translatesAutoresizingMaskIntoConstraints = NO;
+    dot.backgroundColor = available
+        ? [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]
+        : [UIColor colorWithRed:0.85 green:0.25 blue:0.25 alpha:1.0];
+    dot.layer.cornerRadius = 5;
+    [row addSubview:dot];
 
-    // Name
     UILabel *nameLbl = [[UILabel alloc] init];
     nameLbl.translatesAutoresizingMaskIntoConstraints = NO;
     nameLbl.text = name;
-    nameLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    nameLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
     nameLbl.textColor = [UIColor whiteColor];
     nameLbl.textAlignment = NSTextAlignmentRight;
     [row addSubview:nameLbl];
 
-    // Status text
     UILabel *statusLbl = [[UILabel alloc] init];
     statusLbl.translatesAutoresizingMaskIntoConstraints = NO;
     statusLbl.text = available ? @"متوفر" : @"غير متوفر";
-    statusLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    statusLbl.textColor = available ? [UIColor colorWithRed:0.2 green:0.8 blue:0.4 alpha:1] : [UIColor colorWithRed:0.8 green:0.2 blue:0.2 alpha:1];
+    statusLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    statusLbl.textColor = available
+        ? [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]
+        : [UIColor colorWithRed:0.85 green:0.25 blue:0.25 alpha:1.0];
     statusLbl.textAlignment = NSTextAlignmentRight;
     [row addSubview:statusLbl];
 
-    // Path
     UILabel *pathLbl = [[UILabel alloc] init];
     pathLbl.translatesAutoresizingMaskIntoConstraints = NO;
     pathLbl.text = path ?: @"";
     pathLbl.font = [UIFont fontWithName:@"Menlo" size:10] ?: [UIFont systemFontOfSize:10];
-    pathLbl.textColor = [UIColor colorWithWhite:0.5 alpha:1];
-    pathLbl.textAlignment = NSTextAlignmentRight;
+    pathLbl.textColor = [UIColor colorWithWhite:0.4 alpha:1];
+    pathLbl.textAlignment = NSTextAlignmentLeft;
     pathLbl.numberOfLines = 1;
+    pathLbl.adjustsFontSizeToFitWidth = YES;
+    pathLbl.minimumScaleFactor = 0.7;
     [row addSubview:pathLbl];
 
-    // Chevron
-    UIImageView *chevron = [[UIImageView alloc] init];
-    chevron.translatesAutoresizingMaskIntoConstraints = NO;
-    chevron.image = [UIImage systemImageNamed:@"chevron.left"];
-    chevron.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
-    chevron.contentMode = UIViewContentModeScaleAspectFit;
-    [row addSubview:chevron];
+    UIView *sep = [[UIView alloc] init];
+    sep.translatesAutoresizingMaskIntoConstraints = NO;
+    sep.backgroundColor = [IPTheme dividerColor];
+    [row addSubview:sep];
 
     [NSLayoutConstraint activateConstraints:@[
-        [statusDot.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
-        [statusDot.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [statusDot.widthAnchor constraintEqualToConstant:10],
-        [statusDot.heightAnchor constraintEqualToConstant:10],
+        [dot.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [dot.topAnchor constraintEqualToAnchor:row.topAnchor constant:14],
+        [dot.widthAnchor constraintEqualToConstant:10],
+        [dot.heightAnchor constraintEqualToConstant:10],
 
-        [nameLbl.trailingAnchor constraintEqualToAnchor:statusDot.leadingAnchor constant:-10],
+        [nameLbl.trailingAnchor constraintEqualToAnchor:dot.leadingAnchor constant:-10],
         [nameLbl.topAnchor constraintEqualToAnchor:row.topAnchor constant:10],
 
         [statusLbl.trailingAnchor constraintEqualToAnchor:nameLbl.trailingAnchor],
         [statusLbl.topAnchor constraintEqualToAnchor:nameLbl.bottomAnchor constant:2],
         [statusLbl.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-10],
 
-        [pathLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [pathLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
         [pathLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
-        [pathLbl.trailingAnchor constraintLessThanOrEqualToAnchor:nameLbl.leadingAnchor constant:-12],
+        [pathLbl.trailingAnchor constraintLessThanOrEqualToAnchor:nameLbl.leadingAnchor constant:-10],
 
-        [chevron.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
+        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
+        [sep.heightAnchor constraintEqualToConstant:0.5],
+
+        [row.heightAnchor constraintEqualToConstant:54]
+    ]];
+
+    return row;
+}
+
+- (UIView *)aboutRow {
+    UIView *row = [[UIView alloc] init];
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    row.userInteractionEnabled = YES;
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(showAbout)];
+    [row addGestureRecognizer:tap];
+
+    UILabel *titleLbl = [[UILabel alloc] init];
+    titleLbl.translatesAutoresizingMaskIntoConstraints = NO;
+    titleLbl.text = @"حول الأداة";
+    titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    titleLbl.textColor = [UIColor whiteColor];
+    titleLbl.textAlignment = NSTextAlignmentRight;
+    [row addSubview:titleLbl];
+
+    UIImageView *chevron = [[UIImageView alloc] init];
+    chevron.translatesAutoresizingMaskIntoConstraints = NO;
+    chevron.image = [UIImage systemImageNamed:@"chevron.left"];
+    chevron.tintColor = [UIColor colorWithWhite:0.35 alpha:1];
+    chevron.contentMode = UIViewContentModeScaleAspectFit;
+    [row addSubview:chevron];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [chevron.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
         [chevron.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [chevron.widthAnchor constraintEqualToConstant:14],
         [chevron.heightAnchor constraintEqualToConstant:14],
 
-        [row.heightAnchor constraintEqualToConstant:56]
-    ]];
+        [titleLbl.trailingAnchor constraintEqualToAnchor:chevron.leadingAnchor constant:-10],
+        [titleLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [titleLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
 
-    // Separator
-    UIView *sep = [[UIView alloc] init];
-    sep.translatesAutoresizingMaskIntoConstraints = NO;
-    sep.backgroundColor = [IPTheme dividerColor];
-    [row addSubview:sep];
-    [NSLayoutConstraint activateConstraints:@[
-        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:8],
-        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-8],
-        [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
-        [sep.heightAnchor constraintEqualToConstant:0.5]
+        [row.heightAnchor constraintEqualToConstant:50]
     ]];
 
     return row;
+}
+
+- (UIView *)spacer:(CGFloat)height {
+    UIView *v = [[UIView alloc] init];
+    v.translatesAutoresizingMaskIntoConstraints = NO;
+    v.backgroundColor = [UIColor clearColor];
+    [v.heightAnchor constraintEqualToConstant:height].active = YES;
+    return v;
+}
+
+- (UIView *)sectionDivider {
+    UIView *v = [[UIView alloc] init];
+    v.translatesAutoresizingMaskIntoConstraints = NO;
+    v.backgroundColor = [UIColor clearColor];
+
+    UIView *line = [[UIView alloc] init];
+    line.translatesAutoresizingMaskIntoConstraints = NO;
+    line.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.6];
+    [v addSubview:line];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [line.leadingAnchor constraintEqualToAnchor:v.leadingAnchor constant:16],
+        [line.trailingAnchor constraintEqualToAnchor:v.trailingAnchor constant:-16],
+        [line.centerYAnchor constraintEqualToAnchor:v.centerYAnchor],
+        [line.heightAnchor constraintEqualToConstant:1],
+        [v.heightAnchor constraintEqualToConstant:20]
+    ]];
+
+    return v;
 }
 
 #pragma mark - Data Refresh
@@ -456,46 +289,40 @@
     JailbreakEnvironment *env = [JailbreakEnvironment sharedEnvironment];
     CapabilityManager *cap = [CapabilityManager sharedManager];
 
-    // --- Environment Card ---
-    UIStackView *envRows = objc_getAssociatedObject(self.envCard, @"rowsStack");
-    [self clearStack:envRows];
+    [self clearStack:self.contentStack];
 
-    NSDictionary *envData = @{
-        @"حالة الجلبريك": env.jailbreakType ?: @"غير معروف",
-        @"الجهاز": env.deviceModel ?: @"غير معروف",
-        @"إصدار iOS": env.iosVersion ?: @"غير معروف",
-        @"المعمارية": env.architecture ?: @"غير محدد",
-        @"مسار التطبيقات": env.applicationsPath ?: @"غير موقع",
-        @"مسار المستندات": env.mobileDocumentsPath ?: @"غير موقع",
-        @"مسار الروت": env.rootPath ?: @"غير موجود"
+    // ─── Environment Rows ───
+    NSDictionary *envItems = @{
+        @"حالة الجلبريك": @[env.jailbreakType ?: @"غير معروف", @"checkmark.circle.fill"],
+        @"الجهاز": @[env.deviceModel ?: @"غير معروف", @"iphone"],
+        @"إصدار iOS": @[env.iosVersion ?: @"غير معروف", @"number.circle.fill"],
+        @"المعمارية": @[env.architecture ?: @"غير محدد", @"cpu"],
+        @"مسار التطبيقات": @[env.applicationsPath ?: @"غير موقع", @"folder.fill"],
+        @"مسار المستندات": @[env.mobileDocumentsPath ?: @"غير موقع", @"doc.fill"],
+        @"مسار الروت": @[env.rootPath ?: @"غير موجود", @"number.sign"]
     };
 
-    NSArray *order = @[@"حالة الجلبريك", @"الجهاز", @"إصدار iOS", @"المعمارية",
-                       @"مسار التطبيقات", @"مسار المستندات", @"مسار الروت"];
+    NSArray *envOrder = @[@"حالة الجلبريك", @"الجهاز", @"إصدار iOS", @"المعمارية",
+                          @"مسار التطبيقات", @"مسار المستندات", @"مسار الروت"];
 
-    NSDictionary *icons = @{
-        @"حالة الجلبريك": @"checkmark.circle.fill",
-        @"الجهاز": @"iphone",
-        @"إصدار iOS": @"number.circle.fill",
-        @"المعمارية": @"cpu",
-        @"مسار التطبيقات": @"folder.fill",
-        @"مسار المستندات": @"doc.fill",
-        @"مسار الروت": @"number.sign"
-    };
-
-    for (NSString *key in order) {
-        UIView *row = [self infoRowWithLabel:key value:envData[key] icon:icons[key]];
-        [envRows addArrangedSubview:row];
+    for (NSString *key in envOrder) {
+        NSArray *data = envItems[key];
+        UIView *row = [self infoRowWithIcon:data[1] label:key value:data[0]];
+        [self.contentStack addArrangedSubview:row];
     }
 
-    // --- Capabilities Card ---
-    UIStackView *capRows = objc_getAssociatedObject(self.capCard, @"rowsStack");
-    [self clearStack:capRows];
+    // Divider
+    [self.contentStack addArrangedSubview:[self sectionDivider]];
 
+    // ─── Tool Rows ───
     for (Capability *c in [cap allCapabilities]) {
         UIView *row = [self toolRowWithName:c.name path:c.path available:c.isAvailable];
-        [capRows addArrangedSubview:row];
+        [self.contentStack addArrangedSubview:row];
     }
+
+    // ─── About ───
+    [self.contentStack addArrangedSubview:[self sectionDivider]];
+    [self.contentStack addArrangedSubview:[self aboutRow]];
 }
 
 - (void)clearStack:(UIStackView *)stack {
