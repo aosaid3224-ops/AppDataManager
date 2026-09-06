@@ -2495,6 +2495,8 @@ extern char **environ;
   // FIX(Palera1n): Use dynamic bootstrapPath instead of hardcoded /var/jb
   RuntimeEnvironment *rtEnv2 = [RuntimeEnvironment sharedEnvironment];
   NSString *expectedPrefix = rtEnv2.bootstrapPath ? [rtEnv2.bootstrapPath stringByAppendingPathComponent:@"Applications/"] : @"/var/jb/Applications/";
+  if (![appPath hasPrefix:expectedPrefix] && ![appPath hasPrefix:@"/Applications/"]) {
+  NSString *recPath = [opLog beginPhase:OperationPhaseVerify operation:@"rootlessPathCheck" target:appPath input:@"" transactionID:txnID];
  [opLog endPhase:recPath exitCode:0 rawOutput:@"" rawError:@""
  verification:[NSString stringWithFormat:@"path=%@ (non-standard but allowed)", appPath] verified:YES duration:0];
  NSLog(@"[IPAInstallerPro] WARNING: App not in standard Applications path: %@", appPath);
@@ -2568,6 +2570,7 @@ extern char **environ;
   } else {
       [searchDirs insertObject:@"/var/jb/Applications" atIndex:0];
   }
+  if (!appPath || appPath.length == 0) {
   for (NSString *dir in searchDirs) {
  if (![fm fileExistsAtPath:dir]) continue;
  NSArray *items = [fm contentsOfDirectoryAtPath:dir error:nil];
