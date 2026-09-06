@@ -34,6 +34,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <fcntl.h>
+#import "RuntimeEnvironment.h"
 
 extern char **environ;
 
@@ -94,12 +95,16 @@ extern char **environ;
  self.chownPath = [rm resolvePath:@"/usr/sbin/chown"];
  self.rmPath = [rm resolvePath:@"/bin/rm"];
  if (![[NSFileManager defaultManager] isExecutableFileAtPath:self.rmPath]) {
-     NSArray<NSString *> *rmCandidates = @[
-         @"/var/jb/usr/bin/rm",
-         @"/var/jb/bin/rm",
+     // Build candidates dynamically from bootstrapPath
+     RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+     NSMutableArray<NSString *> *rmCandidates = [NSMutableArray arrayWithObjects:
          @"/usr/bin/rm",
-         @"/bin/rm"
-     ];
+         @"/bin/rm",
+         nil];
+     if (rt.bootstrapPath) {
+         [rmCandidates insertObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin/rm"] atIndex:0];
+         [rmCandidates insertObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin/rm"] atIndex:1];
+     }
      for (NSString *candidate in rmCandidates) {
          if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
              self.rmPath = candidate;
@@ -119,11 +124,14 @@ extern char **environ;
 }
 
 - (void)findWorkingHelper {
- NSArray *candidates = @[
+ RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+ NSMutableArray *candidates = [NSMutableArray arrayWithObjects:
  [[RootlessManager sharedManager] resolvePath:@"/usr/bin/ipainstallerpro_helper"],
  @"/usr/bin/ipainstallerpro_helper",
- @"/var/jb/usr/bin/ipainstallerpro_helper"
- ];
+ nil];
+ if (rt.bootstrapPath) {
+     [candidates addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin/ipainstallerpro_helper"]];
+ }
  for (NSString *path in candidates) {
  if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
  if ([self testHelperAtPath:path]) {
@@ -592,8 +600,10 @@ extern char **environ;
         // Also allow symlinks to system frameworks/libs (common in jailbreak apps)
         else if ([normalized hasPrefix:@"/System/"] ||
                  [normalized hasPrefix:@"/usr/lib/"] ||
-                 [normalized hasPrefix:@"/var/jb/"] ||
                  [normalized hasPrefix:@"/var/tmp/"]) { isSafe = YES; }
+        // FIX(Palera1n): Check against dynamic bootstrapPath instead of hardcoded /var/jb
+        RuntimeEnvironment *rtEnv = [RuntimeEnvironment sharedEnvironment];
+        if (rtEnv.bootstrapPath && [normalized hasPrefix:rtEnv.bootstrapPath]) { isSafe = YES; }
       }
 
       // 3. If relative path, resolve it relative to the symlink's parent directory
@@ -2482,9 +2492,9 @@ extern char **environ;
  }
 
  // Dopamine-specific: verify app is in correct rootless path (warning only)
- NSString *expectedPrefix = @"/var/jb/Applications/";
- if (![appPath hasPrefix:expectedPrefix] && ![appPath hasPrefix:@"/Applications/"]) {
- NSString *recPath = [opLog beginPhase:OperationPhaseVerify operation:@"rootlessPathCheck" target:appPath input:@"" transactionID:txnID];
+  // FIX(Palera1n): Use dynamic bootstrapPath instead of hardcoded /var/jb
+  RuntimeEnvironment *rtEnv2 = [RuntimeEnvironment sharedEnvironment];
+  NSString *expectedPrefix = rtEnv2.bootstrapPath ? [rtEnv2.bootstrapPath stringByAppendingPathComponent:@"Applications/"] : @"/var/jb/Applications/";
  [opLog endPhase:recPath exitCode:0 rawOutput:@"" rawError:@""
  verification:[NSString stringWithFormat:@"path=%@ (non-standard but allowed)", appPath] verified:YES duration:0];
  NSLog(@"[IPAInstallerPro] WARNING: App not in standard Applications path: %@", appPath);
@@ -2550,9 +2560,14 @@ extern char **environ;
  }
 
  // ─── PHASE 2: Scan Applications directories for matching Info.plist ───
- if (!appPath || appPath.length == 0) {
- NSArray *searchDirs = @[@"/var/jb/Applications", @"/Applications", @"/var/mobile/Applications"];
- for (NSString *dir in searchDirs) {
+  // FIX(Palera1n): Use dynamic bootstrapPath for Applications directory
+  RuntimeEnvironment *rtEnv3 = [RuntimeEnvironment sharedEnvironment];
+  NSMutableArray *searchDirs = [NSMutableArray arrayWithObjects:@"/Applications", @"/var/mobile/Applications", nil];
+  if (rtEnv3.bootstrapPath) {
+      [searchDirs insertObject:[rtEnv3.bootstrapPath stringByAppendingPathComponent:@"Applications"] atIndex:0];
+  } else {
+      [searchDirs insertObject:@"/var/jb/Applications" atIndex:0];
+  }
  if (![fm fileExistsAtPath:dir]) continue;
  NSArray *items = [fm contentsOfDirectoryAtPath:dir error:nil];
  for (NSString *item in items) {
