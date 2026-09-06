@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#import "RuntimeEnvironment.h"
 
 extern char **environ;
 
@@ -145,8 +146,13 @@ extern char **environ;
 }
 
 - (NSString *)pathForBundleID:(NSString *)bundleID {
-    NSArray *paths = @[@"/var/containers/Bundle/Application",
-                       @"/var/jb/Applications"];
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSMutableArray *paths = [NSMutableArray arrayWithObject:@"/var/containers/Bundle/Application"];
+    if (rt.bootstrapPath) {
+        [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"Applications"]];
+    } else {
+        [paths addObject:@"/var/jb/Applications"];
+    }
 
     for (NSString *basePath in paths) {
         NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:basePath error:nil];
