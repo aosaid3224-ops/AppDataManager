@@ -18,6 +18,7 @@
 #import <UIKit/UIKit.h>
 #import <sys/wait.h>
 #import <sys/sysctl.h>
+#import "RuntimeEnvironment.h"
 
 // ─── ProcessInfo Implementation ───
 @implementation ProcessInfo
@@ -419,7 +420,13 @@
 }
 
 - (NSString *)findAppPathForBundleID:(NSString *)bundleID {
-    NSArray *searchPaths = @[@"/var/jb/Applications", @"/Applications"];
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSMutableArray *searchPaths = [NSMutableArray arrayWithObject:@"/Applications"];
+    if (rt.bootstrapPath) {
+        [searchPaths insertObject:[rt.bootstrapPath stringByAppendingPathComponent:@"Applications"] atIndex:0];
+    } else {
+        [searchPaths insertObject:@"/var/jb/Applications" atIndex:0];
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *base in searchPaths) {
         NSArray *items = [fm contentsOfDirectoryAtPath:base error:nil];
@@ -684,15 +691,22 @@
     NSFileManager *fm = [NSFileManager defaultManager];
 
     if (![fm fileExistsAtPath:syslogPath]) {
-        // Try alternative paths
-        syslogPath = @"/var/jb/var/log/syslog";
+        // Try alternative paths using dynamic bootstrapPath
+        RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+        if (rt.bootstrapPath) {
+            syslogPath = [rt.bootstrapPath stringByAppendingPathComponent:@"var/log/syslog"];
+        } else {
+            syslogPath = @"/var/jb/var/log/syslog";
+        }
         if (![fm fileExistsAtPath:syslogPath]) {
             return nil;
         }
     }
 
     // Use tail to get last 50 lines, then grep for process
-    NSString *tailOutput = [self runCmdOutput:@"/var/jb/usr/bin/tail" args:@[@"-n", @"50", syslogPath]];
+    NSString *tailPath = [[ExecutableValidator sharedValidator] findExecutableNamed:@"tail"];
+    if (!tailPath) tailPath = @"/usr/bin/tail";
+    NSString *tailOutput = [self runCmdOutput:tailPath args:@[@"-n", @"50", syslogPath]];
     if (!tailOutput) return nil;
 
     NSArray *lines = [tailOutput componentsSeparatedByString:@"\n"];
@@ -719,7 +733,9 @@
         return nil;
     }
 
-    NSString *tailOutput = [self runCmdOutput:@"/var/jb/usr/bin/tail" args:@[@"-n", @"30", launchdLog]];
+    NSString *tailPath2 = [[ExecutableValidator sharedValidator] findExecutableNamed:@"tail"];
+    if (!tailPath2) tailPath2 = @"/usr/bin/tail";
+    NSString *tailOutput = [self runCmdOutput:tailPath2 args:@[@"-n", @"30", launchdLog]];
     if (!tailOutput) return nil;
 
     NSArray *lines = [tailOutput componentsSeparatedByString:@"\n"];
