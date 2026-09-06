@@ -95,17 +95,27 @@
     }
 
     // Priority 2: Signature files (strong indicators)
-    NSArray<NSString *> *signaturePaths = @[
-        @"/var/jb/.procursus_strapped",
-        @"/var/jb/.installed_dopamine",
-        @"/var/jb/.bootstrapped",
+    // Check Palera1n-specific indicators FIRST to avoid false positives
+    // when /var/jb exists alongside /var/LIY (common on Palera1n)
+    NSArray<NSString *> *palera1nSignatures = @[
         @"/var/LIY/.installed_palera1n",
+        @"/var/LIY/usr/share/palera1n",
+    ];
+    for (NSString *sig in palera1nSignatures) {
+        if ([fm fileExistsAtPath:sig]) {
+            return @"/var/LIY";
+        }
+    }
+
+    NSArray<NSString *> *signaturePaths = @[
+        @"/var/jb/.installed_dopamine",
+        @"/var/jb/.procursus_strapped",
+        @"/var/jb/.bootstrapped",
     ];
     for (NSString *sig in signaturePaths) {
         if ([fm fileExistsAtPath:sig]) {
-            // Extract bootstrap root from signature path
             NSString *parent = [sig stringByDeletingLastPathComponent];
-            if ([parent isEqualToString:@"/var/jb"] || [parent isEqualToString:@"/var/LIY"]) {
+            if ([parent isEqualToString:@"/var/jb"]) {
                 return parent;
             }
         }
@@ -114,31 +124,33 @@
     // Priority 3: Executable presence (which dpkg is real?)
     // If /usr/bin/dpkg exists and is executable, likely not rootless (or old-style)
     // If /var/jb/usr/bin/dpkg exists and is executable, likely rootless Procursus
-    NSString *jbDpkg = @"/var/jb/usr/bin/dpkg";
     NSString *liDpkg = @"/var/LIY/usr/bin/dpkg";
+    NSString *jbDpkg = @"/var/jb/usr/bin/dpkg";
     NSString *optDpkg = @"/opt/procursus/bin/dpkg";
     NSString *usrDpkg = @"/usr/bin/dpkg";
 
-    if (access(jbDpkg.fileSystemRepresentation, X_OK) == 0) {
-        return @"/var/jb";
-    }
+    // Check Palera1n first to avoid false positive from /var/jb
     if (access(liDpkg.fileSystemRepresentation, X_OK) == 0) {
         return @"/var/LIY";
+    }
+    if (access(jbDpkg.fileSystemRepresentation, X_OK) == 0) {
+        return @"/var/jb";
     }
     if (access(optDpkg.fileSystemRepresentation, X_OK) == 0) {
         return @"/opt/procursus";
     }
 
     // Priority 4: Directory presence (weaker indicator)
+    // Check Palera1n first to avoid false positive from /var/jb
+    if ([fm fileExistsAtPath:@"/var/LIY"]) {
+        if ([fm fileExistsAtPath:@"/var/LIY/usr/bin"] || [fm fileExistsAtPath:@"/var/LIY/bin"]) {
+            return @"/var/LIY";
+        }
+    }
     if ([fm fileExistsAtPath:@"/var/jb"]) {
         // Additional check: does it look like a real bootstrap?
         if ([fm fileExistsAtPath:@"/var/jb/usr/bin"] || [fm fileExistsAtPath:@"/var/jb/bin"]) {
             return @"/var/jb";
-        }
-    }
-    if ([fm fileExistsAtPath:@"/var/LIY"]) {
-        if ([fm fileExistsAtPath:@"/var/LIY/usr/bin"] || [fm fileExistsAtPath:@"/var/LIY/bin"]) {
-            return @"/var/LIY";
         }
     }
     if ([fm fileExistsAtPath:@"/opt/procursus"]) {
