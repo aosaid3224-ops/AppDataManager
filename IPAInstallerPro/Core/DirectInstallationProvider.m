@@ -2568,6 +2568,7 @@ extern char **environ;
   } else {
       [searchDirs insertObject:@"/var/jb/Applications" atIndex:0];
   }
+  for (NSString *dir in searchDirs) {
  if (![fm fileExistsAtPath:dir]) continue;
  NSArray *items = [fm contentsOfDirectoryAtPath:dir error:nil];
  for (NSString *item in items) {
