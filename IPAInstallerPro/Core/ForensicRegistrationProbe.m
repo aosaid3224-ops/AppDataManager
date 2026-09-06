@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
+#import "RuntimeEnvironment.h"
 
 extern char **environ;
 
@@ -25,12 +26,18 @@ extern char **environ;
 
 - (NSString *)uicachePath {
     RootlessManager *manager = [RootlessManager sharedManager];
-    NSArray<NSString *> *candidates = @[
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSMutableArray<NSString *> *candidates = [NSMutableArray arrayWithObjects:
         [manager resolvePath:@"/usr/bin/uicache"],
-        @"/var/jb/usr/bin/uicache",
-        @"/var/jb/bin/uicache",
-        @"/usr/bin/uicache"
-    ];
+        @"/usr/bin/uicache",
+        nil];
+    if (rt.bootstrapPath) {
+        [candidates insertObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin/uicache"] atIndex:1];
+        [candidates insertObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin/uicache"] atIndex:2];
+    } else {
+        [candidates addObject:@"/var/jb/usr/bin/uicache"];
+        [candidates addObject:@"/var/jb/bin/uicache"];
+    }
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *candidate in candidates) {
         if (candidate.length && [fm isExecutableFileAtPath:candidate]) return candidate;
