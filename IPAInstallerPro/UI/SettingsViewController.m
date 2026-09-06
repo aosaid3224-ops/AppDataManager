@@ -1,6 +1,6 @@
 //
 //  SettingsViewController.m
-//  IPAInstallerPro — Unified Settings UI
+//  IPAInstallerPro — Edge-to-Edge Settings UI
 //
 
 #import "SettingsViewController.h"
@@ -12,7 +12,6 @@
 
 @interface SettingsViewController ()
 @property (nonatomic, strong) UIScrollView *scrollView;
-@property (nonatomic, strong) UIView *mainCard;
 @property (nonatomic, strong) UIStackView *contentStack;
 @end
 
@@ -44,39 +43,24 @@
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [self.scrollView.topAnchor constraintEqualToAnchor:safe.topAnchor],
-        [self.scrollView.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:12],
-        [self.scrollView.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12],
+        [self.scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.scrollView.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor]
     ]];
-
-    // Main unified card
-    self.mainCard = [[UIView alloc] init];
-    self.mainCard.translatesAutoresizingMaskIntoConstraints = NO;
-    self.mainCard.backgroundColor = [IPTheme cardColor];
-    self.mainCard.layer.cornerRadius = 20;
-    self.mainCard.layer.borderWidth = 0.5;
-    self.mainCard.layer.borderColor = [IPTheme subtleBorderColor].CGColor;
-    self.mainCard.clipsToBounds = YES;
-    [self.scrollView addSubview:self.mainCard];
 
     self.contentStack = [[UIStackView alloc] init];
     self.contentStack.translatesAutoresizingMaskIntoConstraints = NO;
     self.contentStack.axis = UILayoutConstraintAxisVertical;
     self.contentStack.spacing = 0;
     self.contentStack.alignment = UIStackViewAlignmentFill;
-    [self.mainCard addSubview:self.contentStack];
+    [self.scrollView addSubview:self.contentStack];
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.mainCard.topAnchor constraintEqualToAnchor:self.scrollView.topAnchor constant:12],
-        [self.mainCard.leadingAnchor constraintEqualToAnchor:self.scrollView.leadingAnchor],
-        [self.mainCard.trailingAnchor constraintEqualToAnchor:self.scrollView.trailingAnchor],
-        [self.mainCard.bottomAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor constant:-12],
-        [self.mainCard.widthAnchor constraintEqualToAnchor:self.scrollView.widthAnchor],
-
-        [self.contentStack.topAnchor constraintEqualToAnchor:self.mainCard.topAnchor constant:8],
-        [self.contentStack.leadingAnchor constraintEqualToAnchor:self.mainCard.leadingAnchor],
-        [self.contentStack.trailingAnchor constraintEqualToAnchor:self.mainCard.trailingAnchor],
-        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.mainCard.bottomAnchor constant:-8]
+        [self.contentStack.topAnchor constraintEqualToAnchor:self.scrollView.topAnchor],
+        [self.contentStack.leadingAnchor constraintEqualToAnchor:self.scrollView.leadingAnchor],
+        [self.contentStack.trailingAnchor constraintEqualToAnchor:self.scrollView.trailingAnchor],
+        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.scrollView.bottomAnchor],
+        [self.contentStack.widthAnchor constraintEqualToAnchor:self.scrollView.widthAnchor]
     ]];
 }
 
@@ -85,6 +69,7 @@
 - (UIView *)infoRowWithIcon:(NSString *)iconName label:(NSString *)label value:(NSString *)value {
     UIView *row = [[UIView alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
+    row.backgroundColor = [UIColor clearColor];
 
     UIImageView *iconView = [[UIImageView alloc] init];
     iconView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -118,7 +103,7 @@
     [row addSubview:sep];
 
     [NSLayoutConstraint activateConstraints:@[
-        [iconView.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [iconView.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
         [iconView.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [iconView.widthAnchor constraintEqualToConstant:20],
         [iconView.heightAnchor constraintEqualToConstant:20],
@@ -126,12 +111,12 @@
         [labelLbl.trailingAnchor constraintEqualToAnchor:iconView.leadingAnchor constant:-10],
         [labelLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
 
-        [valueLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [valueLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
         [valueLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [valueLbl.trailingAnchor constraintLessThanOrEqualToAnchor:labelLbl.leadingAnchor constant:-10],
 
-        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
-        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
+        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
         [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
         [sep.heightAnchor constraintEqualToConstant:0.5],
 
@@ -144,6 +129,7 @@
 - (UIView *)toolRowWithName:(NSString *)name path:(NSString *)path available:(BOOL)available {
     UIView *row = [[UIView alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
+    row.backgroundColor = [UIColor clearColor];
 
     UIView *dot = [[UIView alloc] init];
     dot.translatesAutoresizingMaskIntoConstraints = NO;
@@ -188,7 +174,7 @@
     [row addSubview:sep];
 
     [NSLayoutConstraint activateConstraints:@[
-        [dot.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [dot.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
         [dot.topAnchor constraintEqualToAnchor:row.topAnchor constant:14],
         [dot.widthAnchor constraintEqualToConstant:10],
         [dot.heightAnchor constraintEqualToConstant:10],
@@ -200,12 +186,12 @@
         [statusLbl.topAnchor constraintEqualToAnchor:nameLbl.bottomAnchor constant:2],
         [statusLbl.bottomAnchor constraintEqualToAnchor:row.bottomAnchor constant:-10],
 
-        [pathLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [pathLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
         [pathLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [pathLbl.trailingAnchor constraintLessThanOrEqualToAnchor:nameLbl.leadingAnchor constant:-10],
 
-        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
-        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
+        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
         [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
         [sep.heightAnchor constraintEqualToConstant:0.5],
 
@@ -218,6 +204,7 @@
 - (UIView *)aboutRow {
     UIView *row = [[UIView alloc] init];
     row.translatesAutoresizingMaskIntoConstraints = NO;
+    row.backgroundColor = [UIColor clearColor];
     row.userInteractionEnabled = YES;
 
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(showAbout)];
@@ -238,28 +225,30 @@
     chevron.contentMode = UIViewContentModeScaleAspectFit;
     [row addSubview:chevron];
 
+    UIView *sep = [[UIView alloc] init];
+    sep.translatesAutoresizingMaskIntoConstraints = NO;
+    sep.backgroundColor = [IPTheme dividerColor];
+    [row addSubview:sep];
+
     [NSLayoutConstraint activateConstraints:@[
-        [chevron.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-16],
+        [chevron.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
         [chevron.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [chevron.widthAnchor constraintEqualToConstant:14],
         [chevron.heightAnchor constraintEqualToConstant:14],
 
         [titleLbl.trailingAnchor constraintEqualToAnchor:chevron.leadingAnchor constant:-10],
-        [titleLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:16],
+        [titleLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
         [titleLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+
+        [sep.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
+        [sep.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
+        [sep.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
+        [sep.heightAnchor constraintEqualToConstant:0.5],
 
         [row.heightAnchor constraintEqualToConstant:50]
     ]];
 
     return row;
-}
-
-- (UIView *)spacer:(CGFloat)height {
-    UIView *v = [[UIView alloc] init];
-    v.translatesAutoresizingMaskIntoConstraints = NO;
-    v.backgroundColor = [UIColor clearColor];
-    [v.heightAnchor constraintEqualToConstant:height].active = YES;
-    return v;
 }
 
 - (UIView *)sectionDivider {
@@ -269,15 +258,15 @@
 
     UIView *line = [[UIView alloc] init];
     line.translatesAutoresizingMaskIntoConstraints = NO;
-    line.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.6];
+    line.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.8];
     [v addSubview:line];
 
     [NSLayoutConstraint activateConstraints:@[
-        [line.leadingAnchor constraintEqualToAnchor:v.leadingAnchor constant:16],
-        [line.trailingAnchor constraintEqualToAnchor:v.trailingAnchor constant:-16],
+        [line.leadingAnchor constraintEqualToAnchor:v.leadingAnchor constant:20],
+        [line.trailingAnchor constraintEqualToAnchor:v.trailingAnchor constant:-20],
         [line.centerYAnchor constraintEqualToAnchor:v.centerYAnchor],
         [line.heightAnchor constraintEqualToConstant:1],
-        [v.heightAnchor constraintEqualToConstant:20]
+        [v.heightAnchor constraintEqualToConstant:24]
     ]];
 
     return v;
