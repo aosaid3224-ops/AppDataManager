@@ -226,7 +226,6 @@
     [paths addObject:@"/usr/local/bin"];
 
     // 3. Fallback: known rootless paths (for environments not yet characterized)
-    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
     if (rt.bootstrapPath) {
         [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin"]];
         [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin"]];
