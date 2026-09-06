@@ -7,6 +7,7 @@
 #import <sys/wait.h>
 #import <unistd.h>
 #import <libkern/OSByteOrder.h>
+#import "RuntimeEnvironment.h"
 
 extern char **environ;
 
@@ -53,11 +54,16 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
         _unzipPath = [rootless resolvePath:@"/usr/bin/unzip"];
         if (![[NSFileManager defaultManager] fileExistsAtPath:_shellPath]) _shellPath = @"/bin/sh";
 
-        NSArray<NSString *> *helperCandidates = @[
+        RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+        NSMutableArray<NSString *> *helperCandidates = [NSMutableArray arrayWithObjects:
             [rootless resolvePath:@"/usr/bin/ipainstallerpro_helper"],
             @"/usr/bin/ipainstallerpro_helper",
-            @"/var/jb/usr/bin/ipainstallerpro_helper"
-        ];
+            nil];
+        if (rt.bootstrapPath) {
+            [helperCandidates addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin/ipainstallerpro_helper"]];
+        } else {
+            [helperCandidates addObject:@"/var/jb/usr/bin/ipainstallerpro_helper"];
+        }
         for (NSString *candidate in helperCandidates) {
             if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
                 _helperPath = candidate;
