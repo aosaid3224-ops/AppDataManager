@@ -53,8 +53,8 @@
     }
     [candidates addObjectsFromArray:@[
         @"/usr/bin/ipainstallerpro_helper",
-        @"/var/jb/usr/bin/ipainstallerpro_helper",
         @"/var/LIY/usr/bin/ipainstallerpro_helper",
+        @"/var/jb/usr/bin/ipainstallerpro_helper",
         @"/opt/procursus/bin/ipainstallerpro_helper"
     ]];
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -254,7 +254,6 @@
         [candidateDirs addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"Applications"]];
     }
     [candidateDirs addObjectsFromArray:@[
-        @"/var/jb/Applications",
         @"/var/LIY/Applications",
         @"/opt/procursus/Applications",
         @"/Applications"
