@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <stdlib.h>
+#import "RuntimeEnvironment.h"
 
 @interface ForensicInstallationObserver ()
 @property (nonatomic, assign, readwrite, getter=isObserving) BOOL observing;
@@ -260,7 +261,9 @@
     event.operation = record.operation ?: @"";
     event.phase = [record phaseName];
     event.target = target;
-    event.logicalPath = ([target hasPrefix:@"/Applications"] || [target hasPrefix:@"/var/jb/Applications"]) ? target : @"";
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSString *appsPath = rt.bootstrapPath ? [rt.bootstrapPath stringByAppendingPathComponent:@"Applications"] : @"/var/jb/Applications";
+    event.logicalPath = ([target hasPrefix:@"/Applications"] || [target hasPrefix:appsPath]) ? target : @"";
     event.resolvedPath = [self resolvedPathForTarget:target];
     event.bundleID = self.currentReport.bundleID ?: @"";
     event.startedAt = record.timestamp ?: event.startedAt;
