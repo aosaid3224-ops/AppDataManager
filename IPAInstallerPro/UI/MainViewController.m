@@ -6,7 +6,7 @@
 #import "GlassIPACell.h"
 #import "RuntimeEnvironment.h"
 
-@interface MainViewController () <UIDocumentPickerDelegate, UISearchBarDelegate>
+@interface MainViewController () <UIDocumentPickerDelegate>
 @property (nonatomic, strong) UIView *toastView;
 @property (nonatomic, strong) UILabel *toastLabel;
 @property (nonatomic, strong) UIView *dashboardHeader;
@@ -27,9 +27,7 @@
     self.navigationItem.title = @"";
     self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.026 blue:0.030 alpha:1.0];
     self.ipaFiles = [NSMutableArray array];
-    self.filteredIPAFiles = [NSMutableArray array];
     self.isLoading = NO;
-    self.isSearching = NO;
     self.ipaMetadataCache = [NSMutableDictionary dictionary];
     self.ipaIconCache = [[NSCache alloc] init];
     self.ipaIconCache.countLimit = 100;
@@ -108,7 +106,7 @@
     [styledTitle addAttribute:NSForegroundColorAttributeName value:[UIColor colorWithRed:1.0 green:0.22 blue:0.18 alpha:1.0] range:NSMakeRange(6, 3)]; title.attributedText = styledTitle; title.textAlignment = NSTextAlignmentCenter; title.autoresizingMask = UIViewAutoresizingFlexibleWidth; [self.dashboardHeader addSubview:title];
     UIButton *add = [UIButton buttonWithType:UIButtonTypeSystem]; add.frame = CGRectMake(width - 64, 34, 44, 44); add.layer.cornerRadius = 15; add.layer.borderWidth = 0.7; add.layer.borderColor = [UIColor colorWithWhite:1 alpha:.16].CGColor; add.backgroundColor = [UIColor colorWithWhite:1 alpha:.025]; [add setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal]; add.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [add addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside]; [self.dashboardHeader addSubview:add];
     UIButton *viewMode = [UIButton buttonWithType:UIButtonTypeSystem]; viewMode.frame = CGRectMake(24, 34, 48, 48); viewMode.layer.cornerRadius = 17; viewMode.layer.borderWidth = 1; viewMode.layer.borderColor = [UIColor colorWithWhite:1 alpha:.14].CGColor; [viewMode setImage:[UIImage systemImageNamed:@"list.bullet"] forState:UIControlStateNormal]; viewMode.tintColor = [UIColor colorWithRed:1 green:.20 blue:.16 alpha:1]; [viewMode addTarget:self action:@selector(toggleViewMode:) forControlEvents:UIControlEventTouchUpInside]; [self.dashboardHeader addSubview:viewMode];
-    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(8, 91, MAX(width - 16, 1), 42)]; self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth; self.searchBar.placeholder = @"البحث في الملفات..."; self.searchBar.searchBarStyle = UISearchBarStyleMinimal; self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; self.searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft; self.searchBar.delegate = self; self.searchBar.showsCancelButton = NO; [self.dashboardHeader addSubview:self.searchBar];
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(8, 91, MAX(width - 16, 1), 42)]; self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth; self.searchBar.placeholder = @"البحث في الملفات..."; self.searchBar.searchBarStyle = UISearchBarStyleMinimal; self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; self.searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft; [self.dashboardHeader addSubview:self.searchBar];
     UIView *stats = [[UIView alloc] initWithFrame:CGRectMake(8, 139, MAX(width - 16, 1), 74)]; stats.autoresizingMask = UIViewAutoresizingFlexibleWidth; stats.backgroundColor = [UIColor colorWithRed:.065 green:.066 blue:.075 alpha:1]; stats.layer.cornerRadius = 17; stats.layer.borderWidth = 1; stats.layer.borderColor = [UIColor colorWithRed:.42 green:.08 blue:.09 alpha:.65].CGColor; [self.dashboardHeader addSubview:stats];
     NSArray *icons = @[@"cube", @"chart.pie", @"shield", @"arrow.down.circle"]; NSArray *labels = @[@"التطبيقات", @"إجمالي الحجم", @"موثوقة", @"تم التثبيت"]; NSMutableArray *values = [NSMutableArray array];
     for (NSInteger i = 0; i < 4; i++) { CGFloat x = stats.bounds.size.width / 4.0 * i; if (i) { UIView *d = [[UIView alloc] initWithFrame:CGRectMake(x, 14, 1, 46)]; d.backgroundColor = [UIColor colorWithWhite:1 alpha:.08]; [stats addSubview:d]; } UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(x + (stats.bounds.size.width / 4.0 - 22) / 2.0, 7, 22, 22)]; iv.image = [UIImage systemImageNamed:icons[i]]; iv.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1]; iv.contentMode = UIViewContentModeScaleAspectFit; [stats addSubview:iv]; UILabel *v = [[UILabel alloc] initWithFrame:CGRectMake(x + 3, 30, stats.bounds.size.width / 4.0 - 6, 22)]; v.textAlignment = NSTextAlignmentCenter; v.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold]; v.textColor = UIColor.whiteColor; [stats addSubview:v]; [values addObject:v]; UILabel *c = [[UILabel alloc] initWithFrame:CGRectMake(x + 1, 54, stats.bounds.size.width / 4.0 - 2, 16)]; c.text = labels[i]; c.textAlignment = NSTextAlignmentCenter; c.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium]; c.textColor = [UIColor colorWithWhite:.68 alpha:1]; [stats addSubview:c]; }
@@ -125,7 +123,7 @@
 
 - (void)setupEmptyState {
     self.emptyLabel = [[UILabel alloc] init];
-    self.emptyLabel.text = @"لا توجد ملفات IPA\nاضغط + لإضافة ملف\nأو استخدم البحث للعثور على ملف";
+    self.emptyLabel.text = @"لا توجد ملفات IPA\nاضغط + لإضافة ملف";
     self.emptyLabel.textColor = [UIColor colorWithWhite:0.3 alpha:1.0];
     self.emptyLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
@@ -593,12 +591,7 @@
 #pragma mark - UITableViewDataSource
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 1; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (self.isSearching) {
-        return self.filteredIPAFiles.count;
-    }
-    return self.ipaFiles.count;
-}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.ipaFiles.count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *cellId = @"GlassIPACell";
@@ -606,8 +599,7 @@
     if (!cell) {
         cell = [[GlassIPACell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellId];
     }
-    IPAExtractedInfo *info = self.isSearching ? self.filteredIPAFiles[indexPath.row] : self.ipaFiles[indexPath.row];
-    [cell configureWithIPAInfo:info];
+    [cell configureWithIPAInfo:self.ipaFiles[indexPath.row]];
     return cell;
 }
 
@@ -619,7 +611,7 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    IPAExtractedInfo *info = self.isSearching ? self.filteredIPAFiles[indexPath.row] : self.ipaFiles[indexPath.row];
+    IPAExtractedInfo *info = self.ipaFiles[indexPath.row];
     IPAInstallViewController *installVC = [[IPAInstallViewController alloc] initWithIPAInfo:info];
     [self.navigationController pushViewController:installVC animated:YES];
 }
@@ -628,7 +620,7 @@
     UIContextualAction *deleteAction = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive
                                                                                title:@"حذف"
                                                                              handler:^(UIContextualAction *action, UIView *sourceView, void (^completionHandler)(BOOL)) {
-        IPAExtractedInfo *info = self.isSearching ? self.filteredIPAFiles[indexPath.row] : self.ipaFiles[indexPath.row];
+        IPAExtractedInfo *info = self.ipaFiles[indexPath.row];
         [[NSFileManager defaultManager] removeItemAtPath:info.filePath error:nil];
         dispatch_async(self.ipaCacheQueue, ^{
             [self.ipaMetadataCache removeObjectForKey:info.filePath];
@@ -645,73 +637,6 @@
 
 - (void)toggleViewMode:(id)sender {
     // Placeholder for future view mode toggle
-}
-
-
-#pragma mark - UISearchBarDelegate (Arabic Smart Search)
-
-- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
-    if (searchText.length == 0) {
-        self.isSearching = NO;
-        self.filteredIPAFiles = [NSMutableArray array];
-        [self.tableView reloadData];
-        return;
-    }
-    self.isSearching = YES;
-    NSString *query = [searchText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    NSArray<IPAExtractedInfo *> *source = self.ipaFiles;
-    NSMutableArray<IPAExtractedInfo *> *results = [NSMutableArray array];
-
-    // Phase 1: Exact match (name or bundleID starts with query)
-    for (IPAExtractedInfo *info in source) {
-        NSString *name = info.displayName ?: info.name ?: @"";
-        NSString *bundleID = info.bundleID ?: @"";
-        if ([name hasPrefix:query] || [bundleID hasPrefix:query]) {
-            [results addObject:info];
-        }
-    }
-
-    // Phase 2: Contains match (if no exact matches or to supplement)
-    NSMutableArray<IPAExtractedInfo *> *containsResults = [NSMutableArray array];
-    for (IPAExtractedInfo *info in source) {
-        if ([results containsObject:info]) continue;
-        NSString *name = info.displayName ?: info.name ?: @"";
-        NSString *bundleID = info.bundleID ?: @"";
-        NSString *version = info.version ?: @"";
-        if ([name localizedStandardContainsString:query] ||
-            [bundleID localizedStandardContainsString:query] ||
-            [version localizedStandardContainsString:query]) {
-            [containsResults addObject:info];
-        }
-    }
-    [results addObjectsFromArray:containsResults];
-
-    self.filteredIPAFiles = results;
-    [self.tableView reloadData];
-}
-
-- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
-    [searchBar resignFirstResponder];
-}
-
-- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
-    searchBar.showsCancelButton = YES;
-    UIButton *cancelButton = [searchBar valueForKey:@"cancelButton"];
-    if ([cancelButton isKindOfClass:[UIButton class]]) {
-        [cancelButton setTitle:@"إلغاء" forState:UIControlStateNormal];
-    }
-}
-
-- (void)searchBarTextDidEndEditing:(UISearchBar *)searchBar {
-    searchBar.showsCancelButton = NO;
-}
-
-- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
-    searchBar.text = @"";
-    self.isSearching = NO;
-    self.filteredIPAFiles = [NSMutableArray array];
-    [searchBar resignFirstResponder];
-    [self.tableView reloadData];
 }
 
 @end
