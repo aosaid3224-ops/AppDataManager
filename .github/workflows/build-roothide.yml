@@ -1,0 +1,77 @@
+name: Build and Publish Spider RootHide Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-roothide:
+    runs-on: macos-latest
+    env:
+      THEOS: ${{ github.workspace }}/theos-roothide
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Checkout RootHide Theos
+        run: |
+          git clone --recursive --depth 1 https://github.com/roothide/theos.git "$THEOS"
+          test -f "$THEOS/makefiles/common.mk"
+          test -f "$THEOS/makefiles/package/deb.mk"
+
+      - name: Checkout development repository
+        uses: actions/checkout@v4
+        with:
+          repository: aosaid3224-ops/repo-dev
+          token: ${{ secrets.PAT }}
+          path: repo-dev
+
+      - name: Install build dependencies
+        run: brew install dpkg ldid
+
+      - name: Prepare isolated RootHide source
+        run: |
+          rm -rf "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          cp -R IPAInstallerPro "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          chmod +x layout/DEBIAN/postinst 2>/dev/null || true
+          chmod +x layout/DEBIAN/prerm 2>/dev/null || true
+          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide1/' control
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide1' Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide1' Resources/Info.plist
+          grep -E '^Version:' control
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist
+
+      - name: Build isolated RootHide package
+        run: |
+          export PATH="$THEOS/bin:$PATH"
+          cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          make clean
+          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          ls -l packages/*.deb
+          dpkg-deb -f packages/*.deb Package Name Version Architecture Depends
+          test "$(dpkg-deb -f packages/*.deb Architecture)" = "iphoneos-arm64e"
+
+      - name: Publish RootHide package to development repository
+        run: |
+          set -e
+          mkdir -p repo-dev/pool/main/iphoneos-arm64e
+          cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb repo-dev/pool/main/iphoneos-arm64e/
+          mkdir -p repo-dev/scripts
+          cp scripts/generate-repo.py repo-dev/scripts/
+          python3 repo-dev/scripts/generate-repo.py repo-dev --dev
+          cd repo-dev
+          git config user.email 'ci@github.com'
+          git config user.name 'GitHub CI'
+          git add -A
+          git commit -m 'Add Spider RootHide package 3.0.35+roothide1' || true
+          git push origin main
+
+      - name: Upload RootHide DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spider-roothide-3.0.35
+          path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
+          if-no-files-found: error
