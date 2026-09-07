@@ -38,9 +38,10 @@ jobs:
           cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
           chmod +x layout/DEBIAN/postinst 2>/dev/null || true
           chmod +x layout/DEBIAN/prerm 2>/dev/null || true
-          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide1/' control
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide1' Resources/Info.plist
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide1' Resources/Info.plist
+          sed -i '' 's/^Name: .*/Name: Spider RootHide/' control
+          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide2/' control
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide2' Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide2' Resources/Info.plist
           grep -E '^Version:' control
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist
 
@@ -66,12 +67,12 @@ jobs:
           git config user.email 'ci@github.com'
           git config user.name 'GitHub CI'
           git add -A
-          git commit -m 'Add Spider RootHide package 3.0.35+roothide1' || true
+          git commit -m 'Update Spider RootHide package name to Spider RootHide' || true
           git push origin main
 
       - name: Upload RootHide DEB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spider-roothide-3.0.35
+          name: spider-roothide-3.0.35-roothide2
           path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
           if-no-files-found: error
