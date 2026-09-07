@@ -688,7 +688,6 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     CGSize size = CGSizeMake(52, 52);
     UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size];
     return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
-        CGContextRef cg = context.CGContext;
         // Background rounded rect
         CGRect bgRect = CGRectMake(2, 2, 48, 48);
         UIBezierPath *bgPath = [UIBezierPath bezierPathWithRoundedRect:bgRect cornerRadius:10];
