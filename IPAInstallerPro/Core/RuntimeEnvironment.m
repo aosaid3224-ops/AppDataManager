@@ -5,6 +5,8 @@
 
 #import "RuntimeEnvironment.h"
 #import "Logger.h"
+#include <stdlib.h>  // for realpath()
+#include <errno.h>   // for errno
 
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
@@ -240,6 +242,7 @@
         case SpiderJailbreakTypeTaurine: return @"Taurine";
         case SpiderJailbreakTypeOdyssey: return @"Odyssey";
         case SpiderJailbreakTypeXinaA15: return @"XinaA15";
+        case SpiderJailbreakTypeRelaxin: return @"Relaxin/RootHide";
         case SpiderJailbreakTypeOther: return @"Other";
         case SpiderJailbreakTypeUnknown: return @"Unknown";
     }
@@ -300,6 +303,13 @@
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"usr/bin"]];
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"bin"]];
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"usr/local/bin"]];
+
+        // RootHide: tools may reside in jbroot/var/jb/usr/bin or jbroot/usr/bin
+        if ([self.bootstrapPath rangeOfString:@".jbroot-"].location != NSNotFound) {
+            [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"var/jb/usr/bin"]];
+            [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"var/jb/bin"]];
+            NSLog(@"[Spider-Env] Added RootHide bin paths for %@", self.bootstrapPath);
+        }
     }
 
     // 3. Standard paths
