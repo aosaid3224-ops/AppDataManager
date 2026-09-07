@@ -5,15 +5,23 @@
 #import "IPAFileCardCell.h"
 #import "IPTheme.h"
 
-@interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate, UISearchResultsUpdating>
+@interface IPAUnpackViewController () <UIDocumentPickerDelegate, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel *emptyLabel;
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *items;
 @property (nonatomic, strong) IPAArchiveExtractionTask *activeTask;
-@property (nonatomic, strong) UISearchController *searchController;
 @property (nonatomic, assign) BOOL sortByDate;
 @property (nonatomic, assign) BOOL restoringItems;
 @property (nonatomic, assign) BOOL hasLoadedPersistedItems;
+
+// New UI v3.0.35
+@property (nonatomic, strong) UIView *customHeader;
+@property (nonatomic, strong) UISearchBar *searchBar;
+@property (nonatomic, strong) UIView *sectionHeaderView;
+@property (nonatomic, strong) UILabel *sectionTitleLabel;
+@property (nonatomic, strong) UILabel *sectionCountLabel;
+@property (nonatomic, strong) UIButton *fabButton;
+@property (nonatomic, copy) NSString *searchText;
 @end
 
 static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.PersistedItems.v1";
@@ -29,18 +37,44 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     }
 }
 
+#pragma mark - Lifecycle
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"فك حزمة IPA";
-    self.view.backgroundColor = [IPTheme backgroundColor];
-    self.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.navigationController.navigationBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.026 blue:0.030 alpha:1.0];
+    self.title = @"";
+    self.navigationItem.title = @"";
+    self.searchText = @"";
     self.items = [NSMutableArray array];
     [self restorePersistedItems];
-    [self setupNavigation];
+    [self setupNavigationBar];
+    [self setupCustomHeader];
+    [self setupSearchBar];
+    [self setupSectionHeader];
     [self setupTableView];
     [self setupEmptyState];
+    [self setupFAB];
 }
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    self.navigationController.navigationBarHidden = YES;
+    if (!self.hasLoadedPersistedItems) {
+        [self restorePersistedItems];
+        self.hasLoadedPersistedItems = YES;
+    }
+    self.emptyLabel.hidden = self.items.count != 0;
+    [self updateSectionHeader];
+    [self.tableView reloadData];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    self.navigationController.navigationBarHidden = NO;
+    [self persistItems];
+}
+
+#pragma mark - Helpers
 
 - (NSURL *)urlForItem:(NSDictionary *)item {
     id value = item[@"url"];
@@ -112,87 +146,109 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     self.hasLoadedPersistedItems = YES;
 }
 
-- (void)setupNavigation {
-    UIBarButtonItem *add = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(addIPATapped:)];
-    UIBarButtonItem *sort = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.arrow.down"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleSort:)];
-    self.navigationItem.rightBarButtonItems = @[add, sort];
-    for (UIBarButtonItem *item in self.navigationItem.rightBarButtonItems) item.tintColor = [IPTheme accentColor];
-    self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
-    self.searchController.searchResultsUpdater = self;
-    self.searchController.obscuresBackgroundDuringPresentation = NO;
-    self.searchController.searchBar.placeholder = @"بحث في حزم IPA...";
-    self.navigationItem.searchController = self.searchController;
-    self.navigationItem.hidesSearchBarWhenScrolling = NO;
-}
-
-- (void)setupTableView {
-    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
-    self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.tableView.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    self.tableView.backgroundColor = UIColor.clearColor;
-    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(0.0, 0.0, 24.0, 0.0);
-    self.tableView.scrollIndicatorInsets = self.tableView.contentInset;
-    self.tableView.estimatedRowHeight = 82.0;
-    self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.dataSource = self;
-    self.tableView.delegate = self;
-    self.tableView.alwaysBounceVertical = YES;
-    [self.tableView registerClass:IPAFileCardCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
-    [self.view insertSubview:self.tableView atIndex:0];
-    UILayoutGuide *guide = self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
-        [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [self.tableView.topAnchor constraintEqualToAnchor:guide.topAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor]
-    ]];
-
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.bounds.size.width, 96.0)];
-    header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    header.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    header.backgroundColor = UIColor.clearColor;
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16.0, 14.0, header.bounds.size.width - 32.0, 28.0)];
-    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    title.text = @"فك حزمة IPA";
-    title.textColor = UIColor.whiteColor;
-    title.font = [IPTheme titleFont];
-    title.textAlignment = NSTextAlignmentRight;
-    title.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    [header addSubview:title];
-    UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(16.0, 48.0, header.bounds.size.width - 32.0, 20.0)];
-    subtitle.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    subtitle.text = @"ملفاتك الأصلية ونتائج الاستخراج داخل مساحة العمل الخاصة بالأداة";
-    subtitle.textColor = [IPTheme mutedTextColor];
-    subtitle.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
-    subtitle.textAlignment = NSTextAlignmentRight;
-    subtitle.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-    subtitle.lineBreakMode = NSLineBreakByTruncatingTail;
-    [header addSubview:subtitle];
-    self.tableView.tableHeaderView = header;
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    if (!self.hasLoadedPersistedItems) {
-        [self restorePersistedItems];
-        self.hasLoadedPersistedItems = YES;
-    }
-    self.emptyLabel.hidden = self.items.count != 0;
-    [self.tableView reloadData];
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    [self persistItems];
-}
-
 - (NSString *)rtlText:(NSString *)text {
     return [NSString stringWithFormat:@"\u2067%@\u2069", text ?: @""];
 }
 
 - (NSString *)ltrText:(NSString *)text {
     return [NSString stringWithFormat:@"\u2066%@\u2069", text ?: @""];
+}
+
+#pragma mark - UI Setup v3.0.35
+
+- (void)setupNavigationBar {
+    self.navigationController.navigationBar.prefersLargeTitles = NO;
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationController.navigationBarHidden = YES;
+}
+
+- (void)setupCustomHeader {
+    CGFloat width = self.view.bounds.size.width;
+    self.customHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 60)];
+    self.customHeader.backgroundColor = UIColor.clearColor;
+    self.customHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    // Settings button (gear) — trailing in RTL = left side visually
+    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    settingsBtn.frame = CGRectMake(16, 12, 44, 44);
+    [settingsBtn setImage:[UIImage systemImageNamed:@"gear"] forState:UIControlStateNormal];
+    settingsBtn.tintColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+    [settingsBtn addTarget:self action:@selector(settingsTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.customHeader addSubview:settingsBtn];
+
+    // Title
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 16, width, 36)];
+    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    title.text = @"فك حزمة IPA";
+    title.textColor = UIColor.whiteColor;
+    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    title.textAlignment = NSTextAlignmentCenter;
+    [self.customHeader addSubview:title];
+
+    [self.view addSubview:self.customHeader];
+}
+
+- (void)setupSearchBar {
+    CGFloat width = self.view.bounds.size.width;
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(12, 64, width - 24, 44)];
+    self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.searchBar.placeholder = @"ابحث في حزم IPA...";
+    self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
+    self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1];
+    self.searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    self.searchBar.delegate = self;
+    self.searchBar.showsCancelButton = NO;
+    self.searchBar.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
+    self.searchBar.layer.cornerRadius = 14;
+    self.searchBar.layer.masksToBounds = YES;
+    [self.view addSubview:self.searchBar];
+}
+
+- (void)setupSectionHeader {
+    CGFloat width = self.view.bounds.size.width;
+    self.sectionHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 116, width, 36)];
+    self.sectionHeaderView.backgroundColor = UIColor.clearColor;
+    self.sectionHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+    self.sectionTitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 4, 120, 28)];
+    self.sectionTitleLabel.text = @"ملفاتي";
+    self.sectionTitleLabel.textColor = [UIColor whiteColor];
+    self.sectionTitleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    self.sectionTitleLabel.textAlignment = NSTextAlignmentRight;
+    [self.sectionHeaderView addSubview:self.sectionTitleLabel];
+
+    self.sectionCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 136, 4, 120, 28)];
+    self.sectionCountLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    self.sectionCountLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
+    self.sectionCountLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    self.sectionCountLabel.textAlignment = NSTextAlignmentLeft;
+    [self.sectionHeaderView addSubview:self.sectionCountLabel];
+
+    [self.view addSubview:self.sectionHeaderView];
+}
+
+- (void)updateSectionHeader {
+    NSInteger count = [self displayRows].count;
+    self.sectionCountLabel.text = [NSString stringWithFormat:@"%ld عنصر", (long)count];
+}
+
+- (void)setupTableView {
+    CGFloat width = self.view.bounds.size.width;
+    self.tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 152, width, self.view.bounds.size.height - 152 - 80)
+                                                  style:UITableViewStylePlain];
+    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.tableView.backgroundColor = UIColor.clearColor;
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 24, 0);
+    self.tableView.scrollIndicatorInsets = self.tableView.contentInset;
+    self.tableView.estimatedRowHeight = 82.0;
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.dataSource = self;
+    self.tableView.delegate = self;
+    self.tableView.alwaysBounceVertical = YES;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
+    [self.tableView registerClass:IPAFileCardCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
+    [self.view insertSubview:self.tableView atIndex:0];
 }
 
 - (void)setupEmptyState {
@@ -213,6 +269,40 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0]
     ]];
     [self.view bringSubviewToFront:self.emptyLabel];
+}
+
+- (void)setupFAB {
+    CGFloat size = 56;
+    self.fabButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.fabButton.frame = CGRectMake(self.view.bounds.size.width - size - 20,
+                                      self.view.bounds.size.height - size - 40,
+                                      size, size);
+    self.fabButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+    self.fabButton.backgroundColor = [UIColor colorWithRed:0.25 green:0.55 blue:1.0 alpha:1.0];
+    self.fabButton.tintColor = UIColor.whiteColor;
+    self.fabButton.layer.cornerRadius = size / 2.0;
+    self.fabButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.fabButton.layer.shadowOffset = CGSizeMake(0, 4);
+    self.fabButton.layer.shadowRadius = 8;
+    self.fabButton.layer.shadowOpacity = 0.35;
+    [self.fabButton setImage:[UIImage systemImageNamed:@"plus"] forState:UIControlStateNormal];
+    self.fabButton.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    [self.fabButton addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.fabButton];
+    [self.view bringSubviewToFront:self.fabButton];
+}
+
+#pragma mark - Actions
+
+- (void)settingsTapped:(id)sender {
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"إعدادات فك الحزمة" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    sheet.view.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    [sheet addAction:[UIAlertAction actionWithTitle:self.sortByDate ? @"الترتيب: الاسم" : @"الترتيب: التاريخ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        self.sortByDate = !self.sortByDate;
+        [self.tableView reloadData];
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)addIPATapped:(id)sender {
@@ -246,6 +336,8 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     if ([NSThread isMainThread]) presentPicker();
     else dispatch_async(dispatch_get_main_queue(), presentPicker);
 }
+
+#pragma mark - UIDocumentPickerDelegate
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     NSArray<NSURL *> *pickedURLs = [urls copy] ?: @[];
@@ -325,6 +417,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
             }
             if (added > 0) [self persistItems];
             self.emptyLabel.hidden = self.items.count > 0;
+            [self updateSectionHeader];
             [self.tableView reloadData];
             NSLog(@"[IPAExtractor] post-selection import complete accepted=%lu rejected=%lu", (unsigned long)added, (unsigned long)rejected);
             if (added == 0 && pickedURLs.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
@@ -335,8 +428,10 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
 }
 
+#pragma mark - Display & Filtering
+
 - (NSArray<NSDictionary *> *)displayRows {
-    NSString *query = self.searchController.searchBar.text.lowercaseString ?: @"";
+    NSString *query = self.searchText.lowercaseString ?: @"";
     NSArray *visibleItems = [self.items filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) {
         if (query.length == 0) return YES;
         NSString *name = [item[@"displayName"] ?: item[@"name"] ?: @"" lowercaseString];
@@ -361,12 +456,9 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     return rows;
 }
 
-- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
-    [self.tableView reloadData];
-}
-
 - (void)toggleSort:(id)sender {
     self.sortByDate = !self.sortByDate;
+    [self updateSectionHeader];
     [self.tableView reloadData];
 }
 
@@ -374,6 +466,8 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     NSArray *rows = [self displayRows];
     return indexPath.row < rows.count ? rows[indexPath.row] : nil;
 }
+
+#pragma mark - Extraction Logic
 
 - (void)confirmExtractionForItem:(NSMutableDictionary *)item indexPath:(NSIndexPath *)indexPath {
     if ([item[@"extracting"] boolValue] || self.activeTask) return;
@@ -446,6 +540,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     item[@"updatedAt"] = [NSDate date];
     [self persistItems];
     self.emptyLabel.hidden = self.items.count != 0;
+    [self updateSectionHeader];
     [self.tableView reloadData];
 }
 
@@ -536,6 +631,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     [self.items removeObjectIdenticalTo:item];
     [self persistItems];
     self.emptyLabel.hidden = self.items.count > 0;
+    [self updateSectionHeader];
     [self.tableView reloadData];
 }
 
@@ -672,7 +768,11 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     }];
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self displayRows].count; }
+#pragma mark - UITableViewDataSource
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return [self displayRows].count;
+}
 
 - (IPAFileCardCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     IPAFileCardCell *cell = [tableView dequeueReusableCellWithIdentifier:@"IPAUnpackCell" forIndexPath:indexPath];
@@ -746,6 +846,38 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         completionHandler(YES);
     }];
     return [UISwipeActionsConfiguration configurationWithActions:@[action]];
+}
+
+#pragma mark - UISearchBarDelegate
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    self.searchText = searchText ?: @"";
+    [self updateSectionHeader];
+    [self.tableView reloadData];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+
+- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
+    searchBar.showsCancelButton = YES;
+    UIButton *cancelButton = [searchBar valueForKey:@"cancelButton"];
+    if ([cancelButton isKindOfClass:[UIButton class]]) {
+        [cancelButton setTitle:@"إلغاء" forState:UIControlStateNormal];
+    }
+}
+
+- (void)searchBarTextDidEndEditing:(UISearchBar *)searchBar {
+    searchBar.showsCancelButton = NO;
+}
+
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    searchBar.text = @"";
+    self.searchText = @"";
+    [searchBar resignFirstResponder];
+    [self updateSectionHeader];
+    [self.tableView reloadData];
 }
 
 @end
