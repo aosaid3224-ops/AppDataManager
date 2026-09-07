@@ -1,6 +1,6 @@
 //
 //  InstalledAppsViewController.m
-//  IPAInstallerPro
+//  IPAInstallerPro — v3.0.35: Arabic Smart Search in Installed Apps
 //
 
 #import "InstalledAppsViewController.h"
@@ -8,11 +8,13 @@
 #import "AppDetailsViewController.h"
 #import "IPTheme.h"
 
-@interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate>
+@interface InstalledAppsViewController () <UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UISegmentedControl *segmentControl;
+@property (nonatomic, strong) UISearchBar *searchBar;
 @property (nonatomic, strong) NSArray<AppInfo *> *apps;
 @property (nonatomic, strong) NSArray<AppInfo *> *filteredApps;
+@property (nonatomic, copy) NSString *searchText;
 @property (nonatomic, strong) UIActivityIndicatorView *activityIndicator;
 @property (nonatomic, strong) UILabel *errorLabel;
 @property (nonatomic, strong) UIButton *retryButton;
@@ -24,8 +26,10 @@
     [super viewDidLoad];
     self.view.backgroundColor = [IPTheme backgroundColor];
     self.title = @"\u0627\u0644\u062a\u0637\u0628\u064a\u0642\u0627\u062a";
+    self.searchText = @"";
 
     [self setupSegmentControl];
+    [self setupSearchBar];
     [self setupTableView];
     [self setupActivityIndicator];
     [self setupErrorUI];
@@ -47,11 +51,15 @@
     [self loadApps];
 }
 
+#pragma mark - UI Setup
+
 - (void)setupSegmentControl {
     _segmentControl = [[UISegmentedControl alloc] initWithItems:@[@"\u0627\u0644\u0643\u0644", @"\u0645\u0633\u062a\u062e\u062f\u0645", @"\u0646\u0638\u0627\u0645"]];
     _segmentControl.translatesAutoresizingMaskIntoConstraints = NO;
     _segmentControl.selectedSegmentIndex = 0;
-    _segmentControl.backgroundColor = [IPTheme cardColor]; _segmentControl.layer.cornerRadius = 12; _segmentControl.layer.masksToBounds = YES;
+    _segmentControl.backgroundColor = [IPTheme cardColor];
+    _segmentControl.layer.cornerRadius = 12;
+    _segmentControl.layer.masksToBounds = YES;
     _segmentControl.selectedSegmentTintColor = [IPTheme accentColor];
     [_segmentControl setTitleTextAttributes:@{NSForegroundColorAttributeName: [UIColor whiteColor]} forState:UIControlStateNormal];
     [_segmentControl addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
@@ -65,6 +73,26 @@
     ]];
 }
 
+- (void)setupSearchBar {
+    _searchBar = [[UISearchBar alloc] initWithFrame:CGRectZero];
+    _searchBar.translatesAutoresizingMaskIntoConstraints = NO;
+    _searchBar.placeholder = @"\u0627\u0644\u0628\u062d\u062b \u0641\u064a \u0627\u0644\u062a\u0637\u0628\u064a\u0642\u0627\u062a...";
+    _searchBar.searchBarStyle = UISearchBarStyleMinimal;
+    _searchBar.tintColor = [IPTheme accentColor];
+    _searchBar.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+    _searchBar.delegate = self;
+    _searchBar.showsCancelButton = NO;
+    _searchBar.backgroundColor = [UIColor clearColor];
+    [self.view addSubview:_searchBar];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [_searchBar.topAnchor constraintEqualToAnchor:_segmentControl.bottomAnchor constant:6],
+        [_searchBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:8],
+        [_searchBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_searchBar.heightAnchor constraintEqualToConstant:42]
+    ]];
+}
+
 - (void)setupTableView {
     _tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     _tableView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -73,11 +101,12 @@
     _tableView.dataSource = self;
     _tableView.delegate = self;
     _tableView.rowHeight = 72;
+    _tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [_tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"AppCell"];
     [self.view addSubview:_tableView];
 
     [NSLayoutConstraint activateConstraints:@[
-        [_tableView.topAnchor constraintEqualToAnchor:_segmentControl.bottomAnchor constant:12],
+        [_tableView.topAnchor constraintEqualToAnchor:_searchBar.bottomAnchor constant:4],
         [_tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [_tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [_tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
@@ -127,6 +156,8 @@
     ]];
 }
 
+#pragma mark - Data Loading
+
 - (void)loadApps {
     [self.activityIndicator startAnimating];
     self.tableView.hidden = YES;
@@ -171,19 +202,55 @@
     });
 }
 
+#pragma mark - Filtering (Segment + Search)
+
 - (void)segmentChanged:(UISegmentedControl *)sender {
     [self filterApps];
     [self.tableView reloadData];
 }
 
 - (void)filterApps {
-    if (self.segmentControl.selectedSegmentIndex == 0) {
-        self.filteredApps = self.apps;
-    } else if (self.segmentControl.selectedSegmentIndex == 1) {
-        self.filteredApps = [self.apps filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == NO"]];
-    } else {
-        self.filteredApps = [self.apps filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == YES"]];
+    NSArray<AppInfo *> *segmented = self.apps;
+
+    // 1. Apply segment filter
+    if (self.segmentControl.selectedSegmentIndex == 1) {
+        segmented = [segmented filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == NO"]];
+    } else if (self.segmentControl.selectedSegmentIndex == 2) {
+        segmented = [segmented filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"isSystemApp == YES"]];
     }
+
+    // 2. Apply search filter (Arabic smart search)
+    NSString *query = [self.searchText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if (query.length == 0) {
+        self.filteredApps = segmented;
+        return;
+    }
+
+    NSMutableArray<AppInfo *> *results = [NSMutableArray array];
+
+    // Phase 1: Exact prefix match (name or bundleID starts with query)
+    for (AppInfo *app in segmented) {
+        NSString *name = app.name ?: @"";
+        NSString *bundleID = app.bundleID ?: @"";
+        if ([name hasPrefix:query] || [bundleID hasPrefix:query]) {
+            [results addObject:app];
+        }
+    }
+
+    // Phase 2: Contains match (name, bundleID, or version contains query)
+    for (AppInfo *app in segmented) {
+        if ([results containsObject:app]) continue;
+        NSString *name = app.name ?: @"";
+        NSString *bundleID = app.bundleID ?: @"";
+        NSString *version = app.version ?: @"";
+        if ([name localizedStandardContainsString:query] ||
+            [bundleID localizedStandardContainsString:query] ||
+            [version localizedStandardContainsString:query]) {
+            [results addObject:app];
+        }
+    }
+
+    self.filteredApps = results;
 }
 
 #pragma mark - UITableViewDataSource
@@ -234,6 +301,38 @@
     AppInfo *app = self.filteredApps[indexPath.row];
     AppDetailsViewController *detail = [[AppDetailsViewController alloc] initWithAppInfo:app];
     [self.navigationController pushViewController:detail animated:YES];
+}
+
+#pragma mark - UISearchBarDelegate (Arabic Smart Search)
+
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    self.searchText = searchText ?: @"";
+    [self filterApps];
+    [self.tableView reloadData];
+}
+
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    [searchBar resignFirstResponder];
+}
+
+- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
+    searchBar.showsCancelButton = YES;
+    UIButton *cancelButton = [searchBar valueForKey:@"cancelButton"];
+    if ([cancelButton isKindOfClass:[UIButton class]]) {
+        [cancelButton setTitle:@"\u0625\u0644\u063a\u0627\u0621" forState:UIControlStateNormal];
+    }
+}
+
+- (void)searchBarTextDidEndEditing:(UISearchBar *)searchBar {
+    searchBar.showsCancelButton = NO;
+}
+
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    searchBar.text = @"";
+    self.searchText = @"";
+    [searchBar resignFirstResponder];
+    [self filterApps];
+    [self.tableView reloadData];
 }
 
 @end
