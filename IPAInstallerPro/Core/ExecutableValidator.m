@@ -196,12 +196,21 @@
 
 - (NSString *)findExecutableNamed:(NSString *)name {
     NSArray<NSString *> *paths = [self buildSearchPathsForName:name];
-    for (NSString *dir in paths) {
+    NSLog(@"[Spider-ToolSearch] === Searching for '%@' ===", name);
+    NSLog(@"[Spider-ToolSearch] Search paths count: %lu", (unsigned long)paths.count);
+    for (NSUInteger i = 0; i < paths.count; i++) {
+        NSString *dir = paths[i];
         NSString *candidate = [dir stringByAppendingPathComponent:name];
-        if (access(candidate.fileSystemRepresentation, F_OK) == 0) {
+        int result = access(candidate.fileSystemRepresentation, F_OK);
+        if (result == 0) {
+            NSLog(@"[Spider-ToolSearch] [%lu] FOUND: %@", (unsigned long)i, candidate);
             return candidate;
+        } else {
+            NSLog(@"[Spider-ToolSearch] [%lu] NOT FOUND: %@ (errno=%d: %s)", 
+                  (unsigned long)i, candidate, errno, strerror(errno));
         }
     }
+    NSLog(@"[Spider-ToolSearch] === '%@' NOT FOUND in any path ===", name);
     return nil;
 }
 
@@ -229,6 +238,11 @@
     if (rt.bootstrapPath) {
         [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin"]];
         [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"bin"]];
+        // RootHide compatibility paths
+        if ([rt.bootstrapPath rangeOfString:@".jbroot-"].location != NSNotFound) {
+            [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"var/jb/usr/bin"]];
+            [paths addObject:[rt.bootstrapPath stringByAppendingPathComponent:@"var/jb/bin"]];
+        }
     } else {
         [paths addObject:@"/var/jb/usr/bin"];
         [paths addObject:@"/var/jb/bin"];
