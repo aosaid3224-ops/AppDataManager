@@ -1,10 +1,9 @@
 #import <UIKit/UIKit.h>
 #import "../Core/IPAExtractor.h"
 
-@interface MainViewController : UIViewController <UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate, UISearchBarDelegate>
+@interface MainViewController : UIViewController <UITableViewDataSource, UITableViewDelegate, UIDocumentPickerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSMutableArray<IPAExtractedInfo *> *ipaFiles;
-@property (nonatomic, strong) NSMutableArray<IPAExtractedInfo *> *filteredIPAFiles;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *ipaMetadataCache;
 @property (nonatomic, strong) NSCache<NSString *, UIImage *> *ipaIconCache;
 @property (nonatomic, strong) dispatch_queue_t ipaCacheQueue;
@@ -17,6 +16,5 @@
 @property (nonatomic, strong) UILabel *trustedLabel;
 @property (nonatomic, strong) UILabel *installedLabel;
 @property (nonatomic, assign) BOOL isLoading;
-@property (nonatomic, assign) BOOL isSearching;
 @property (nonatomic, assign) NSUInteger ipaLoadGeneration;
 @end
