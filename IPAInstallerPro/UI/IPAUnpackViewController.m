@@ -154,7 +154,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     return [NSString stringWithFormat:@"\u2066%@\u2069", text ?: @""];
 }
 
-#pragma mark - UI Setup v3.0.35
+#pragma mark - UI Setup v3.0.35 (Auto Layout + Safe Area)
 
 - (void)setupNavigationBar {
     self.navigationController.navigationBar.prefersLargeTitles = NO;
@@ -163,35 +163,48 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)setupCustomHeader {
-    CGFloat width = self.view.bounds.size.width;
-    self.customHeader = [[UIView alloc] initWithFrame:CGRectMake(0, 0, width, 60)];
+    self.customHeader = [[UIView alloc] init];
+    self.customHeader.translatesAutoresizingMaskIntoConstraints = NO;
     self.customHeader.backgroundColor = UIColor.clearColor;
-    self.customHeader.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:self.customHeader];
 
-    // Settings button (gear) — trailing in RTL = left side visually
+    // Settings button
     UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    settingsBtn.frame = CGRectMake(16, 12, 44, 44);
+    settingsBtn.translatesAutoresizingMaskIntoConstraints = NO;
     [settingsBtn setImage:[UIImage systemImageNamed:@"gear"] forState:UIControlStateNormal];
     settingsBtn.tintColor = [UIColor colorWithWhite:0.7 alpha:1.0];
     [settingsBtn addTarget:self action:@selector(settingsTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.customHeader addSubview:settingsBtn];
 
     // Title
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 16, width, 36)];
-    title.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    UILabel *title = [[UILabel alloc] init];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
     title.text = @"فك حزمة IPA";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     title.textAlignment = NSTextAlignmentCenter;
     [self.customHeader addSubview:title];
 
-    [self.view addSubview:self.customHeader];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.customHeader.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [self.customHeader.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.customHeader.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.customHeader.heightAnchor constraintEqualToConstant:48],
+
+        [settingsBtn.leadingAnchor constraintEqualToAnchor:self.customHeader.leadingAnchor constant:12],
+        [settingsBtn.centerYAnchor constraintEqualToAnchor:self.customHeader.centerYAnchor],
+        [settingsBtn.widthAnchor constraintEqualToConstant:40],
+        [settingsBtn.heightAnchor constraintEqualToConstant:40],
+
+        [title.centerXAnchor constraintEqualToAnchor:self.customHeader.centerXAnchor],
+        [title.centerYAnchor constraintEqualToAnchor:self.customHeader.centerYAnchor],
+        [title.leadingAnchor constraintGreaterThanOrEqualToAnchor:settingsBtn.trailingAnchor constant:8]
+    ]];
 }
 
 - (void)setupSearchBar {
-    CGFloat width = self.view.bounds.size.width;
-    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(12, 64, width - 24, 44)];
-    self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.searchBar = [[UISearchBar alloc] init];
+    self.searchBar.translatesAutoresizingMaskIntoConstraints = NO;
     self.searchBar.placeholder = @"ابحث في حزم IPA...";
     self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
     self.searchBar.tintColor = [UIColor colorWithRed:1 green:.22 blue:.18 alpha:1];
@@ -202,29 +215,48 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     self.searchBar.layer.cornerRadius = 14;
     self.searchBar.layer.masksToBounds = YES;
     [self.view addSubview:self.searchBar];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.searchBar.topAnchor constraintEqualToAnchor:self.customHeader.bottomAnchor constant:8],
+        [self.searchBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:12],
+        [self.searchBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-12],
+        [self.searchBar.heightAnchor constraintEqualToConstant:44]
+    ]];
 }
 
 - (void)setupSectionHeader {
-    CGFloat width = self.view.bounds.size.width;
-    self.sectionHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 116, width, 36)];
+    self.sectionHeaderView = [[UIView alloc] init];
+    self.sectionHeaderView.translatesAutoresizingMaskIntoConstraints = NO;
     self.sectionHeaderView.backgroundColor = UIColor.clearColor;
-    self.sectionHeaderView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.view addSubview:self.sectionHeaderView];
 
-    self.sectionTitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 4, 120, 28)];
+    self.sectionTitleLabel = [[UILabel alloc] init];
+    self.sectionTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.sectionTitleLabel.text = @"ملفاتي";
     self.sectionTitleLabel.textColor = [UIColor whiteColor];
     self.sectionTitleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
     self.sectionTitleLabel.textAlignment = NSTextAlignmentRight;
     [self.sectionHeaderView addSubview:self.sectionTitleLabel];
 
-    self.sectionCountLabel = [[UILabel alloc] initWithFrame:CGRectMake(width - 136, 4, 120, 28)];
-    self.sectionCountLabel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    self.sectionCountLabel = [[UILabel alloc] init];
+    self.sectionCountLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.sectionCountLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1.0];
     self.sectionCountLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     self.sectionCountLabel.textAlignment = NSTextAlignmentLeft;
     [self.sectionHeaderView addSubview:self.sectionCountLabel];
 
-    [self.view addSubview:self.sectionHeaderView];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.sectionHeaderView.topAnchor constraintEqualToAnchor:self.searchBar.bottomAnchor constant:8],
+        [self.sectionHeaderView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:16],
+        [self.sectionHeaderView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],
+        [self.sectionHeaderView.heightAnchor constraintEqualToConstant:32],
+
+        [self.sectionTitleLabel.leadingAnchor constraintEqualToAnchor:self.sectionHeaderView.leadingAnchor],
+        [self.sectionTitleLabel.centerYAnchor constraintEqualToAnchor:self.sectionHeaderView.centerYAnchor],
+
+        [self.sectionCountLabel.trailingAnchor constraintEqualToAnchor:self.sectionHeaderView.trailingAnchor],
+        [self.sectionCountLabel.centerYAnchor constraintEqualToAnchor:self.sectionHeaderView.centerYAnchor]
+    ]];
 }
 
 - (void)updateSectionHeader {
@@ -233,13 +265,11 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (void)setupTableView {
-    CGFloat width = self.view.bounds.size.width;
-    self.tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 152, width, self.view.bounds.size.height - 152 - 80)
-                                                  style:UITableViewStylePlain];
-    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
     self.tableView.backgroundColor = UIColor.clearColor;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 24, 0);
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, 80, 0);
     self.tableView.scrollIndicatorInsets = self.tableView.contentInset;
     self.tableView.estimatedRowHeight = 82.0;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
@@ -249,10 +279,17 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     [self.tableView registerClass:IPAFileCardCell.class forCellReuseIdentifier:@"IPAUnpackCell"];
     [self.view insertSubview:self.tableView atIndex:0];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.tableView.topAnchor constraintEqualToAnchor:self.sectionHeaderView.bottomAnchor constant:4],
+        [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+    ]];
 }
 
 - (void)setupEmptyState {
-    self.emptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.emptyLabel = [[UILabel alloc] init];
     self.emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.emptyLabel.text = @"لا توجد حزم IPA مضافة\nاضغط + لاختيار ملف خارجي";
     self.emptyLabel.textColor = [UIColor colorWithWhite:0.46 alpha:1.0];
@@ -264,7 +301,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     [self.view addSubview:self.emptyLabel];
     [NSLayoutConstraint activateConstraints:@[
         [self.emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor constant:35.0],
+        [self.emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
         [self.emptyLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:24.0],
         [self.emptyLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-24.0]
     ]];
@@ -274,10 +311,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 - (void)setupFAB {
     CGFloat size = 56;
     self.fabButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.fabButton.frame = CGRectMake(self.view.bounds.size.width - size - 20,
-                                      self.view.bounds.size.height - size - 40,
-                                      size, size);
-    self.fabButton.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin;
+    self.fabButton.translatesAutoresizingMaskIntoConstraints = NO;
     self.fabButton.backgroundColor = [UIColor colorWithRed:0.25 green:0.55 blue:1.0 alpha:1.0];
     self.fabButton.tintColor = UIColor.whiteColor;
     self.fabButton.layer.cornerRadius = size / 2.0;
@@ -290,6 +324,13 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     [self.fabButton addTarget:self action:@selector(addIPATapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.fabButton];
     [self.view bringSubviewToFront:self.fabButton];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [self.fabButton.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [self.fabButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-20],
+        [self.fabButton.widthAnchor constraintEqualToConstant:size],
+        [self.fabButton.heightAnchor constraintEqualToConstant:size]
+    ]];
 }
 
 #pragma mark - Actions
@@ -644,23 +685,28 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
 }
 
 - (UIImage *)ipaFileIcon {
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(40, 40)];
+    CGSize size = CGSizeMake(52, 52);
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size];
     return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
         CGContextRef cg = context.CGContext;
-        CGRect page = CGRectMake(7, 3, 26, 34);
-        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:page cornerRadius:5];
-        [[UIColor colorWithRed:0.18 green:0.28 blue:0.42 alpha:1.0] setFill];
-        [path fill];
-        [[UIColor colorWithWhite:0.9 alpha:1.0] setStroke];
-        path.lineWidth = 1.5;
-        [path stroke];
-        CGRect badge = CGRectMake(4, 23, 32, 13);
-        UIBezierPath *badgePath = [UIBezierPath bezierPathWithRoundedRect:badge cornerRadius:4];
-        [[UIColor colorWithRed:0.2 green:0.72 blue:0.45 alpha:1.0] setFill];
+        // Background rounded rect
+        CGRect bgRect = CGRectMake(2, 2, 48, 48);
+        UIBezierPath *bgPath = [UIBezierPath bezierPathWithRoundedRect:bgRect cornerRadius:10];
+        [[UIColor colorWithRed:0.15 green:0.25 blue:0.40 alpha:1.0] setFill];
+        [bgPath fill];
+        // White page icon
+        CGRect pageRect = CGRectMake(16, 10, 20, 26);
+        UIBezierPath *pagePath = [UIBezierPath bezierPathWithRoundedRect:pageRect cornerRadius:3];
+        [[UIColor whiteColor] setFill];
+        [pagePath fill];
+        // Green badge
+        CGRect badgeRect = CGRectMake(10, 32, 32, 14);
+        UIBezierPath *badgePath = [UIBezierPath bezierPathWithRoundedRect:badgeRect cornerRadius:4];
+        [[UIColor colorWithRed:0.22 green:0.75 blue:0.48 alpha:1.0] setFill];
         [badgePath fill];
-        NSDictionary *attributes = @{ NSFontAttributeName: [UIFont systemFontOfSize:8 weight:UIFontWeightBold], NSForegroundColorAttributeName: UIColor.whiteColor };
-        [@"IPA" drawInRect:CGRectMake(4, 25, 32, 9) withAttributes:attributes];
-        CGContextSetStrokeColorWithColor(cg, [UIColor colorWithWhite:0.9 alpha:1.0].CGColor);
+        // IPA text
+        NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:8 weight:UIFontWeightBold], NSForegroundColorAttributeName: UIColor.whiteColor };
+        [@"IPA" drawInRect:CGRectMake(10, 34, 32, 10) withAttributes:attrs];
     }];
 }
 
