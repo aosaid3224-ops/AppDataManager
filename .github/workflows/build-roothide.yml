@@ -40,9 +40,9 @@ jobs:
           chmod +x layout/DEBIAN/prerm 2>/dev/null || true
           sed -i '' 's/^Package: .*/Package: com.aosaid.ipainstallerpro.roothide/' control
           sed -i '' 's/^Name: .*/Name: Spider RootHide/' control
-          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide3/' control
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide3' Resources/Info.plist
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide3' Resources/Info.plist
+          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide4/' control
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide4' Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide4' Resources/Info.plist
           grep -E '^(Package|Name|Version):' control
           grep -E '^Version:' control
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist
@@ -52,10 +52,13 @@ jobs:
           export PATH="$THEOS/bin:$PATH"
           cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
           make clean
-          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          make package THEOS_PACKAGE_SCHEME=roothide ARCHS=arm64e FINALPACKAGE=1
           ls -l packages/*.deb
           dpkg-deb -f packages/*.deb Package Name Version Architecture Depends
           test "$(dpkg-deb -f packages/*.deb Architecture)" = "iphoneos-arm64e"
+          APP_BIN=$(find "$RUNNER_TEMP/IPAInstallerPro-roothide" -type f -path '*/Applications/Spider.app/Spider' -print -quit)
+          test -n "$APP_BIN"
+          file "$APP_BIN" | grep -q 'arm64e'
 
       - name: Publish RootHide package to development repository
         run: |
@@ -76,6 +79,6 @@ jobs:
       - name: Upload RootHide DEB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spider-roothide-3.0.35-roothide3
+          name: spider-roothide-3.0.35-roothide4
           path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
           if-no-files-found: error
