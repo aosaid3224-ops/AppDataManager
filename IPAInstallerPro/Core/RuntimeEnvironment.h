@@ -18,6 +18,7 @@ typedef NS_ENUM(NSInteger, SpiderJailbreakType) {
     SpiderJailbreakTypeTaurine,
     SpiderJailbreakTypeOdyssey,
     SpiderJailbreakTypeXinaA15,
+    SpiderJailbreakTypeRelaxin,
     SpiderJailbreakTypeOther
 };
 
