@@ -38,10 +38,12 @@ jobs:
           cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
           chmod +x layout/DEBIAN/postinst 2>/dev/null || true
           chmod +x layout/DEBIAN/prerm 2>/dev/null || true
+          sed -i '' 's/^Package: .*/Package: com.aosaid.ipainstallerpro.roothide/' control
           sed -i '' 's/^Name: .*/Name: Spider RootHide/' control
-          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide2/' control
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide2' Resources/Info.plist
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide2' Resources/Info.plist
+          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide3/' control
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide3' Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide3' Resources/Info.plist
+          grep -E '^(Package|Name|Version):' control
           grep -E '^Version:' control
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist
 
@@ -59,6 +61,7 @@ jobs:
         run: |
           set -e
           mkdir -p repo-dev/pool/main/iphoneos-arm64e
+          rm -f repo-dev/pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro_3.0.35+roothide*.deb
           cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb repo-dev/pool/main/iphoneos-arm64e/
           mkdir -p repo-dev/scripts
           cp scripts/generate-repo.py repo-dev/scripts/
@@ -67,12 +70,12 @@ jobs:
           git config user.email 'ci@github.com'
           git config user.name 'GitHub CI'
           git add -A
-          git commit -m 'Update Spider RootHide package name to Spider RootHide' || true
+          git commit -m 'Publish Spider RootHide as independent package' || true
           git push origin main
 
       - name: Upload RootHide DEB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spider-roothide-3.0.35-roothide2
+          name: spider-roothide-3.0.35-roothide3
           path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
           if-no-files-found: error
