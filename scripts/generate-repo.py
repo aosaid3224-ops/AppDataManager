@@ -8,7 +8,11 @@ parser.add_argument("--prod", action="store_true", help="Generate for production
 args = parser.parse_args()
 
 REPO_DIR = args.repo_dir
-POOL_DIR = os.path.join(REPO_DIR, "pool", "main", "iphoneos-arm64")
+POOL_ROOT = os.path.join(REPO_DIR, "pool", "main")
+POOL_ARCH_DIRS = [
+    os.path.join(POOL_ROOT, "iphoneos-arm64"),
+    os.path.join(POOL_ROOT, "iphoneos-arm64e"),
+]
 
 def hash_file(path, algo):
     h = hashlib.new(algo)
@@ -26,27 +30,30 @@ def get_deb_info(deb_path):
 
 def main():
     packages = []
-    if not os.path.exists(POOL_DIR):
-        print(f"Pool dir not found: {POOL_DIR}")
+    existing_dirs = [d for d in POOL_ARCH_DIRS if os.path.isdir(d)]
+    if not existing_dirs:
+        print(f"Pool dirs not found: {', '.join(POOL_ARCH_DIRS)}")
         return
 
-    for fname in sorted(os.listdir(POOL_DIR)):
-        if not fname.endswith(".deb"):
-            continue
-        fpath = os.path.join(POOL_DIR, fname)
-        size = os.path.getsize(fpath)
-        md5 = hash_file(fpath, "md5")
-        sha1 = hash_file(fpath, "sha1")
-        sha256 = hash_file(fpath, "sha256")
-        info = get_deb_info(fpath)
+    for pool_dir in existing_dirs:
+        architecture_dir = os.path.basename(pool_dir)
+        for fname in sorted(os.listdir(pool_dir)):
+            if not fname.endswith(".deb"):
+                continue
+            fpath = os.path.join(pool_dir, fname)
+            size = os.path.getsize(fpath)
+            md5 = hash_file(fpath, "md5")
+            sha1 = hash_file(fpath, "sha1")
+            sha256 = hash_file(fpath, "sha256")
+            info = get_deb_info(fpath)
 
-        entry = info.strip()
-        entry += f"\nFilename: pool/main/iphoneos-arm64/{fname}\n"
-        entry += f"Size: {size}\n"
-        entry += f"MD5sum: {md5}\n"
-        entry += f"SHA1: {sha1}\n"
-        entry += f"SHA256: {sha256}\n"
-        packages.append(entry)
+            entry = info.strip()
+            entry += f"\nFilename: pool/main/{architecture_dir}/{fname}\n"
+            entry += f"Size: {size}\n"
+            entry += f"MD5sum: {md5}\n"
+            entry += f"SHA1: {sha1}\n"
+            entry += f"SHA256: {sha256}\n"
+            packages.append(entry)
 
     packages_text = "\n".join(packages) + "\n"
 
@@ -103,7 +110,7 @@ def main():
         "Suite: stable",
         "Version: 1.0",
         f"Codename: {codename}",
-        "Architectures: iphoneos-arm64",
+        "Architectures: iphoneos-arm64 iphoneos-arm64e",
         "Components: main",
         f"Description: {description}",
         "",
