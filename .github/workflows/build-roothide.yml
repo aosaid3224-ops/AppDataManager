@@ -40,9 +40,9 @@ jobs:
           chmod +x layout/DEBIAN/prerm 2>/dev/null || true
           sed -i '' 's/^Package: .*/Package: com.aosaid.ipainstallerpro.roothide/' control
           sed -i '' 's/^Name: .*/Name: Spider RootHide/' control
-          sed -i '' 's/^Version: .*/Version: 3.0.35+roothide6/' control
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.35+roothide6' Resources/Info.plist
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.35+roothide6' Resources/Info.plist
+          sed -i '' 's/^Version: .*/Version: 3.0.36+roothide7/' control
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 3.0.36+roothide7' Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 3.0.36+roothide7' Resources/Info.plist
           python3 - <<'PY'
           from pathlib import Path
           p = Path('control')
@@ -89,6 +89,6 @@ jobs:
       - name: Upload RootHide DEB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: spider-roothide-3.0.35-roothide6
+          name: spider-roothide-3.0.36-roothide7
           path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
           if-no-files-found: error

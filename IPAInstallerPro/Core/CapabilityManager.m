@@ -44,7 +44,7 @@
     return ([[ExecutableValidator sharedValidator] validateUICache].status == ExecutableCapabilityStatusReady);
 }
 
-- (BOOL)isRootHelperAvailable {
+- (NSString *)resolvedRootHelperPath {
     RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
     NSMutableOrderedSet<NSString *> *candidates = [NSMutableOrderedSet orderedSet];
     if (rt.bootstrapPath.length > 0) {
@@ -59,9 +59,13 @@
     ]];
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *path in candidates) {
-        if ([fm isExecutableFileAtPath:path]) return YES;
+        if ([fm isExecutableFileAtPath:path]) return path;
     }
-    return NO;
+    return nil;
+}
+
+- (BOOL)isRootHelperAvailable {
+    return ([self resolvedRootHelperPath] != nil);
 }
 
 - (BOOL)isSystemInstallationAvailable {
@@ -142,7 +146,7 @@
     helper.name = @"Root Helper"; helper.identifier = @"root_helper";
     helper.isAvailable = [self isRootHelperAvailable];
     helper.statusMessage = helper.isAvailable ? @"مُفعّل" : @"غير موجود";
-    helper.path = @"/usr/bin/ipainstallerpro_helper";
+    helper.path = [self resolvedRootHelperPath] ?: @"/usr/bin/ipainstallerpro_helper";
     [caps addObject:helper];
 
     self.cachedCapabilities = caps;

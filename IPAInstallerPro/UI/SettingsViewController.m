@@ -8,6 +8,7 @@
 #import "JailbreakEnvironment.h"
 #import "IPTheme.h"
 #import "RuntimeEnvironment.h"
+#import "../Core/SPStrings.h"
 #import <objc/runtime.h>
 
 @interface SettingsViewController ()
@@ -21,7 +22,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"الإعدادات";
+    self.title = SPText(@"settings");
     self.view.backgroundColor = [IPTheme backgroundColor];
     [self setupUI];
 }
@@ -149,7 +150,7 @@
 
     UILabel *statusLbl = [[UILabel alloc] init];
     statusLbl.translatesAutoresizingMaskIntoConstraints = NO;
-    statusLbl.text = available ? @"متوفر" : @"غير متوفر";
+    statusLbl.text = available ? SPText(@"enabled") : SPText(@"not_found");
     statusLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
     statusLbl.textColor = available
         ? [UIColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1.0]
@@ -212,7 +213,7 @@
 
     UILabel *titleLbl = [[UILabel alloc] init];
     titleLbl.translatesAutoresizingMaskIntoConstraints = NO;
-    titleLbl.text = @"حول الأداة";
+    titleLbl.text = SPText(@"about");
     titleLbl.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     titleLbl.textColor = [UIColor whiteColor];
     titleLbl.textAlignment = NSTextAlignmentRight;
@@ -281,18 +282,14 @@
     [self clearStack:self.contentStack];
 
     // ─── Environment Rows ───
-    NSDictionary *envItems = @{
-        @"حالة الجلبريك": @[env.jailbreakType ?: @"غير معروف", @"checkmark.circle.fill"],
-        @"الجهاز": @[env.deviceModel ?: @"غير معروف", @"iphone"],
-        @"إصدار iOS": @[env.iosVersion ?: @"غير معروف", @"number.circle.fill"],
-        @"المعمارية": @[env.architecture ?: @"غير محدد", @"cpu"],
-        @"مسار التطبيقات": @[env.applicationsPath ?: @"غير موقع", @"folder.fill"],
-        @"مسار المستندات": @[env.mobileDocumentsPath ?: @"غير موقع", @"doc.fill"],
-        @"مسار الروت": @[env.rootPath ?: @"غير موجود", @"number.sign"]
+    BOOL zh = SPUsesChinese();
+    NSString *unknown = SPText(@"unknown");
+    NSDictionary *envItems = zh ? @{
+        @"越狱状态": @[env.jailbreakType ?: unknown, @"checkmark.circle.fill"], @"设备": @[env.deviceModel ?: unknown, @"iphone"], @"iOS 版本": @[env.iosVersion ?: unknown, @"number.circle.fill"], @"架构": @[env.architecture ?: unknown, @"cpu"], @"应用路径": @[env.applicationsPath ?: unknown, @"folder.fill"], @"文档路径": @[env.mobileDocumentsPath ?: unknown, @"doc.fill"], @"Root 路径": @[env.rootPath ?: unknown, @"number.sign"]
+    } : @{
+        @"حالة الجلبريك": @[env.jailbreakType ?: unknown, @"checkmark.circle.fill"], @"الجهاز": @[env.deviceModel ?: unknown, @"iphone"], @"إصدار iOS": @[env.iosVersion ?: unknown, @"number.circle.fill"], @"المعمارية": @[env.architecture ?: unknown, @"cpu"], @"مسار التطبيقات": @[env.applicationsPath ?: unknown, @"folder.fill"], @"مسار المستندات": @[env.mobileDocumentsPath ?: unknown, @"doc.fill"], @"مسار الروت": @[env.rootPath ?: unknown, @"number.sign"]
     };
-
-    NSArray *envOrder = @[@"حالة الجلبريك", @"الجهاز", @"إصدار iOS", @"المعمارية",
-                          @"مسار التطبيقات", @"مسار المستندات", @"مسار الروت"];
+    NSArray *envOrder = zh ? @[@"越狱状态", @"设备", @"iOS 版本", @"架构", @"应用路径", @"文档路径", @"Root 路径"] : @[@"حالة الجلبريك", @"الجهاز", @"إصدار iOS", @"المعمارية", @"مسار التطبيقات", @"مسار المستندات", @"مسار الروت"];
 
     for (NSString *key in envOrder) {
         NSArray *data = envItems[key];
@@ -325,9 +322,9 @@
 #pragma mark - Actions
 
 - (void)showAbout {
-    NSString *message = @"هذه الأداة متاحة حاليًا كنسخة تجريبية وليست الإصدار النهائي.\n\nقد تواجه بعض الأخطاء أو المشاكل أثناء الاستخدام، ونهدف من خلال هذه المرحلة إلى اختبار الأداة وتحسين استقرارها وتطوير ميزاتها.\n\nإذا واجهت أي خلل، أو لديك ملاحظة أو اقتراح لتحسين الأداة، نرجو منك مشاركة تجربتك معنا. ملاحظاتك تساعدنا على اكتشاف المشاكل ومعالجتها قبل إطلاق الإصدار النهائي.\n\nللتواصل والإبلاغ عن المشاكل:\nX: @Zainqkvd";
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"حول الأداة" message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+    NSString *message = SPText(@"about_message");
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:SPText(@"about") message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:SPUsesChinese() ? @"好的" : @"حسناً" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 

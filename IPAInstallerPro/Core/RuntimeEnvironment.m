@@ -5,6 +5,7 @@
 
 #import "RuntimeEnvironment.h"
 #import "Logger.h"
+#import "../rootless.h"
 #include <stdlib.h>  // for realpath()
 #include <errno.h>   // for errno
 
@@ -80,8 +81,34 @@
 
 #pragma mark - Bootstrap Path Detection
 
+- (NSString *)detectRootHideJBRoot {
+    const char *prefix = SPLibrootJBRoot();
+    if (prefix && prefix[0] != '\0') {
+        NSString *path = [NSString stringWithUTF8String:prefix];
+        if (path.length > 0 && [[NSFileManager defaultManager] fileExistsAtPath:path]) return path;
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSString *> *parents = @[@"/var/containers/Bundle/Application", @"/var/containers/Shared/SystemGroup"];
+    for (NSString *parent in parents) {
+        NSArray<NSString *> *items = [fm contentsOfDirectoryAtPath:parent error:nil];
+        for (NSString *item in items) {
+            if (![item containsString:@".jbroot-"]) continue;
+            NSString *candidate = [parent stringByAppendingPathComponent:item];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:candidate isDirectory:&isDir] && isDir) {
+                if ([fm fileExistsAtPath:[candidate stringByAppendingPathComponent:@"usr/bin"]] || [fm fileExistsAtPath:[candidate stringByAppendingPathComponent:@"bin"]] || [fm fileExistsAtPath:[candidate stringByAppendingPathComponent:@"var/jb/usr/bin"]] || [fm fileExistsAtPath:[candidate stringByAppendingPathComponent:@"var/jb/bin"]]) return candidate;
+            }
+        }
+    }
+    return nil;
+}
+
 - (NSString *)detectBootstrapPath {
     NSFileManager *fm = [NSFileManager defaultManager];
+
+    // Priority 0: RootHide/libroot supplies the randomized jbroot directly.
+    NSString *rootHidePath = [self detectRootHideJBRoot];
+    if (rootHidePath.length > 0) return rootHidePath;
 
     // Priority 1: Environment variables
     const char *procursusRoot = getenv("PROCURSUS_ROOT");
@@ -220,6 +247,11 @@
         return SpiderJailbreakTypeXinaA15;
     }
 
+    // Relaxin/RootHide uses a randomized jbroot and does not expose /var/jb.
+    if ([self.bootstrapPath containsString:@".jbroot-"]) {
+        return SpiderJailbreakTypeRelaxin;
+    }
+
     // If rootless but no specific type detected
     if (self.isRootless) {
         return SpiderJailbreakTypeOther;
@@ -303,6 +335,8 @@
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"usr/bin"]];
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"bin"]];
         [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"usr/local/bin"]];
+        [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"var/jb/usr/bin"]];
+        [paths addObject:[self.bootstrapPath stringByAppendingPathComponent:@"var/jb/bin"]];
 
         // RootHide: tools may reside in jbroot/var/jb/usr/bin or jbroot/usr/bin
         if ([self.bootstrapPath rangeOfString:@".jbroot-"].location != NSNotFound) {

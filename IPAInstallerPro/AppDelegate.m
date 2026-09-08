@@ -6,6 +6,7 @@
 #import "Core/Logger.h"
 #import "Core/JailbreakEnvironment.h"
 #import "UI/IPTheme.h"
+#import "Core/SPStrings.h"
 
 @interface AppDelegate ()
 @end
@@ -24,25 +25,25 @@
 
     MainViewController *mainVC = [[MainViewController alloc] init];
     UINavigationController *mainNav = [[UINavigationController alloc] initWithRootViewController:mainVC];
-    mainNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"ملفات IPA"
+    mainNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"IPA 文件" : @"ملفات IPA"
                                                          image:[UIImage systemImageNamed:@"doc.zipper"]
                                                  selectedImage:[UIImage systemImageNamed:@"doc.zipper"]];
 
     InstalledAppsViewController *installedVC = [[InstalledAppsViewController alloc] init];
     UINavigationController *installedNav = [[UINavigationController alloc] initWithRootViewController:installedVC];
-    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"التطبيقات المثبتة"
+    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"已安装应用" : @"التطبيقات المثبتة"
                                                             image:[UIImage systemImageNamed:@"apps.iphone"]
                                                     selectedImage:[UIImage systemImageNamed:@"apps.iphone"]];
 
     IPAUnpackViewController *unpackVC = [[IPAUnpackViewController alloc] init];
     UINavigationController *unpackNav = [[UINavigationController alloc] initWithRootViewController:unpackVC];
-    unpackNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"فك الحزمة"
+    unpackNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"解压 IPA" : @"فك الحزمة"
                                                          image:[UIImage systemImageNamed:@"archivebox"]
                                                  selectedImage:[UIImage systemImageNamed:@"archivebox.fill"]];
 
     SettingsViewController *settingsVC = [[SettingsViewController alloc] init];
     UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settingsVC];
-    settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"الإعدادات"
+    settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPText(@"settings")
                                                            image:[UIImage systemImageNamed:@"gearshape"]
                                                    selectedImage:[UIImage systemImageNamed:@"gearshape.fill"]];
 
