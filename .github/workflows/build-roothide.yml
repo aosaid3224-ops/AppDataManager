@@ -84,7 +84,19 @@ jobs:
           git config user.name 'GitHub CI'
           git add -A
           git commit -m 'Publish Spider RootHide as independent package' || true
-          git push origin main
+          if ! git push origin main; then
+            echo 'repo-dev changed during build; rebasing latest main and regenerating indexes'
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p pool/main/iphoneos-arm64e
+            rm -f pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_3.0.36+roothide*.deb
+            cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb pool/main/iphoneos-arm64e/
+            cp ../scripts/generate-repo.py scripts/generate-repo.py
+            python3 scripts/generate-repo.py . --dev
+            git add -A
+            git commit -m 'Publish Spider RootHide as independent package' || true
+            git push origin main
+          fi
 
       - name: Upload RootHide DEB artifact
         uses: actions/upload-artifact@v4
