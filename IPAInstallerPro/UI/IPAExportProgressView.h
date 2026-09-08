@@ -15,4 +15,5 @@
 - (void)setStage:(NSString *)stage detail:(NSString *)detail progress:(CGFloat)progress;
 - (void)setStats:(NSString *)stats;
 - (void)setAppIcon:(UIImage *)icon name:(NSString *)name;
+- (void)markCompletedWithSuccess:(BOOL)success message:(NSString *)message;
 @end
