@@ -232,6 +232,8 @@
     });
 }
 
+#pragma mark - Cache Keys
+
 - (NSString *)ipaCacheKeyForPath:(NSString *)path attributes:(NSDictionary *)attrs {
     if (path.length == 0 || !attrs) return nil;
     unsigned long long size = [attrs[NSFileSize] unsignedLongLongValue];
@@ -242,6 +244,95 @@
 
 - (NSString *)iconCacheKeyForPath:(NSString *)path key:(NSString *)cacheKey {
     return [NSString stringWithFormat:@"%@|%@", path, cacheKey];
+}
+
+#pragma mark - Persistent Cache (v3.0.35)
+
+static NSString * const kPersistentCacheKey = @"IPAInstallerPro.PersistentMetadataCache.v1";
+
+- (NSString *)persistentIconCacheDirectory {
+    NSArray *caches = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+    NSString *dir = [[caches.firstObject stringByAppendingPathComponent:@"IPAInstallerPro"] stringByAppendingPathComponent:@"Icons"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return dir;
+}
+
+- (NSString *)persistentIconPathForIPAPath:(NSString *)path {
+    NSString *safeName = [[path lastPathComponent] stringByDeletingPathExtension];
+    safeName = [safeName stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+    safeName = [safeName stringByReplacingOccurrencesOfString:@":" withString:@"_"];
+    return [[self persistentIconCacheDirectory] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.png", safeName]];
+}
+
+- (void)persistCacheForPath:(NSString *)path info:(IPAExtractedInfo *)info cacheKey:(NSString *)cacheKey {
+    if (!path || !cacheKey || !info) return;
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    record[@"key"] = cacheKey;
+    record[@"bundleID"] = info.bundleID ?: @"";
+    record[@"name"] = info.name ?: @"";
+    record[@"displayName"] = info.displayName ?: @"";
+    record[@"version"] = info.version ?: @"";
+    record[@"buildVersion"] = info.buildVersion ?: @"";
+    record[@"minOSVersion"] = info.minOSVersion ?: @"";
+    record[@"bundleExecutable"] = info.bundleExecutable ?: @"";
+    record[@"teamIdentifier"] = info.teamIdentifier ?: @"";
+    record[@"fileSize"] = info.fileSize ?: @0;
+    record[@"formattedSize"] = info.formattedSize ?: @"";
+    record[@"filePath"] = info.filePath ?: path;
+    record[@"supportedDevices"] = info.supportedDevices ?: @[];
+    record[@"architectures"] = info.architectures ?: @[];
+    record[@"appDirectoryPath"] = info.appDirectoryPath ?: @"";
+    record[@"modifiedDate"] = info.modifiedDate ?: [NSDate date];
+
+    NSMutableDictionary *allCaches = [[[NSUserDefaults standardUserDefaults] objectForKey:kPersistentCacheKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+    allCaches[path] = record;
+    [[NSUserDefaults standardUserDefaults] setObject:allCaches forKey:kPersistentCacheKey];
+
+    if (info.icon) {
+        NSString *iconPath = [self persistentIconPathForIPAPath:path];
+        NSData *pngData = UIImagePNGRepresentation(info.icon);
+        if (pngData) [pngData writeToFile:iconPath atomically:YES];
+    }
+}
+
+- (IPAExtractedInfo *)loadPersistentCacheForPath:(NSString *)path cacheKey:(NSString *)cacheKey {
+    if (!path || !cacheKey) return nil;
+    NSDictionary *allCaches = [[NSUserDefaults standardUserDefaults] objectForKey:kPersistentCacheKey];
+    NSDictionary *record = allCaches[path];
+    if (![record[@"key"] isEqualToString:cacheKey]) return nil;
+
+    IPAExtractedInfo *info = [[IPAExtractedInfo alloc] init];
+    info.bundleID = record[@"bundleID"];
+    info.name = record[@"name"];
+    info.displayName = record[@"displayName"];
+    info.version = record[@"version"];
+    info.buildVersion = record[@"buildVersion"];
+    info.minOSVersion = record[@"minOSVersion"];
+    info.bundleExecutable = record[@"bundleExecutable"];
+    info.teamIdentifier = record[@"teamIdentifier"];
+    info.fileSize = record[@"fileSize"];
+    info.formattedSize = record[@"formattedSize"];
+    info.filePath = record[@"filePath"] ?: path;
+    info.supportedDevices = record[@"supportedDevices"];
+    info.architectures = record[@"architectures"];
+    info.appDirectoryPath = record[@"appDirectoryPath"];
+    info.modifiedDate = record[@"modifiedDate"];
+
+    NSString *iconPath = [self persistentIconPathForIPAPath:path];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:iconPath]) {
+        NSData *pngData = [NSData dataWithContentsOfFile:iconPath];
+        if (pngData) info.icon = [UIImage imageWithData:pngData];
+    }
+    return info;
+}
+
+- (void)clearPersistentCacheForPath:(NSString *)path {
+    if (!path) return;
+    NSMutableDictionary *allCaches = [[[NSUserDefaults standardUserDefaults] objectForKey:kPersistentCacheKey] mutableCopy];
+    [allCaches removeObjectForKey:path];
+    [[NSUserDefaults standardUserDefaults] setObject:allCaches forKey:kPersistentCacheKey];
+    NSString *iconPath = [self persistentIconPathForIPAPath:path];
+    [[NSFileManager defaultManager] removeItemAtPath:iconPath error:nil];
 }
 
 - (IPAExtractedInfo *)placeholderInfoForIPAPath:(NSString *)path size:(NSNumber *)size {
@@ -302,23 +393,41 @@
 
                 NSDictionary *attrs = [fm attributesOfItemAtPath:path error:nil];
                 NSString *cacheKey = [self ipaCacheKeyForPath:path attributes:attrs];
+
+                // 1. Check memory cache first
                 __block NSDictionary *cachedRecord = nil;
                 dispatch_sync(self.ipaCacheQueue, ^{
                     cachedRecord = self.ipaMetadataCache[path];
                 });
-
                 IPAExtractedInfo *cachedInfo = cachedRecord[@"info"];
                 if ([cachedRecord[@"key"] isEqualToString:cacheKey] && cachedInfo) {
                     [foundFiles addObject:cachedInfo];
-                } else {
-                    IPAExtractedInfo *placeholder = [self placeholderInfoForIPAPath:path size:attrs[NSFileSize]];
-                    [foundFiles addObject:placeholder];
-                    [pending addObject:@{@"path": path, @"key": cacheKey ?: @"", @"index": @(foundFiles.count - 1)}];
+                    continue;
                 }
+
+                // 2. Check persistent cache (disk)
+                IPAExtractedInfo *persistentInfo = [self loadPersistentCacheForPath:path cacheKey:cacheKey];
+                if (persistentInfo) {
+                    [foundFiles addObject:persistentInfo];
+                    // Warm memory cache
+                    dispatch_sync(self.ipaCacheQueue, ^{
+                        self.ipaMetadataCache[path] = @{@"key": cacheKey, @"info": persistentInfo};
+                    });
+                    if (persistentInfo.icon) {
+                        NSString *iconCacheKey = [self iconCacheKeyForPath:path key:cacheKey];
+                        [self.ipaIconCache setObject:persistentInfo.icon forKey:iconCacheKey];
+                    }
+                    continue;
+                }
+
+                // 3. No cache — use placeholder and queue for extraction
+                IPAExtractedInfo *placeholder = [self placeholderInfoForIPAPath:path size:attrs[NSFileSize]];
+                [foundFiles addObject:placeholder];
+                [pending addObject:@{@"path": path, @"key": cacheKey ?: @"", @"index": @(foundFiles.count - 1)}];
             }
         }
 
-        // Phase 1 UI commit: show placeholders immediately
+        // Phase 1 UI commit: show cached data / placeholders immediately
         dispatch_async(dispatch_get_main_queue(), ^{
             if (loadGeneration != self.ipaLoadGeneration) return;
             [self.ipaFiles removeAllObjects];
@@ -356,6 +465,9 @@
                             NSDictionary *currentAttrs = [fm attributesOfItemAtPath:path error:nil];
                             NSString *currentKey = [self ipaCacheKeyForPath:path attributes:currentAttrs];
                             if ([currentKey isEqualToString:originalKey]) {
+                                // Save to persistent cache
+                                [self persistCacheForPath:path info:parsed cacheKey:originalKey];
+                                // Save to memory cache
                                 dispatch_sync(self.ipaCacheQueue, ^{
                                     self.ipaMetadataCache[path] = @{@"key": originalKey, @"info": parsed};
                                 });
@@ -422,14 +534,28 @@
                             NSString *iconCacheKey = [self iconCacheKeyForPath:path key:originalKey];
                             UIImage *icon = [self.ipaIconCache objectForKey:iconCacheKey];
 
+                            // 1. Check persistent icon cache on disk
+                            if (!icon) {
+                                NSString *iconPath = [self persistentIconPathForIPAPath:path];
+                                if ([[NSFileManager defaultManager] fileExistsAtPath:iconPath]) {
+                                    NSData *pngData = [NSData dataWithContentsOfFile:iconPath];
+                                    if (pngData) icon = [UIImage imageWithData:pngData];
+                                }
+                            }
+
+                            // 2. Extract from IPA if not cached
                             if (!icon) {
                                 icon = [[IPAExtractor sharedExtractor] extractIconFromIPA:path];
                                 if (icon) {
-                                    [self.ipaIconCache setObject:icon forKey:iconCacheKey];
+                                    // Save to persistent cache
+                                    NSString *iconPath = [self persistentIconPathForIPAPath:path];
+                                    NSData *pngData = UIImagePNGRepresentation(icon);
+                                    if (pngData) [pngData writeToFile:iconPath atomically:YES];
                                 }
                             }
 
                             if (icon) {
+                                [self.ipaIconCache setObject:icon forKey:iconCacheKey];
                                 dispatch_async(dispatch_get_main_queue(), ^{
                                     if (loadGeneration == self.ipaLoadGeneration) {
                                         NSUInteger index = [job[@"index"] unsignedIntegerValue];
@@ -486,14 +612,10 @@
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray *)urls {
     if (urls.count == 0) return;
 
-    // 1. UI feedback IMMEDIATELY on Main Thread — user sees response within 16ms
     [self showImportOverlay:YES];
-
-    // 2. Increment generation to cancel any stale loadIPAFiles
     self.ipaLoadGeneration += 1;
     NSUInteger importGeneration = self.ipaLoadGeneration;
 
-    // 3. Copy files on background — NEVER block Main Thread
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *destDir = @"/var/mobile/Documents/IPAInstaller";
@@ -520,15 +642,14 @@
 
                 NSString *destPath = [destDir stringByAppendingPathComponent:fileName];
 
-                // Remove stale cache entry if overwriting
                 if ([fm fileExistsAtPath:destPath]) {
                     [fm removeItemAtPath:destPath error:nil];
                     dispatch_async(self.ipaCacheQueue, ^{
                         [self.ipaMetadataCache removeObjectForKey:destPath];
                     });
+                    [self clearPersistentCacheForPath:destPath];
                 }
 
-                // Use NSFileCoordinator correctly — iOS 16/17 safe
                 NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
                 __block NSError *coordError = nil;
                 [coordinator coordinateReadingItemAtURL:url
@@ -561,15 +682,11 @@
             }
         }
 
-        // 4. Reload UI on Main Thread
         dispatch_async(dispatch_get_main_queue(), ^{
             [self showImportOverlay:NO];
-
-            // Only reload if this is still the latest generation
             if (importGeneration == self.ipaLoadGeneration) {
                 [self loadIPAFiles];
             }
-
             if (successCount > 0 && failCount == 0) {
                 [self showToast:[NSString stringWithFormat:@"تمت إضافة %ld ملف IPA", (long)successCount] isError:NO];
             } else if (successCount > 0 && failCount > 0) {
@@ -582,7 +699,6 @@
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    // Dismiss overlay if somehow visible
     [self showImportOverlay:NO];
 }
 
@@ -623,6 +739,7 @@
         dispatch_async(self.ipaCacheQueue, ^{
             [self.ipaMetadataCache removeObjectForKey:info.filePath];
         });
+        [self clearPersistentCacheForPath:info.filePath];
         [self.ipaFiles removeObjectAtIndex:indexPath.row];
         [self updateDashboardStatistics];
         [tableView deleteRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationAutomatic];
@@ -634,7 +751,6 @@
 }
 
 - (void)toggleViewMode:(id)sender {
-    // Placeholder for future view mode toggle
 }
 
 @end
