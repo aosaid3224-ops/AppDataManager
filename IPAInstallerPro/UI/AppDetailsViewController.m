@@ -14,6 +14,7 @@
 #import "Core/Logger.h"
 #import "IPAInstallViewController.h"
 #import "IPTheme.h"
+#import "IPAExportProgressView.h"
 
 @interface AppDetailsViewController ()
 @property (nonatomic, strong) AppInfo *appInfo;
@@ -28,6 +29,10 @@
 @property (nonatomic, strong) UIButton *cloneButton;
 @property (nonatomic, strong) UIButton *deleteButton;
 @property (nonatomic, strong) NSMutableArray<UILabel *> *cardValueLabels;
+@property (nonatomic, strong) IPAExportProgressView *progressView;
+@property (nonatomic, strong) NSTimer *stageTimer;
+@property (nonatomic, assign) NSInteger currentStageIndex;
+@property (nonatomic, strong) NSDate *exportStartTime;
 @end
 
 @implementation AppDetailsViewController
@@ -221,33 +226,83 @@
     }
 
     sender.enabled = NO;
-    [sender setTitle:@"جارٍ استخراج IPA…" forState:UIControlStateNormal];
+    self.exportStartTime = [NSDate date];
+
+    // Show beautiful progress overlay
+    self.progressView = [[IPAExportProgressView alloc] initWithFrame:self.view.bounds];
+    [self.progressView setAppIcon:self.appInfo.icon name:self.appInfo.name];
+    [self.progressView showInView:self.view animated:YES];
+
+    // Live stage simulation
+    self.currentStageIndex = 0;
+    NSArray<NSDictionary *> *stages = @[
+        @{@"stage": @"جارٍ التحضير...", @"detail": @"تهيئة مساحة العمل", @"progress": @0.05},
+        @{@"stage": @"جارٍ نسخ التطبيق...", @"detail": @"نسخ Bundle إلى مساحة العمل", @"progress": @0.15},
+        @{@"stage": @"جارٍ فحص Mach-O...", @"detail": @"تحليل بنية الملفات التنفيذية", @"progress": @0.30},
+        @{@"stage": @"جارٍ فك التشفير...", @"detail": @"فك حماية FairPlay DRM", @"progress": @0.50},
+        @{@"stage": @"جارٍ إصلاح الصلاحيات...", @"detail": @"تعديل أذونات الملفات", @"progress": @0.65},
+        @{@"stage": @"جارٍ إزالة التواقيع...", @"detail": @"تنظيف التواقيع القديمة", @"progress": @0.80},
+        @{@"stage": @"جارٍ إنشاء أرشيف IPA...", @"detail": @"ضغط المحتوى إلى ملف .ipa", @"progress": @0.95},
+    ];
+
+    self.stageTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *timer) {
+        if (self.currentStageIndex < stages.count) {
+            NSDictionary *stage = stages[self.currentStageIndex];
+            [self.progressView setStage:stage[@"stage"] detail:stage[@"detail"] progress:[stage[@"progress"] floatValue]];
+            self.currentStageIndex++;
+        }
+    }];
+    if (stages.count > 0) {
+        NSDictionary *first = stages[0];
+        [self.progressView setStage:first[@"stage"] detail:first[@"detail"] progress:[first[@"progress"] floatValue]];
+        self.currentStageIndex = 1;
+    }
+
     NSString *suggestedName = self.appInfo.name.length > 0 ? self.appInfo.name : self.appInfo.bundleID;
     [[IPAExportManager sharedManager] exportApplicationAtPath:self.appInfo.bundlePath
                                                 suggestedName:suggestedName
                                                    completion:^(NSURL *ipaURL, NSError *error) {
-        sender.enabled = YES;
-        [sender setTitle:@"استخراج IPA" forState:UIControlStateNormal];
-        if (!ipaURL || error) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"فشل استخراج IPA"
-                message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA" preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-            return;
-        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.stageTimer invalidate];
+            self.stageTimer = nil;
+            sender.enabled = YES;
 
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ipaURL]
-                                                                             applicationActivities:nil];
-        share.excludedActivityTypes = @[UIActivityTypeAssignToContact, UIActivityTypeAddToReadingList];
-        share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
-            [[NSFileManager defaultManager] removeItemAtURL:ipaURL error:nil];
-        };
-        if (share.popoverPresentationController) {
-            share.popoverPresentationController.sourceView = sender;
-            share.popoverPresentationController.sourceRect = sender.bounds;
-        }
-        [self presentViewController:share animated:YES completion:nil];
+            if (!ipaURL || error) {
+                [self.progressView markCompletedWithSuccess:NO message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA"];
+                return;
+            }
+
+            NSTimeInterval elapsed = -[self.exportStartTime timeIntervalSinceNow];
+            NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:ipaURL.path error:nil];
+            unsigned long long bytes = [attrs[NSFileSize] unsignedLongLongValue];
+            NSString *sizeStr = [self formatBytes:bytes];
+            NSString *msg = [NSString stringWithFormat:@"%@\nالحجم: %@\nالوقت: %.1f ث", ipaURL.lastPathComponent, sizeStr, elapsed];
+            [self.progressView markCompletedWithSuccess:YES message:msg];
+
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self.progressView dismissWithCompletion:^{
+                    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ipaURL]
+                                                                                     applicationActivities:nil];
+                    share.excludedActivityTypes = @[UIActivityTypeAssignToContact, UIActivityTypeAddToReadingList];
+                    share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+                        [[NSFileManager defaultManager] removeItemAtURL:ipaURL error:nil];
+                    };
+                    if (share.popoverPresentationController) {
+                        share.popoverPresentationController.sourceView = sender;
+                        share.popoverPresentationController.sourceRect = sender.bounds;
+                    }
+                    [self presentViewController:share animated:YES completion:nil];
+                }];
+            });
+        });
     }];
+}
+
+- (NSString *)formatBytes:(unsigned long long)bytes {
+    if (bytes < 1024) return [NSString stringWithFormat:@"%llu بايت", bytes];
+    if (bytes < 1024 * 1024) return [NSString stringWithFormat:@"%.1f كيلوبايت", bytes / 1024.0];
+    if (bytes < 1024ULL * 1024ULL * 1024ULL) return [NSString stringWithFormat:@"%.1f ميغابايت", bytes / (1024.0 * 1024.0)];
+    return [NSString stringWithFormat:@"%.2f غيغابايت", bytes / (1024.0 * 1024.0 * 1024.0)];
 }
 
 - (void)cloneTapped:(UIButton *)sender {
