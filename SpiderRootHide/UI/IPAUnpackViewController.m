@@ -1,7 +1,6 @@
 #import "IPAUnpackViewController.h"
 #import "Core/IPAArchiveExtractor.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import <MobileCoreServices/MobileCoreServices.h>
 #import "IPAArchiveBrowserViewController.h"
 #import "IPAFileCardCell.h"
 #import "IPTheme.h"
@@ -94,7 +93,10 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     if (isRegular && !isRegular.boolValue) return NO;
     NSString *uti = nil;
     [url getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:nil];
-    if (uti.length > 0 && (UTTypeConformsTo((__bridge CFStringRef)uti, (__bridge CFStringRef)UTTypeArchive.identifier) || UTTypeConformsTo((__bridge CFStringRef)uti, (__bridge CFStringRef)UTTypeData.identifier))) return YES;
+    if (uti.length > 0) {
+        NSString *lowerUTI = uti.lowercaseString;
+        if ([lowerUTI containsString:@"zip"] || [lowerUTI containsString:@"archive"] || [lowerUTI containsString:@"ipa"]) return YES;
+    }
     return NO;
 }
 
