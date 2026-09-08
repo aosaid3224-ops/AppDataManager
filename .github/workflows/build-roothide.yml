@@ -74,7 +74,7 @@ jobs:
         run: |
           set -e
           mkdir -p repo-dev/pool/main/iphoneos-arm64e
-          rm -f repo-dev/pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro_3.0.35+roothide*.deb
+          rm -f repo-dev/pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_*.deb
           cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb repo-dev/pool/main/iphoneos-arm64e/
           mkdir -p repo-dev/scripts
           cp scripts/generate-repo.py repo-dev/scripts/
@@ -89,7 +89,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             mkdir -p pool/main/iphoneos-arm64e
-            rm -f pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_3.0.36+roothide*.deb
+            rm -f pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_*.deb
             cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb pool/main/iphoneos-arm64e/
             cp ../scripts/generate-repo.py scripts/generate-repo.py
             python3 scripts/generate-repo.py . --dev
