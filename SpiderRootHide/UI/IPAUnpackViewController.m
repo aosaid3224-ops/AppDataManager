@@ -85,6 +85,18 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     return item[@"originalPath"] ?: [self urlForItem:item].path;
 }
 
+- (BOOL)isLikelyIPAURL:(NSURL *)url fileName:(NSString *)fileName {
+    NSString *extension = fileName.pathExtension.lowercaseString ?: @"";
+    if ([extension isEqualToString:@"ipa"]) return YES;
+    NSNumber *isRegular = nil;
+    [url getResourceValue:&isRegular forKey:NSURLIsRegularFileKey error:nil];
+    if (isRegular && !isRegular.boolValue) return NO;
+    NSString *uti = nil;
+    [url getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:nil];
+    if (uti.length > 0 && (UTTypeConformsTo((__bridge CFStringRef)uti, (__bridge CFStringRef)UTTypeArchive.identifier) || UTTypeConformsTo((__bridge CFStringRef)uti, (__bridge CFStringRef)UTTypeData.identifier))) return YES;
+    return NO;
+}
+
 - (void)persistItems {
     NSMutableArray *records = [NSMutableArray arrayWithCapacity:self.items.count];
     for (NSDictionary *item in self.items) {
@@ -112,7 +124,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
     NSString *path = record[@"originalPath"];
     if (!url && path.length > 0) url = [NSURL fileURLWithPath:path];
     if (url && ![[NSFileManager defaultManager] fileExistsAtPath:url.path]) return nil;
-    if (url && ![url.path.pathExtension.lowercaseString isEqualToString:@"ipa"]) return nil;
+    if (url && ![self isLikelyIPAURL:url fileName:(url.lastPathComponent ?: path.lastPathComponent)]) return nil;
     return url;
 }
 
@@ -397,14 +409,14 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
             if (fileName.length == 0) {
                 [url getResourceValue:&fileName forKey:NSURLNameKey error:nil];
             }
-            NSString *extension = fileName.pathExtension.lowercaseString ?: @"";
-            if (![extension isEqualToString:@"ipa"]) {
+            if (![self isLikelyIPAURL:url fileName:fileName]) {
                 NSLog(@"[IPAExtractor] post-selection rejected non-IPA filename=%@ url=%@", fileName, url);
                 rejected++;
                 if (accessed) [url stopAccessingSecurityScopedResource];
                 continue;
             }
             NSString *safeName = fileName.length > 0 ? fileName : @"Imported.ipa";
+            if (safeName.pathExtension.length == 0) safeName = [safeName stringByAppendingPathExtension:@"ipa"];
             NSString *temporary = [importDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@".importing-%@.ipa", NSUUID.UUID.UUIDString]];
             __block NSError *coordinationError = nil;
             __block BOOL copied = NO;

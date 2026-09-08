@@ -4,9 +4,9 @@
 #import "UI/InstalledAppsViewController.h"
 #import "UI/SettingsViewController.h"
 #import "Core/Logger.h"
+#import "Core/SPStrings.h"
 #import "Core/JailbreakEnvironment.h"
 #import "UI/IPTheme.h"
-#import "Core/SPStrings.h"
 
 @interface AppDelegate ()
 @end
@@ -25,19 +25,19 @@
 
     MainViewController *mainVC = [[MainViewController alloc] init];
     UINavigationController *mainNav = [[UINavigationController alloc] initWithRootViewController:mainVC];
-    mainNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"IPA 文件" : @"ملفات IPA"
+    mainNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:(SPUsesChinese() ? @"IPA 文件" : @"ملفات IPA")
                                                          image:[UIImage systemImageNamed:@"doc.zipper"]
                                                  selectedImage:[UIImage systemImageNamed:@"doc.zipper"]];
 
     InstalledAppsViewController *installedVC = [[InstalledAppsViewController alloc] init];
     UINavigationController *installedNav = [[UINavigationController alloc] initWithRootViewController:installedVC];
-    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"已安装应用" : @"التطبيقات المثبتة"
+    installedNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:(SPUsesChinese() ? @"已安装应用" : @"التطبيقات المثبتة")
                                                             image:[UIImage systemImageNamed:@"apps.iphone"]
                                                     selectedImage:[UIImage systemImageNamed:@"apps.iphone"]];
 
     IPAUnpackViewController *unpackVC = [[IPAUnpackViewController alloc] init];
     UINavigationController *unpackNav = [[UINavigationController alloc] initWithRootViewController:unpackVC];
-    unpackNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:SPUsesChinese() ? @"解压 IPA" : @"فك الحزمة"
+    unpackNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:(SPUsesChinese() ? @"解压 IPA" : @"فك الحزمة")
                                                          image:[UIImage systemImageNamed:@"archivebox"]
                                                  selectedImage:[UIImage systemImageNamed:@"archivebox.fill"]];
 

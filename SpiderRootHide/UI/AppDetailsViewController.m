@@ -13,6 +13,7 @@
 #import "Core/ApplicationManager.h"
 #import "Core/Logger.h"
 #import "IPAInstallViewController.h"
+#import "IPAExportProgressView.h"
 #import "IPTheme.h"
 
 @interface AppDetailsViewController ()
@@ -28,6 +29,8 @@
 @property (nonatomic, strong) UIButton *cloneButton;
 @property (nonatomic, strong) UIButton *deleteButton;
 @property (nonatomic, strong) NSMutableArray<UILabel *> *cardValueLabels;
+@property (nonatomic, strong) IPAExportProgressView *cloneProgressView;
+@property (nonatomic, assign) NSUInteger cloneProgressGeneration;
 @end
 
 @implementation AppDetailsViewController
@@ -308,6 +311,28 @@
 
         sender.enabled = NO;
         [sender setTitle:@"جارٍ إنشاء النسخة…" forState:UIControlStateNormal];
+        NSUInteger progressGeneration = ++self.cloneProgressGeneration;
+        IPAExportProgressView *progressView = [[IPAExportProgressView alloc] initWithFrame:self.view.bounds];
+        self.cloneProgressView = progressView;
+        [progressView setAppIcon:self.appInfo.icon name:requestedName];
+        [progressView showInView:self.view animated:YES];
+        NSArray<NSDictionary *> *cloneStages = @[
+            @{ @"p": @0.05, @"s": @"جارٍ التحضير...", @"d": @"تهيئة مساحة العمل للنسخ" },
+            @{ @"p": @0.20, @"s": @"جارٍ نسخ التطبيق...", @"d": @"نسخ Bundle الأصلي" },
+            @{ @"p": @0.40, @"s": @"جارٍ تعديل Info.plist...", @"d": @"تحديث Bundle ID واسم العرض" },
+            @{ @"p": @0.55, @"s": @"جارٍ تعديل الملفات...", @"d": @"تحديث الروابط الداخلية" },
+            @{ @"p": @0.75, @"s": @"جارٍ إعادة التوقيع...", @"d": @"توقيع النسخة بـ ldid" },
+            @{ @"p": @0.90, @"s": @"جارٍ إنشاء IPA...", @"d": @"ضغط النسخة إلى ملف .ipa" },
+            @{ @"p": @0.98, @"s": @"جارٍ التحقق...", @"d": @"التحقق من سلامة النسخة" }
+        ];
+        __weak typeof(self) weakSelf = self;
+        [cloneStages enumerateObjectsUsingBlock:^(NSDictionary *stage, NSUInteger idx, BOOL *stop) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((idx + 1) * 0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf || strongSelf.cloneProgressGeneration != progressGeneration || !strongSelf.cloneProgressView) return;
+                [strongSelf.cloneProgressView setStage:stage[@"s"] detail:stage[@"d"] progress:[stage[@"p"] doubleValue]];
+            });
+        }];
         [[IPAExportManager sharedManager] cloneApplicationAtPath:self.appInfo.bundlePath
                                                    suggestedName:requestedName
                                                  bundleIdentifier:requestedID
@@ -315,7 +340,12 @@
             dispatch_async(dispatch_get_main_queue(), ^{
                 sender.enabled = YES;
                 [sender setTitle:@"تكرار التطبيق" forState:UIControlStateNormal];
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                IPAExportProgressView *activeProgress = strongSelf.cloneProgressView;
                 if (!ipaURL || error) {
+                    [activeProgress markCompletedWithSuccess:NO message:error.localizedDescription ?: @"تعذر إنشاء النسخة المكررة"];
+                    [activeProgress dismissWithCompletion:nil];
+                    strongSelf.cloneProgressView = nil;
                     UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل تكرار التطبيق"
                         message:error.localizedDescription ?: @"تعذر إنشاء النسخة المكررة" preferredStyle:UIAlertControllerStyleAlert];
                     [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
@@ -337,6 +367,9 @@
                 BOOL copied = !directoryError && [fm copyItemAtURL:ipaURL toURL:[NSURL fileURLWithPath:destination] error:&copyError];
                 [fm removeItemAtURL:ipaURL error:nil];
                 if (!copied) {
+                    [activeProgress markCompletedWithSuccess:NO message:copyError.localizedDescription ?: @"تعذر حفظ IPA المكررة"];
+                    [activeProgress dismissWithCompletion:nil];
+                    strongSelf.cloneProgressView = nil;
                     UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل حفظ النسخة"
                         message:copyError.localizedDescription ?: @"تعذر حفظ IPA المكررة" preferredStyle:UIAlertControllerStyleAlert];
                     [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
@@ -346,6 +379,9 @@
 
                 IPAExtractedInfo *info = [[IPAExtractor sharedExtractor] extractInfoFromIPA:destination];
                 if (!info) {
+                    [activeProgress markCompletedWithSuccess:NO message:@"تم إنشاء IPA لكن تعذر تجهيزها للتثبيت."];
+                    [activeProgress dismissWithCompletion:nil];
+                    strongSelf.cloneProgressView = nil;
                     UIAlertController *failed = [UIAlertController alertControllerWithTitle:@"فشل قراءة النسخة"
                         message:@"تم إنشاء IPA لكن تعذر تجهيزها للتثبيت." preferredStyle:UIAlertControllerStyleAlert];
                     [failed addAction:[UIAlertAction actionWithTitle:@"حسنًا" style:UIAlertActionStyleDefault handler:nil]];
@@ -355,7 +391,12 @@
                 IPAInstallViewController *installVC = [[IPAInstallViewController alloc] initWithIPAInfo:info];
                 installVC.modalPresentationStyle = UIModalPresentationFullScreen;
                 installVC.launchedFromDuplicate = YES;
-                __weak typeof(self) weakSelf = self;
+                [activeProgress setStats:[NSString stringWithFormat:@"%@ • %@", destination.lastPathComponent, [info.formattedSize length] ? info.formattedSize : @"تم التحقق"]];
+                [activeProgress markCompletedWithSuccess:YES message:@"تم إنشاء النسخة المكررة بنجاح"];
+                strongSelf.cloneProgressView = nil;
+                void (^presentInstall)(void) = ^{
+                    [self presentViewController:installVC animated:YES completion:nil];
+                };
                 installVC.duplicateCompletionHandler = ^(BOOL success) {
                     if (!success) return;
                     __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -365,7 +406,11 @@
                                                                       userInfo:@{ @"success": @YES,
                                                                                   @"bundleID": requestedID ?: @"" }];
                 };
-                [self presentViewController:installVC animated:YES completion:nil];
+                if (activeProgress) {
+                    [activeProgress dismissWithCompletion:presentInstall];
+                } else {
+                    presentInstall();
+                }
             });
         }];
     }]];
