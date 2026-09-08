@@ -33,9 +33,9 @@ jobs:
 
       - name: Prepare isolated RootHide source
         run: |
-          rm -rf "$RUNNER_TEMP/IPAInstallerPro-roothide"
-          cp -R IPAInstallerPro "$RUNNER_TEMP/IPAInstallerPro-roothide"
-          cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          rm -rf "$RUNNER_TEMP/SpiderRootHide-roothide"
+          cp -R SpiderRootHide "$RUNNER_TEMP/SpiderRootHide-roothide"
+          cd "$RUNNER_TEMP/SpiderRootHide-roothide"
           chmod +x layout/DEBIAN/postinst 2>/dev/null || true
           chmod +x layout/DEBIAN/prerm 2>/dev/null || true
           sed -i '' 's/^Package: .*/Package: com.aosaid.ipainstallerpro.roothide/' control
@@ -57,7 +57,7 @@ jobs:
       - name: Build isolated RootHide package
         run: |
           export PATH="$THEOS/bin:$PATH"
-          cd "$RUNNER_TEMP/IPAInstallerPro-roothide"
+          cd "$RUNNER_TEMP/SpiderRootHide-roothide"
           make clean
           make package THEOS_PACKAGE_SCHEME=roothide ARCHS=arm64e THEOS_PLATFORM_DEB_COMPRESSION_TYPE=gzip FINALPACKAGE=1
           ls -l packages/*.deb
@@ -65,7 +65,7 @@ jobs:
           dpkg-deb --ctrl-tarfile packages/*.deb | file -
           dpkg-deb -c packages/*.deb | head -5
           test "$(dpkg-deb -f packages/*.deb Architecture)" = "iphoneos-arm64e"
-          APP_BIN=$(find "$RUNNER_TEMP/IPAInstallerPro-roothide" -type f -path '*/Applications/Spider.app/Spider' -print -quit)
+          APP_BIN=$(find "$RUNNER_TEMP/SpiderRootHide-roothide" -type f -path '*/Applications/Spider.app/Spider' -print -quit)
           test -n "$APP_BIN"
           file "$APP_BIN" | grep -q 'arm64e'
           test "$(dpkg-deb --ctrl-tarfile packages/*.deb | file -b -)" = "POSIX tar archive"
@@ -75,7 +75,7 @@ jobs:
           set -e
           mkdir -p repo-dev/pool/main/iphoneos-arm64e
           rm -f repo-dev/pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_*.deb
-          cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb repo-dev/pool/main/iphoneos-arm64e/
+          cp "$RUNNER_TEMP/SpiderRootHide-roothide"/packages/*.deb repo-dev/pool/main/iphoneos-arm64e/
           mkdir -p repo-dev/scripts
           cp scripts/generate-repo.py repo-dev/scripts/
           python3 repo-dev/scripts/generate-repo.py repo-dev --dev
@@ -90,7 +90,7 @@ jobs:
             git reset --hard origin/main
             mkdir -p pool/main/iphoneos-arm64e
             rm -f pool/main/iphoneos-arm64e/com.aosaid.ipainstallerpro.roothide_*.deb
-            cp "$RUNNER_TEMP/IPAInstallerPro-roothide"/packages/*.deb pool/main/iphoneos-arm64e/
+            cp "$RUNNER_TEMP/SpiderRootHide-roothide"/packages/*.deb pool/main/iphoneos-arm64e/
             cp ../scripts/generate-repo.py scripts/generate-repo.py
             python3 scripts/generate-repo.py . --dev
             git add -A
@@ -102,5 +102,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: spider-roothide-3.0.36-roothide7
-          path: ${{ runner.temp }}/IPAInstallerPro-roothide/packages/*.deb
+          path: ${{ runner.temp }}/SpiderRootHide-roothide/packages/*.deb
           if-no-files-found: error
