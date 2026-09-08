@@ -1,6 +1,7 @@
 #import "IPAUnpackViewController.h"
 #import "Core/IPAArchiveExtractor.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <MobileCoreServices/MobileCoreServices.h>
 #import "IPAArchiveBrowserViewController.h"
 #import "IPAFileCardCell.h"
 #import "IPTheme.h"
