@@ -2287,41 +2287,77 @@ extern char **environ;
 #pragma mark - Launch Readiness Gate
 
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths {
-    if (!dependency.length) return NO;
-    if ([dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/usr/lib/"] || [dependency hasPrefix:@"/usr/lib/swift/"]) return YES;
+    if (!dependency.length || !binaryPath.length || !appPath.length) return NO;
+
+    static NSSet<NSString *> *dyldCacheLibs;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dyldCacheLibs = [NSSet setWithArray:@[
+            @"libSystem.B.dylib", @"libobjc.A.dylib", @"libc++.1.dylib",
+            @"libc.dylib", @"libz.1.dylib", @"libsqlite3.dylib",
+            @"libcompression.dylib", @"libiconv.2.dylib", @"libxml2.2.dylib",
+            @"libresolv.9.dylib", @"libnetwork.dylib", @"libxpc.dylib",
+            @"libswiftCore.dylib", @"libswiftFoundation.dylib", @"libswiftUIKit.dylib"
+        ]];
+    });
+
+    NSString *dependencyLeaf = [dependency lastPathComponent];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/usr/lib/"] || [dependency hasPrefix:@"/usr/lib/swift/"]) {
+        if ([dyldCacheLibs containsObject:dependencyLeaf] || [fm fileExistsAtPath:dependency]) return YES;
+        if ([dependency hasPrefix:@"/usr/lib/"]) {
+            return [fm fileExistsAtPath:[[ @"/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]] ||
+                   [fm fileExistsAtPath:[[ @"/private/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+        }
+        return NO;
+    }
 
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
     NSString *binaryDir = [binaryPath stringByDeletingLastPathComponent];
-    NSString *leaf = dependency;
+    NSString *frameworksDir = [appPath stringByAppendingPathComponent:@"Frameworks"];
+    NSString *libDir = [appPath stringByAppendingPathComponent:@"lib"];
+    NSString *(^expandBase)(NSString *, NSString *) = ^NSString *(NSString *base, NSString *fallback) {
+        if ([base hasPrefix:@"@loader_path"]) return [binaryDir stringByAppendingPathComponent:[base substringFromIndex:[@"@loader_path" length]]];
+        if ([base hasPrefix:@"@executable_path"]) return [appPath stringByAppendingPathComponent:[base substringFromIndex:[@"@executable_path" length]]];
+        if ([base hasPrefix:@"/"]) return base;
+        return [fallback stringByAppendingPathComponent:base ?: @""];
+    };
+
     if ([dependency hasPrefix:@"@rpath/"]) {
-        leaf = [dependency substringFromIndex:[@"@rpath/" length]];
+        NSString *leaf = [dependency substringFromIndex:[@"@rpath/" length]];
         for (MachORPath *rpath in rpaths) {
             NSString *raw = rpath.rawPath;
             if (!raw.length) continue;
-            NSString *base = raw;
-            if ([base hasPrefix:@"@loader_path"]) base = [binaryDir stringByAppendingPathComponent:[base substringFromIndex:[@"@loader_path" length]]];
-            else if ([base hasPrefix:@"@executable_path"]) base = [appPath stringByAppendingPathComponent:[base substringFromIndex:[@"@executable_path" length]]];
+            NSString *base = expandBase(raw, frameworksDir);
             [candidates addObject:[[base stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+            if ([raw containsString:@".."] || [raw hasPrefix:@"@loader_path"]) {
+                [candidates addObject:[[frameworksDir stringByAppendingPathComponent:raw] stringByStandardizingPath]];
+            }
         }
-        // iOS binaries commonly use @rpath for embedded frameworks even when
-        // the load command does not retain an explicit app-local rpath.
-        [candidates addObject:[[appPath stringByAppendingPathComponent:@"Frameworks"] stringByAppendingPathComponent:leaf]];
-        if ([leaf hasPrefix:@"libswift"] && ![leaf containsString:@"/"]) return YES;
-    } else if ([dependency hasPrefix:@"@loader_path/"]) {
-        leaf = [dependency substringFromIndex:[@"@loader_path/" length]];
-        [candidates addObject:[[binaryDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
-    } else if ([dependency hasPrefix:@"@executable_path/"]) {
-        leaf = [dependency substringFromIndex:[@"@executable_path/" length]];
-        [candidates addObject:[[appPath stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[frameworksDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[libDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+    } else if ([dependency hasPrefix:@"@loader_path"]) {
+        NSString *relative = [dependency substringFromIndex:[@"@loader_path" length]];
+        [candidates addObject:[[binaryDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[frameworksDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[libDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+    } else if ([dependency hasPrefix:@"@executable_path"]) {
+        NSString *relative = [dependency substringFromIndex:[@"@executable_path" length]];
+        [candidates addObject:[[appPath stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[frameworksDir stringByAppendingPathComponent:[relative lastPathComponent]] stringByStandardizingPath]];
     } else if ([dependency hasPrefix:@"/"]) {
         [candidates addObject:dependency];
+        [candidates addObject:[[ @"/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/private/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
     } else {
         [candidates addObject:[[binaryDir stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
         [candidates addObject:[[appPath stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+        [candidates addObject:[[frameworksDir stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
+        [candidates addObject:[[libDir stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
     }
-    NSFileManager *fm = [NSFileManager defaultManager];
+
     for (NSString *candidate in candidates) {
-        if ([fm fileExistsAtPath:candidate]) return YES;
+        if (candidate.length && [fm fileExistsAtPath:candidate]) return YES;
     }
     return NO;
 }
