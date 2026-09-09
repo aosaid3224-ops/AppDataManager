@@ -2370,6 +2370,12 @@ extern char **environ;
         }
         [candidates addObject:[[frameworksDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
         [candidates addObject:[[libDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        // FIX(v3.0.50): Jailbreak bootstrap locations (see @loader_path branch).
+        [candidates addObject:[[ @"/usr/lib" stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/var/jb/usr/lib" stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/private/var/jb/usr/lib" stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/var/jb/basebin" stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/private/var/jb/basebin" stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
         // FIX(v3.0.49): Swift runtime libraries ship with the system and are
         // satisfied from the dyld shared cache even when no on-disk candidate
         // exists inside the bundle (v3.0.43 behavior, restored).
@@ -2379,6 +2385,17 @@ extern char **environ;
         [candidates addObject:[[binaryDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
         [candidates addObject:[[frameworksDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
         [candidates addObject:[[libDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        // FIX(v3.0.50): Jailbreak-provided libraries (e.g. Dopamine's
+        // basebin/libchoma.dylib referenced as @loader_path/libchoma.dylib by
+        // libjailbreak.dylib) are frequently NOT bundled — dyld resolves them
+        // from the bootstrap at runtime. Verify against bootstrap locations so
+        // such apps are not rejected. Purely additive; no existing candidate
+        // or behavior is altered.
+        [candidates addObject:[[ @"/usr/lib" stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/var/jb/usr/lib" stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/private/var/jb/usr/lib" stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/var/jb/basebin" stringByAppendingPathComponent:relative] stringByStandardizingPath]];
+        [candidates addObject:[[ @"/private/var/jb/basebin" stringByAppendingPathComponent:relative] stringByStandardizingPath]];
     } else if ([dependency hasPrefix:@"@executable_path"]) {
         NSString *relative = [dependency substringFromIndex:[@"@executable_path" length]];
         [candidates addObject:[[appPath stringByAppendingPathComponent:relative] stringByStandardizingPath]];
