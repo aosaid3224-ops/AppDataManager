@@ -2289,6 +2289,12 @@ extern char **environ;
 - (BOOL)dependency:(NSString *)dependency resolvesForBinary:(NSString *)binaryPath appPath:(NSString *)appPath rpaths:(NSArray<MachORPath *> *)rpaths {
     if (!dependency.length || !binaryPath.length || !appPath.length) return NO;
 
+    // Mach-O install names cannot contain formatting whitespace. Some tools
+    // emit a wrapped name such as "@rpath/ WebKit.framework/ WebKit"; remove
+    // only whitespace characters, preserving the original validation policy.
+    NSString *normalizedDependency = [[dependency componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsJoinedByString:@""];
+    if (normalizedDependency.length) dependency = normalizedDependency;
+
     static NSSet<NSString *> *dyldCacheLibs;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -2303,6 +2309,26 @@ extern char **environ;
 
     NSString *dependencyLeaf = [dependency lastPathComponent];
     NSFileManager *fm = [NSFileManager defaultManager];
+    static NSSet<NSString *> *systemFrameworks;
+    static dispatch_once_t frameworkOnceToken;
+    dispatch_once(&frameworkOnceToken, ^{
+        systemFrameworks = [NSSet setWithArray:@[
+            @"WebKit.framework", @"Foundation.framework", @"UIKit.framework",
+            @"CoreFoundation.framework", @"CoreGraphics.framework", @"Security.framework",
+            @"QuartzCore.framework", @"AVFoundation.framework", @"CoreTelephony.framework",
+            @"MobileCoreServices.framework", @"UniformTypeIdentifiers.framework",
+            @"SystemConfiguration.framework", @"Network.framework", @"CFNetwork.framework"
+        ]];
+    });
+    NSString *frameworkComponent = nil;
+    NSArray<NSString *> *dependencyComponents = [dependency componentsSeparatedByString:@"/"];
+    for (NSString *component in dependencyComponents) {
+        if ([component hasSuffix:@".framework"]) { frameworkComponent = component; break; }
+    }
+    BOOL isKnownSystemFramework = frameworkComponent.length && [systemFrameworks containsObject:frameworkComponent];
+    if (isKnownSystemFramework && ([dependency hasPrefix:@"@rpath/"] || [dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/System/Library/PrivateFrameworks/"])) {
+        return YES;
+    }
     if ([dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/usr/lib/"] || [dependency hasPrefix:@"/usr/lib/swift/"]) {
         if ([dyldCacheLibs containsObject:dependencyLeaf] || [fm fileExistsAtPath:dependency]) return YES;
         if ([dependency hasPrefix:@"/usr/lib/"]) {
