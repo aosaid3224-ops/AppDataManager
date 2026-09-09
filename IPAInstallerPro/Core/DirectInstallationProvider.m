@@ -2303,25 +2303,13 @@ extern char **environ;
     if (normalizedLooksSystem && normalizedDependency.length) dependency = normalizedDependency;
     else dependency = originalDependency;
 
-    static NSSet<NSString *> *dyldCacheLibs;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        dyldCacheLibs = [NSSet setWithArray:@[
-            @"libSystem.B.dylib", @"libobjc.A.dylib", @"libc++.1.dylib",
-            @"libc.dylib", @"libz.1.dylib", @"libsqlite3.dylib",
-            @"libcompression.dylib", @"libiconv.2.dylib", @"libxml2.2.dylib",
-            @"libresolv.9.dylib", @"libnetwork.dylib", @"libxpc.dylib",
-            @"libicucore.A.dylib", @"liblockdown.dylib", @"libMobileGestalt.dylib",
-            @"libswiftCore.dylib", @"libswiftFoundation.dylib", @"libswiftUIKit.dylib"
-        ]];
-    });
+    // FIX(v3.0.49): System prefixes are trusted unconditionally (see below).
 
     // A malformed diagnostic may print /us/lib/ instead of /usr/lib/;
     // normalize only this unambiguous system-prefix typo.
     if ([dependency hasPrefix:@"/us/lib/"]) {
         dependency = [@"/usr/lib" stringByAppendingString:[dependency substringFromIndex:[@"/us/lib" length]]];
     }
-    NSString *dependencyLeaf = [dependency lastPathComponent];
     NSFileManager *fm = [NSFileManager defaultManager];
     static NSSet<NSString *> *systemFrameworks;
     static dispatch_once_t frameworkOnceToken;
@@ -2344,13 +2332,18 @@ extern char **environ;
     if (isKnownSystemFramework && ([dependency hasPrefix:@"@rpath/"] || [dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/System/Library/PrivateFrameworks/"])) {
         return YES;
     }
+    // FIX(v3.0.49): Restore unconditional trust for system prefixes.
+    // System frameworks and libraries are resolved by dyld at launch through
+    // the dyld shared cache. On device they are frequently NOT present as
+    // readable regular files: cache-only frameworks (SwiftUI, CryptoKit,
+    // AdSupport, UserNotifications, Combine...), sandboxed file-exists checks
+    // returning NO for valid system paths, and rootless layouts. v3.0.43
+    // trusted these prefixes and installed every standard app reliably; the
+    // existence gate added later broke them all. Runtime resolution is dyld's
+    // job — the static gate must not second-guess it. App-local and jailbreak
+    // libraries are still fully verified through the candidate logic below.
     if ([dependency hasPrefix:@"/System/Library/"] || [dependency hasPrefix:@"/usr/lib/"] || [dependency hasPrefix:@"/usr/lib/swift/"]) {
-        if ([dyldCacheLibs containsObject:dependencyLeaf] || [fm fileExistsAtPath:dependency]) return YES;
-        if ([dependency hasPrefix:@"/usr/lib/"]) {
-            return [fm fileExistsAtPath:[[ @"/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]] ||
-                   [fm fileExistsAtPath:[[ @"/private/var/jb" stringByAppendingPathComponent:dependency] stringByStandardizingPath]];
-        }
-        return NO;
+        return YES;
     }
 
     NSMutableArray<NSString *> *candidates = [NSMutableArray array];
@@ -2377,6 +2370,10 @@ extern char **environ;
         }
         [candidates addObject:[[frameworksDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
         [candidates addObject:[[libDir stringByAppendingPathComponent:leaf] stringByStandardizingPath]];
+        // FIX(v3.0.49): Swift runtime libraries ship with the system and are
+        // satisfied from the dyld shared cache even when no on-disk candidate
+        // exists inside the bundle (v3.0.43 behavior, restored).
+        if ([leaf hasPrefix:@"libswift"] && ![leaf containsString:@"/"]) return YES;
     } else if ([dependency hasPrefix:@"@loader_path"]) {
         NSString *relative = [dependency substringFromIndex:[@"@loader_path" length]];
         [candidates addObject:[[binaryDir stringByAppendingPathComponent:relative] stringByStandardizingPath]];
