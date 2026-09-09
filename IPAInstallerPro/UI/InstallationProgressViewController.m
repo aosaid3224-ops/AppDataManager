@@ -194,6 +194,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 @property (nonatomic, strong) UIButton *showLogButton;
 @property (nonatomic, strong) UITextView *logTextView;
 @property (nonatomic, strong) UIView *logContainer;
+@property (nonatomic, strong) NSString *lastFailureMessage;
 
 // Passive forensic stream: observes the same transaction without starting a
 // second install, signing pass, or registration pass.
@@ -256,6 +257,14 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         logTitle.textColor = [UIColor whiteColor];
         [self.logContainer addSubview:logTitle];
 
+        UIButton *copyLogBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        copyLogBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [copyLogBtn setTitle:@"نسخ الكل" forState:UIControlStateNormal];
+        [copyLogBtn setTitleColor:[UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+        copyLogBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        [copyLogBtn addTarget:self action:@selector(copyRawLog:) forControlEvents:UIControlEventTouchUpInside];
+        [self.logContainer addSubview:copyLogBtn];
+
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [closeBtn setTitle:@"\u0625\u063a\u0644\u0627\u0642" forState:UIControlStateNormal];
@@ -282,6 +291,8 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
             [logTitle.topAnchor constraintEqualToAnchor:self.logContainer.topAnchor constant:12],
             [logTitle.leadingAnchor constraintEqualToAnchor:self.logContainer.leadingAnchor constant:16],
 
+            [copyLogBtn.centerYAnchor constraintEqualToAnchor:logTitle.centerYAnchor],
+            [copyLogBtn.trailingAnchor constraintEqualToAnchor:closeBtn.leadingAnchor constant:-12],
             [closeBtn.centerYAnchor constraintEqualToAnchor:logTitle.centerYAnchor],
             [closeBtn.trailingAnchor constraintEqualToAnchor:self.logContainer.trailingAnchor constant:-16],
 
@@ -298,6 +309,26 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
     [UIView animateWithDuration:0.3 animations:^{
         self.logContainer.alpha = 1;
     }];
+}
+
+- (void)copyRawLog:(UIButton *)sender {
+    NSString *text = self.rawLog.length ? self.rawLog.copy : (self.lastFailureMessage ?: @"");
+    if (!text.length) return;
+    [UIPasteboard generalPasteboard].string = text;
+    [sender setTitle:@"تم النسخ ✓" forState:UIControlStateNormal];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [sender setTitle:@"نسخ الكل" forState:UIControlStateNormal];
+    });
+}
+
+- (void)copyFailureDetails:(UIButton *)sender {
+    NSString *text = self.lastFailureMessage.length ? self.lastFailureMessage : self.rawLog;
+    if (!text.length) return;
+    [UIPasteboard generalPasteboard].string = text;
+    [sender setTitle:@"تم نسخ التفاصيل ✓" forState:UIControlStateNormal];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [sender setTitle:@"نسخ تفاصيل الخطأ" forState:UIControlStateNormal];
+    });
 }
 
 - (void)hideRawLog {
@@ -648,6 +679,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
     self.isDone = NO;
     self.hasFailed = NO;
+    self.lastFailureMessage = nil;
     self.installedBundleID = nil;
     self.currentTxnID = nil;
     self.currentPhaseIndex = -1;
@@ -755,6 +787,7 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
 
 - (void)showReportCard:(InstallationResult *)result success:(BOOL)success {
     if (self.reportCard) [self.reportCard removeFromSuperview];
+    self.lastFailureMessage = success ? nil : (result.message ?: @"");
 
     UIView *card = [[UIView alloc] init];
     card.translatesAutoresizingMaskIntoConstraints = NO;
@@ -816,7 +849,19 @@ typedef NS_ENUM(NSInteger, PhaseVisualState) {
         errLabel.textColor = [UIColor colorWithRed:0.8 green:0.4 blue:0.4 alpha:1.0];
         errLabel.text = result.message;
         errLabel.numberOfLines = 0;
+        errLabel.textAlignment = NSTextAlignmentNatural;
         [stack addArrangedSubview:errLabel];
+
+        UIButton *copyErrorButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        copyErrorButton.translatesAutoresizingMaskIntoConstraints = NO;
+        [copyErrorButton setTitle:@"نسخ تفاصيل الخطأ" forState:UIControlStateNormal];
+        copyErrorButton.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        [copyErrorButton setTitleColor:[UIColor colorWithRed:0.35 green:0.75 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+        copyErrorButton.backgroundColor = [IPTheme secondaryCardColor];
+        copyErrorButton.layer.cornerRadius = 8;
+        [copyErrorButton addTarget:self action:@selector(copyFailureDetails:) forControlEvents:UIControlEventTouchUpInside];
+        [copyErrorButton.heightAnchor constraintEqualToConstant:40].active = YES;
+        [stack addArrangedSubview:copyErrorButton];
     }
 
     // Raw Log Button
