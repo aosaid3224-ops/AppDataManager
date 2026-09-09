@@ -2292,8 +2292,16 @@ extern char **environ;
     // Mach-O install names cannot contain formatting whitespace. Some tools
     // emit a wrapped name such as "@rpath/ WebKit.framework/ WebKit"; remove
     // only whitespace characters, preserving the original validation policy.
+    NSString *originalDependency = dependency;
     NSString *normalizedDependency = [[dependency componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsJoinedByString:@""];
-    if (normalizedDependency.length) dependency = normalizedDependency;
+    BOOL normalizedLooksSystem = [normalizedDependency hasPrefix:@"@rpath/"] ||
+        [normalizedDependency hasPrefix:@"/System/Library/"] ||
+        [normalizedDependency hasPrefix:@"/usr/lib/"] ||
+        [normalizedDependency hasPrefix:@"/us/lib/"];
+    // Preserve legitimate app-local install names containing spaces. Only
+    // use the whitespace-stripped spelling for a malformed system/rpath name.
+    if (normalizedLooksSystem && normalizedDependency.length) dependency = normalizedDependency;
+    else dependency = originalDependency;
 
     static NSSet<NSString *> *dyldCacheLibs;
     static dispatch_once_t onceToken;
@@ -2593,9 +2601,11 @@ extern char **environ;
     NSString *recordID = [opLog beginPhase:OperationPhaseCleanup operation:@"uicache -u registration rollback" target:appPath ?: @"" input:bundleID ?: @"" transactionID:txnID];
     BOOL commandOK = [self runRoot:self.uicachePath args:@[@"-u", appPath ?: @""] opLog:opLog recordID:recordID];
     BOOL unregistered = ![self isBundleIDRegistered:bundleID];
-    [opLog endPhase:recordID exitCode:(commandOK && unregistered) ? 0 : 1 rawOutput:@"" rawError:(commandOK && unregistered) ? @"" : @"Registration rollback could not prove unregistered state"
-    verification:[NSString stringWithFormat:@"command=%@ unregistered=%@ bundleID=%@ path=%@", commandOK ? @"SUCCESS" : @"FAILED", unregistered ? @"YES" : @"NO", bundleID ?: @"-", appPath ?: @"-"] verified:(commandOK && unregistered) duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"commandOK": @(commandOK), @"unregistered": @(unregistered) }];
-    return commandOK && unregistered;
+    BOOL rollbackSafe = unregistered;
+    NSString *rollbackError = rollbackSafe ? (commandOK ? @"" : @"uicache -u failed, but registration absence was independently verified") : @"Registration rollback could not prove unregistered state";
+    [opLog endPhase:recordID exitCode:rollbackSafe ? 0 : 1 rawOutput:@"" rawError:rollbackError
+    verification:[NSString stringWithFormat:@"command=%@ unregistered=%@ bundleID=%@ path=%@", commandOK ? @"SUCCESS" : @"WARNING", unregistered ? @"YES" : @"NO", bundleID ?: @"-", appPath ?: @"-"] verified:rollbackSafe duration:0 context:@{ @"bundleID": bundleID ?: @"", @"path": appPath ?: @"", @"commandOK": @(commandOK), @"unregistered": @(unregistered), @"bestEffort": @YES }];
+    return rollbackSafe;
 }
 
 - (void)uninstallAppWithBundleID:(NSString *)bundleID completion:(void (^)(BOOL, NSString *))completion {
