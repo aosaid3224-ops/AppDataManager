@@ -2303,10 +2303,16 @@ extern char **environ;
             @"libc.dylib", @"libz.1.dylib", @"libsqlite3.dylib",
             @"libcompression.dylib", @"libiconv.2.dylib", @"libxml2.2.dylib",
             @"libresolv.9.dylib", @"libnetwork.dylib", @"libxpc.dylib",
+            @"libicucore.A.dylib", @"liblockdown.dylib", @"libMobileGestalt.dylib",
             @"libswiftCore.dylib", @"libswiftFoundation.dylib", @"libswiftUIKit.dylib"
         ]];
     });
 
+    // A malformed diagnostic may print /us/lib/ instead of /usr/lib/;
+    // normalize only this unambiguous system-prefix typo.
+    if ([dependency hasPrefix:@"/us/lib/"]) {
+        dependency = [@"/usr/lib" stringByAppendingString:[dependency substringFromIndex:[@"/us/lib" length]]];
+    }
     NSString *dependencyLeaf = [dependency lastPathComponent];
     NSFileManager *fm = [NSFileManager defaultManager];
     static NSSet<NSString *> *systemFrameworks;
@@ -2314,6 +2320,7 @@ extern char **environ;
     dispatch_once(&frameworkOnceToken, ^{
         systemFrameworks = [NSSet setWithArray:@[
             @"WebKit.framework", @"Foundation.framework", @"UIKit.framework",
+            @"IOKit.framework", @"SpringBoardServices.framework", @"WebCore.framework",
             @"CoreFoundation.framework", @"CoreGraphics.framework", @"Security.framework",
             @"QuartzCore.framework", @"AVFoundation.framework", @"CoreTelephony.framework",
             @"MobileCoreServices.framework", @"UniformTypeIdentifiers.framework",
