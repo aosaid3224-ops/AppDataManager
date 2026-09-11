@@ -35,6 +35,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #import "RuntimeEnvironment.h"
+#import "ExecutionTrustLayer.h"
 
 extern char **environ;
 
@@ -1665,6 +1666,15 @@ extern char **environ;
       if (completion) completion([InstallationResult failureResult:launchReadinessReason ?: @"Launch readiness verification failed — rollback executed" provider:[self providerName] transaction:txnID error:nil evidence:@{ @"launchReadiness": @"failed", @"registrationRollback": @YES }]);
       return;
   }
+
+  // Trust assessment is deliberately observer-only. An unavailable Stock
+  // Trust backend must never convert an otherwise successful installation
+  // into an installation failure or claim persistent execution.
+  TrustBackendResult *trustResult = [[ExecutionTrustLayer sharedLayer] evaluateApplicationAtPath:destApp
+                                                                                         bundleID:bundleID
+                                                                                      operationLog:opLog
+                                                                                     transactionID:txnID];
+  NSLog(@"[IPAInstallerPro] Stock Execution Trust: %@ (%@)", trustResult.persistentExecutionAvailable ? @"AVAILABLE" : @"NOT AVAILABLE", trustResult.reason ?: @"UNKNOWN");
 
    if (![transaction markSuccessForTransaction:txnID reason:@"registration verified and launch validation passed"]) {
       NSLog(@"[IPAInstallerPro] Final success rejected by transaction coordinator — rollback");
