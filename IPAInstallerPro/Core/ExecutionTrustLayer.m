@@ -1,5 +1,6 @@
 #import "ExecutionTrustLayer.h"
 #import "OperationLog.h"
+#import "ExperimentalTrustBackend.h"
 
 @interface ExecutionTrustLayer ()
 @property (nonatomic, strong, readwrite, nullable) id<TrustBackend> backend;
@@ -11,9 +12,9 @@
     static ExecutionTrustLayer *sharedLayer;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        // No trust backend is assumed. A real backend is injected explicitly
-        // when one is available and independently verified on the device.
-        sharedLayer = [[self alloc] initWithBackend:nil];
+        // The default backend is read-only and experimental. It collects
+        // measurable evidence but never claims Stock Trust or persistence.
+        sharedLayer = [[self alloc] initWithBackend:[[ExperimentalTrustBackend alloc] init]];
     });
     return sharedLayer;
 }
