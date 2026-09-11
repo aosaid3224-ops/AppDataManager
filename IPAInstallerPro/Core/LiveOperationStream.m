@@ -69,6 +69,26 @@
     return @"FAILED";
 }
 
+- (NSString *)diagnosticMessageForRecord:(OperationRecord *)record {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSString *operation = record.operation ?: @"";
+    if (operation.length) [parts addObject:operation];
+
+    // OperationLog already owns these diagnostic values. Keep this observer-only:
+    // do not run another probe or reinterpret any result here.
+    if (record.rawOutput.length) [parts addObject:[NSString stringWithFormat:@"output: %@", record.rawOutput]];
+    if (record.rawError.length) [parts addObject:[NSString stringWithFormat:@"error: %@", record.rawError]];
+    if (record.verification.length) [parts addObject:[NSString stringWithFormat:@"verification: %@", record.verification]];
+    if (record.context.count) {
+        NSError *serializationError = nil;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:record.context options:0 error:&serializationError];
+        NSString *context = json.length ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
+        if (!context.length) context = record.context.description;
+        if (context.length) [parts addObject:[NSString stringWithFormat:@"context: %@", context]];
+    }
+    return [parts componentsJoinedByString:@" | "] ?: @"UNKNOWN";
+}
+
 - (void)receiveRecord:(OperationRecord *)record isUpdate:(BOOL)isUpdate {
     if (![self accepts:record] || self.finalDelivered) return;
     LiveOperationEvent *event = [[LiveOperationEvent alloc] init];
@@ -80,7 +100,7 @@
     event.dispatchedAt = [NSDate date];
     event.stage = [self stageName:record];
     event.status = [self statusName:record update:isUpdate];
-    event.message = record.operation ?: @"";
+    event.message = [self diagnosticMessageForRecord:record];
     event.target = record.target ?: @"";
     event.exitStatus = record.exitCode;
     event.finalEvent = [self isFinalRecord:record];
