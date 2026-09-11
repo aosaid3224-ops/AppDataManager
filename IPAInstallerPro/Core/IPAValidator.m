@@ -16,6 +16,7 @@
 #import "CommandResult.h"
 #import "Logger.h"
 #import "RootlessManager.h"
+#import "IPAZipReader.h"
 
 #include <spawn.h>
 #include <sys/wait.h>
@@ -175,158 +176,94 @@ extern char **environ;
     return (bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04);
 }
 
+- (BOOL)isUsablePlistData:(NSData *)data {
+    if (!data || data.length == 0) return NO;
+    id plist = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nil error:nil];
+    return [plist isKindOfClass:[NSDictionary class]];
+}
+
+- (NSString *)bestInfoPlistEntryFromUnzipListing:(NSString *)listing {
+    if (listing.length == 0) return nil;
+    NSString *bestEntry = nil;
+    for (NSString *rawLine in [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        for (NSString *token in [rawLine componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]) {
+            if (token.length > 0) [parts addObject:token];
+        }
+        NSString *entry = parts.lastObject;
+        NSString *lower = entry.lowercaseString;
+        if (entry.length == 0 || ![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
+        NSArray<NSString *> *components = entry.pathComponents;
+        if (components.count != 3 || ![components[1].lowercaseString hasSuffix:@".app"]) continue;
+        if (!bestEntry || entry.length < bestEntry.length) bestEntry = entry;
+    }
+    return bestEntry;
+}
+
+- (NSData *)unzipPipeExtractInfoPlistData:(NSString *)path {
+    NSString *cmd = [[RootlessManager sharedManager] resolveExecutablePath:@"unzip"];
+    CommandResult *listResult = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-l", path] timeout:30.0];
+    NSString *entry = listResult.success ? [self bestInfoPlistEntryFromUnzipListing:listResult.stdoutText] : nil;
+    if (entry.length == 0) entry = @"Payload/*/Info.plist";
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-p", path, entry] timeout:60.0];
+    if (!result.success || ![self isUsablePlistData:result.stdoutData]) return nil;
+    return result.stdoutData;
+}
+
+- (NSData *)unzipDiskExtractInfoPlistData:(NSString *)path {
+    NSString *cmd = [[RootlessManager sharedManager] resolveExecutablePath:@"unzip"];
+    NSString *fallbackDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:fallbackDir withIntermediateDirectories:YES attributes:nil error:nil]) return nil;
+    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-q", path, @"-d", fallbackDir] timeout:60.0];
+    NSData *data = nil;
+    if (result.success) {
+        NSString *payload = [fallbackDir stringByAppendingPathComponent:@"Payload"];
+        for (NSString *item in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payload error:nil]) {
+            if (![item.lowercaseString hasSuffix:@".app"]) continue;
+            NSString *plistPath = [[payload stringByAppendingPathComponent:item] stringByAppendingPathComponent:@"Info.plist"];
+            NSData *candidate = [NSData dataWithContentsOfFile:plistPath];
+            if ([self isUsablePlistData:candidate]) { data = candidate; break; }
+        }
+    }
+    [[NSFileManager defaultManager] removeItemAtPath:fallbackDir error:nil];
+    return data;
+}
+
 - (NSString *)extractInfoPlistFromIPA:(NSString *)path {
     NSString *cached = [self.plistPathCache objectForKey:path];
     if (cached && [[NSFileManager defaultManager] fileExistsAtPath:cached]) return cached;
 
     NSString *tempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-    NSError *dirErr = nil;
-    if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirErr]) {
-        [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: failed to create temp dir: %@", dirErr.localizedDescription]];
+    NSError *dirError = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirError]) {
+        [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: failed to create temp dir: %@", dirError.localizedDescription]];
         return nil;
     }
 
-    // FIX(wildcard): unzip -p Payload/*/Info.plist extracts ALL matching files
-    // concatenated, corrupting data when IPA contains WatchKit/AppClip extensions.
-    // Step 1: List archive contents to find the exact path of the MAIN app's Info.plist.
-    NSString *cmd = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
-    CommandResult *listResult = [[ProcessRunner sharedRunner] runCommand:cmd arguments:@[@"-l", path] timeout:30.0];
-    NSString *exactInfoPlistEntry = nil;
-    if (listResult.success) {
-        NSString *listing = listResult.stdoutText;
-        NSArray<NSString *> *lines = [listing componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-        NSString *bestEntry = nil;
-        for (NSString *rawLine in lines) {
-            NSString *entry = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (entry.length == 0) continue;
-            NSString *lower = entry.lowercaseString;
-            if (!lower || lower.length == 0) continue;
-            if (![lower hasPrefix:@"payload/"] || ![lower hasSuffix:@"/info.plist"]) continue;
-            NSArray<NSString *> *components = [entry pathComponents];
-            if (components.count < 3) continue;
-            NSString *component1 = components[1];
-            if (!component1 || component1.length == 0) continue;
-            if (![component1.lowercaseString hasSuffix:@".app"]) continue;
-            // Prefer shortest path (main app) over nested extensions
-            if (!bestEntry || entry.length < bestEntry.length) {
-                bestEntry = entry;
-            }
+    NSData *plistData = [self unzipPipeExtractInfoPlistData:path];
+    if (![self isUsablePlistData:plistData]) {
+        plistData = [IPAZipReader extractInfoPlistDataFromIPA:path];
+        if ([self isUsablePlistData:plistData]) {
+            [[Logger sharedLogger] info:@"IPAValidator: Info.plist extracted via built-in ZIP reader"];
         }
-        if (bestEntry) exactInfoPlistEntry = bestEntry;
     }
-
-    if (!exactInfoPlistEntry) {
-        // Fallback to wildcard only if listing failed (should be rare)
-        exactInfoPlistEntry = @"Payload/*/Info.plist";
-        [[Logger sharedLogger] warning:@"IPAValidator: could not determine exact Info.plist path, falling back to wildcard"];
-    }
-
-    // Step 2: Extract the SINGLE exact Info.plist
-    CommandResult *result = [[ProcessRunner sharedRunner] runCommand:cmd
-                                                           arguments:@[@"-p", path, exactInfoPlistEntry]
-                                                             timeout:60.0];
-
-    // Fallback: full extraction to disk if pipe-based methods failed
-    if (!result.success || !result.stdoutData || result.stdoutData.length == 0) {
-        NSString *fallbackTempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-        [[NSFileManager defaultManager] createDirectoryAtPath:fallbackTempDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-        CommandResult *extractResult = [[ProcessRunner sharedRunner] runCommand:cmd
-                                                                       arguments:@[@"-q", path, @"-d", fallbackTempDir]
-                                                                         timeout:60.0];
-        if (extractResult.success) {
-            NSString *payloadPath = [fallbackTempDir stringByAppendingPathComponent:@"Payload"];
-            NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payloadPath error:nil];
-            for (NSString *item in contents) {
-                if ([item hasSuffix:@".app"]) {
-                    NSString *appPath = [payloadPath stringByAppendingPathComponent:item];
-                    NSString *plistPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:plistPath]) {
-                        NSString *tempPlist = [tempDir stringByAppendingPathComponent:@"Info.plist"];
-                        NSError *copyErr = nil;
-                        [[NSFileManager defaultManager] copyItemAtPath:plistPath toPath:tempPlist error:&copyErr];
-                        if (!copyErr) {
-                            [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
-                            [self.plistPathCache setObject:tempPlist forKey:path];
-                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-                                [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
-                                [self.plistPathCache removeObjectForKey:path];
-                            });
-                            return tempPlist;
-                        }
-                    }
-                }
-            }
-        }
-        [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
-    }
-
-    if (!result.success) {
-        [[Logger sharedLogger] error:[NSString stringWithFormat:@"IPAValidator: unzip failed | category=%@ | exit=%d | stderr=%@",
-                                      result.failureCategory, result.exitCode, result.stderrText]];
+    if (![self isUsablePlistData:plistData]) plistData = [self unzipDiskExtractInfoPlistData:path];
+    if (![self isUsablePlistData:plistData]) {
+        [[Logger sharedLogger] error:@"IPAValidator: all Info.plist extraction methods failed"];
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
         return nil;
     }
 
-    NSData *plistData = result.stdoutData;
     NSString *tempPlist = [tempDir stringByAppendingPathComponent:@"Info.plist"];
-    BOOL parsedOK = NO;
-
-    if (plistData && plistData.length > 0) {
-        if ([plistData writeToFile:tempPlist atomically:YES]) {
-            NSDictionary *testParse = [NSDictionary dictionaryWithContentsOfFile:tempPlist];
-            if (testParse) {
-                parsedOK = YES;
-            } else {
-                [[Logger sharedLogger] warning:@"IPAValidator: pipe-extracted plist is corrupted, will attempt disk fallback"];
-            }
-        }
-    }
-
-    // Fallback: full extraction to disk if pipe-based extraction failed or returned corrupted data
-    if (!parsedOK) {
-        NSString *fallbackTempDir = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
-        [[NSFileManager defaultManager] createDirectoryAtPath:fallbackTempDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-        CommandResult *extractResult = [[ProcessRunner sharedRunner] runCommand:cmd
-                                                                       arguments:@[@"-q", path, @"-d", fallbackTempDir]
-                                                                         timeout:60.0];
-        if (extractResult.success) {
-            NSString *payloadPath = [fallbackTempDir stringByAppendingPathComponent:@"Payload"];
-            NSArray *contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:payloadPath error:nil];
-            for (NSString *item in contents) {
-                if ([item hasSuffix:@".app"]) {
-                    NSString *appPath = [payloadPath stringByAppendingPathComponent:item];
-                    NSString *plistPath = [appPath stringByAppendingPathComponent:@"Info.plist"];
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:plistPath]) {
-                        NSDictionary *fallbackParse = [NSDictionary dictionaryWithContentsOfFile:plistPath];
-                        if (fallbackParse) {
-                            NSError *copyErr = nil;
-                            [[NSFileManager defaultManager] removeItemAtPath:tempPlist error:nil];
-                            [[NSFileManager defaultManager] copyItemAtPath:plistPath toPath:tempPlist error:&copyErr];
-                            if (!copyErr) {
-                                parsedOK = YES;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        [[NSFileManager defaultManager] removeItemAtPath:fallbackTempDir error:nil];
-    }
-
-    if (!parsedOK) {
-        [[Logger sharedLogger] error:@"IPAValidator: failed to extract valid Info.plist via pipe and disk fallback"];
+    if (![plistData writeToFile:tempPlist atomically:YES]) {
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
         return nil;
     }
-
     [self.plistPathCache setObject:tempPlist forKey:path];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         [[NSFileManager defaultManager] removeItemAtPath:tempDir error:nil];
         [self.plistPathCache removeObjectForKey:path];
     });
-
     return tempPlist;
 }
 
@@ -340,7 +277,7 @@ extern char **environ;
     NSError *dirErr = nil;
     if (![[NSFileManager defaultManager] createDirectoryAtPath:tempDir withIntermediateDirectories:YES attributes:nil error:&dirErr]) return nil;
 
-    NSString *unzipPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/unzip"];
+    NSString *unzipPath = [[RootlessManager sharedManager] resolveExecutablePath:@"unzip"];
     CommandResult *result = [[ProcessRunner sharedRunner] runCommand:unzipPath
                                                            arguments:@[@"-q", path, @"-d", tempDir]
                                                              timeout:60.0];
@@ -376,7 +313,7 @@ extern char **environ;
 }
 
 - (BOOL)validateCodeSignature:(NSString *)path {
-    NSString *codesignPath = [[RootlessManager sharedManager] resolvePath:@"/usr/bin/codesign"];
+    NSString *codesignPath = [[RootlessManager sharedManager] resolveExecutablePath:@"codesign"];
     CommandResult *result = [[ProcessRunner sharedRunner] runCommand:codesignPath
                                                            arguments:@[@"-v", path]
                                                              timeout:30.0];

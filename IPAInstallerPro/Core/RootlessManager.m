@@ -67,6 +67,39 @@
     return path;
 }
 
+- (NSString *)resolveExecutablePath:(NSString *)toolName {
+    if (!toolName || toolName.length == 0) return toolName;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    RuntimeEnvironment *rt = [RuntimeEnvironment sharedEnvironment];
+    NSString *baseName = [toolName lastPathComponent];
+
+    if ([toolName hasPrefix:@"/"] && [fm isExecutableFileAtPath:toolName]) return toolName;
+    if (rt.bootstrapPath.length > 0) {
+        NSArray<NSString *> *bootstrapDirs = @[
+            [rt.bootstrapPath stringByAppendingPathComponent:@"usr/bin"],
+            [rt.bootstrapPath stringByAppendingPathComponent:@"bin"],
+            [rt.bootstrapPath stringByAppendingPathComponent:@"usr/local/bin"],
+            [rt.bootstrapPath stringByAppendingPathComponent:@"var/jb/usr/bin"],
+            [rt.bootstrapPath stringByAppendingPathComponent:@"var/jb/bin"]
+        ];
+        for (NSString *dir in bootstrapDirs) {
+            NSString *candidate = [dir stringByAppendingPathComponent:baseName];
+            if ([fm isExecutableFileAtPath:candidate]) return candidate;
+        }
+    }
+
+    NSArray<NSString *> *systemDirs = @[
+        @"/usr/bin", @"/bin", @"/usr/local/bin",
+        @"/var/jb/usr/bin", @"/var/jb/bin",
+        @"/var/LIY/usr/bin", @"/var/LIY/bin", @"/opt/procursus/bin"
+    ];
+    for (NSString *dir in systemDirs) {
+        NSString *candidate = [dir stringByAppendingPathComponent:baseName];
+        if ([fm isExecutableFileAtPath:candidate]) return candidate;
+    }
+    return [self resolvePath:toolName];
+}
+
 - (NSString *)rootlessPathForPath:(NSString *)path {
     return [self resolvePath:path];
 }
