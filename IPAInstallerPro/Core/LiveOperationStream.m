@@ -5,6 +5,27 @@
 
 #import "LiveOperationStream.h"
 
+static id LiveJSONSafeValue(id value) {
+    if (!value || value == [NSNull null]) return [NSNull null];
+    if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]]) return value;
+    if ([value isKindOfClass:[NSDate class]]) return [(NSDate *)value descriptionWithLocale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
+    if ([value isKindOfClass:[NSData class]]) return [(NSData *)value base64EncodedStringWithOptions:0] ?: @"";
+    if ([value isKindOfClass:[NSArray class]]) {
+        NSMutableArray *safe = [NSMutableArray arrayWithCapacity:[value count]];
+        for (id item in value) [safe addObject:LiveJSONSafeValue(item)];
+        return safe;
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *safe = [NSMutableDictionary dictionaryWithCapacity:[value count]];
+        for (id key in value) {
+            if (![key isKindOfClass:[NSString class]]) continue;
+            safe[key] = LiveJSONSafeValue(value[key]);
+        }
+        return safe;
+    }
+    return [value description] ?: @"UNKNOWN";
+}
+
 @interface LiveOperationStream ()
 @property (nonatomic, copy) NSString *transactionID;
 @property (nonatomic, copy) LiveOperationEventHandler handler;
@@ -80,9 +101,14 @@
     if (record.rawError.length) [parts addObject:[NSString stringWithFormat:@"error: %@", record.rawError]];
     if (record.verification.length) [parts addObject:[NSString stringWithFormat:@"verification: %@", record.verification]];
     if (record.context.count) {
-        NSError *serializationError = nil;
-        NSData *json = [NSJSONSerialization dataWithJSONObject:record.context options:0 error:&serializationError];
-        NSString *context = json.length ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
+        NSString *context = nil;
+        @try {
+            NSDictionary *safeContext = LiveJSONSafeValue(record.context);
+            NSData *json = [NSJSONSerialization dataWithJSONObject:safeContext options:0 error:nil];
+            context = json.length ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : nil;
+        } @catch (NSException *exception) {
+            NSLog(@"[LiveOperationStream] Context serialization skipped: %@", exception.reason ?: @"UNKNOWN");
+        }
         if (!context.length) context = record.context.description;
         if (context.length) [parts addObject:[NSString stringWithFormat:@"context: %@", context]];
     }
