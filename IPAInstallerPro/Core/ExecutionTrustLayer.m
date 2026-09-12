@@ -1,6 +1,7 @@
 #import "ExecutionTrustLayer.h"
 #import "OperationLog.h"
 #import "ExperimentalTrustBackend.h"
+#import "SpiderResearchOrchestrator.h"
 
 @interface ExecutionTrustLayer ()
 @property (nonatomic, strong, readwrite, nullable) id<TrustBackend> backend;
@@ -55,6 +56,7 @@
                                               evidence:@{ @"appPath": appPath ?: @"", @"bundleID": bundleID ?: @"" }];
     }
 
+    SpiderResearchSession *researchSession = [[SpiderResearchOrchestrator sharedOrchestrator] buildReadOnlySessionForApplicationAtPath:appPath bundleID:bundleID trustResult:result];
     if (operationLog && transactionID.length) {
         NSString *recordID = [operationLog beginPhase:OperationPhaseVerify
                                              operation:@"execution trust assessment"
@@ -63,8 +65,8 @@
                                          transactionID:transactionID];
         NSString *availability = result.available ? @"AVAILABLE" : @"NOT AVAILABLE";
         NSString *persistent = result.persistentExecutionAvailable ? @"YES" : @"NOT AVAILABLE";
-        NSString *output = [NSString stringWithFormat:@"Persistent Execution: %@\nTrust State: %@\nBackend: %@",
-                            persistent, TrustBackendStateName(result.state), result.backendName ?: @"UNKNOWN"];
+        NSString *output = [NSString stringWithFormat:@"Persistent Execution: %@\nTrust State: %@\nBackend: %@\n%@",
+                            persistent, TrustBackendStateName(result.state), result.backendName ?: @"UNKNOWN", researchSession.summary];
         NSMutableDictionary *context = [NSMutableDictionary dictionaryWithDictionary:result.evidence ?: @{}];
         context[@"availability"] = availability;
         context[@"backendName"] = result.backendName ?: @"UNKNOWN";
@@ -72,6 +74,7 @@
         context[@"trustState"] = TrustBackendStateName(result.state);
         context[@"verificationResult"] = @(result.verificationResult);
         context[@"persistentExecutionAvailable"] = @(result.persistentExecutionAvailable);
+        context[@"researchSession"] = researchSession.dictionaryRepresentation;
         [operationLog endPhase:recordID
                        exitCode:0
                       rawOutput:output
