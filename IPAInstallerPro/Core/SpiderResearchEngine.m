@@ -48,7 +48,7 @@ static id SpiderResearchPlistSafeValue(id value) {
     if (!session.sessionID.length) return NO;
     NSString *path = [self.directoryPath stringByAppendingPathComponent:[session.sessionID stringByAppendingPathExtension:@"plist"]];
     NSDictionary *safeDictionary = SpiderResearchPlistSafeValue(session.dictionaryRepresentation);
-    if (![NSPropertyListSerialization propertyList:safeDictionary isValidForFormat:NSPropertyListBinaryFormat]) {
+    if (![NSPropertyListSerialization propertyList:safeDictionary isValidForFormat:NSPropertyListBinaryFormat_v1_0]) {
         if (error) *error = [NSError errorWithDomain:@"SpiderResearchStore" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Research session contains no valid property-list representation"}];
         return NO;
     }
