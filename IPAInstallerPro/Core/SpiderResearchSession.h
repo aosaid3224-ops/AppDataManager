@@ -23,6 +23,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *classification;
 @property (nonatomic, copy) NSString *confidenceBand;
 @property (nonatomic, copy) NSString *terminalReason;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *experiments;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *differentialResults;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *candidateMechanisms;
+@property (nonatomic, strong) NSDictionary *statistics;
 @property (nonatomic, strong) NSMutableArray<SpiderStateCheckpoint *> *checkpoints;
 @property (nonatomic, strong) NSMutableArray<SpiderResearchEvidence *> *evidenceRecords;
 - (void)addCheckpoint:(SpiderStateCheckpoint *)checkpoint;

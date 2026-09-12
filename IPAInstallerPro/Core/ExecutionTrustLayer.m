@@ -1,7 +1,7 @@
 #import "ExecutionTrustLayer.h"
 #import "OperationLog.h"
 #import "ExperimentalTrustBackend.h"
-#import "SpiderResearchOrchestrator.h"
+#import "SpiderResearchEngine.h"
 
 @interface ExecutionTrustLayer ()
 @property (nonatomic, strong, readwrite, nullable) id<TrustBackend> backend;
@@ -56,7 +56,7 @@
                                               evidence:@{ @"appPath": appPath ?: @"", @"bundleID": bundleID ?: @"" }];
     }
 
-    SpiderResearchSession *researchSession = [[SpiderResearchOrchestrator sharedOrchestrator] buildReadOnlySessionForApplicationAtPath:appPath bundleID:bundleID trustResult:result];
+    SpiderResearchSession *researchSession = [[SpiderResearchEngine sharedEngine] runReadOnlySessionForApplicationAtPath:appPath bundleID:bundleID trustResult:result];
     if (operationLog && transactionID.length) {
         NSString *recordID = [operationLog beginPhase:OperationPhaseVerify
                                              operation:@"execution trust assessment"

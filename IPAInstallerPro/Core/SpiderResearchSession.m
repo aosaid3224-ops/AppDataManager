@@ -22,6 +22,10 @@
         _createdAt = [NSDate date];
         _classification = @"UNKNOWN";
         _confidenceBand = @"UNKNOWN";
+        _experiments = [NSMutableArray array];
+        _differentialResults = [NSMutableArray array];
+        _candidateMechanisms = [NSMutableArray array];
+        _statistics = @{};
         _checkpoints = [NSMutableArray array];
         _evidenceRecords = [NSMutableArray array];
     }
@@ -51,6 +55,10 @@
         @"classification": self.classification ?: @"UNKNOWN",
         @"confidenceBand": self.confidenceBand ?: @"UNKNOWN",
         @"terminalReason": self.terminalReason ?: @"",
+        @"experiments": self.experiments ?: @[],
+        @"differentialResults": self.differentialResults ?: @[],
+        @"candidateMechanisms": self.candidateMechanisms ?: @[],
+        @"statistics": self.statistics ?: @{},
         @"checkpoints": checkpoints,
         @"evidenceRecords": evidence
     };
