@@ -5,6 +5,25 @@
 @property (nonatomic, copy) NSString *directoryPath;
 @end
 
+static id SpiderResearchPlistSafeValue(id value) {
+    if (!value || value == [NSNull null]) return @"UNKNOWN";
+    if ([value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSDate class]] || [value isKindOfClass:[NSData class]]) return value;
+    if ([value isKindOfClass:[NSArray class]]) {
+        NSMutableArray *safe = [NSMutableArray arrayWithCapacity:[value count]];
+        for (id item in value) [safe addObject:SpiderResearchPlistSafeValue(item)];
+        return safe;
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *safe = [NSMutableDictionary dictionaryWithCapacity:[value count]];
+        for (id key in value) {
+            if (![key isKindOfClass:[NSString class]]) continue;
+            safe[key] = SpiderResearchPlistSafeValue(value[key]);
+        }
+        return safe;
+    }
+    return [value description] ?: @"UNKNOWN";
+}
+
 @implementation SpiderResearchStore
 
 + (instancetype)sharedStore {
@@ -28,7 +47,14 @@
 - (BOOL)saveSession:(SpiderResearchSession *)session error:(NSError **)error {
     if (!session.sessionID.length) return NO;
     NSString *path = [self.directoryPath stringByAppendingPathComponent:[session.sessionID stringByAppendingPathExtension:@"plist"]];
-    return [session.dictionaryRepresentation writeToFile:path atomically:YES];
+    NSDictionary *safeDictionary = SpiderResearchPlistSafeValue(session.dictionaryRepresentation);
+    if (![NSPropertyListSerialization propertyList:safeDictionary isValidForFormat:NSPropertyListBinaryFormat]) {
+        if (error) *error = [NSError errorWithDomain:@"SpiderResearchStore" code:1 userInfo:@{NSLocalizedDescriptionKey: @"Research session contains no valid property-list representation"}];
+        return NO;
+    }
+    BOOL saved = [safeDictionary writeToFile:path atomically:YES];
+    if (!saved && error) *error = [NSError errorWithDomain:@"SpiderResearchStore" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Research session persistence failed"}];
+    return saved;
 }
 
 - (NSDictionary *)aggregateStatisticsForBundleID:(NSString *)bundleID {

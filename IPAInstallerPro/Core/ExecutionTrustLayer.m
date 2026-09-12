@@ -56,7 +56,22 @@
                                               evidence:@{ @"appPath": appPath ?: @"", @"bundleID": bundleID ?: @"" }];
     }
 
-    SpiderResearchSession *researchSession = [[SpiderResearchEngine sharedEngine] runReadOnlySessionForApplicationAtPath:appPath bundleID:bundleID trustResult:result];
+    SpiderResearchSession *researchSession = nil;
+    @try {
+        researchSession = [[SpiderResearchEngine sharedEngine] runReadOnlySessionForApplicationAtPath:appPath bundleID:bundleID trustResult:result];
+    } @catch (NSException *exception) {
+        NSLog(@"[SpiderResearchEngine] Research session failed without affecting installation: %@", exception.reason ?: @"UNKNOWN");
+    }
+    if (!researchSession) {
+        researchSession = [[SpiderResearchSession alloc] init];
+        researchSession.sessionID = [[NSUUID UUID] UUIDString];
+        researchSession.experimentID = @"M1-read-only-trust-evidence";
+        researchSession.targetBundleID = bundleID ?: @"";
+        researchSession.targetPath = appPath ?: @"";
+        researchSession.classification = @"UNKNOWN";
+        researchSession.confidenceBand = @"UNKNOWN";
+        researchSession.terminalReason = @"Research engine unavailable; installation result unchanged";
+    }
     if (operationLog && transactionID.length) {
         NSString *recordID = [operationLog beginPhase:OperationPhaseVerify
                                              operation:@"execution trust assessment"
