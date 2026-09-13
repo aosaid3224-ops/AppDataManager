@@ -321,8 +321,22 @@
 
 #pragma mark - Container-aware entitlement policy
 
+- (BOOL)isSideStoreCompatibilityTarget:(SigningTarget *)target {
+    NSString *bundleID = target.bundleIdentifier.lowercaseString ?: @"";
+    return [bundleID isEqualToString:@"com.sidestore.sidetore"] || [bundleID hasPrefix:@"com.sidestore.sidetore."];
+}
+
 - (void)applyContainerAwarePolicyToTarget:(SigningTarget *)target {
     if (!target.bundleIdentifier.length || !target.plannedEntitlements) return;
+    // SideStore has its own SideSign/bootstrap contract. Do not inject
+    // Spider's container-required or PMAP-CS policy into SideStore or its
+    // nested targets. Preserve the IPA's source entitlements verbatim when
+    // available; every other application follows the normal policy below.
+    if ([self isSideStoreCompatibilityTarget:target] && target.originalEntitlements) {
+        NSLog(@"[SideStoreCompatibilityFix] preserving original entitlements for target=%@ bundleID=%@ source=%@", target.targetName ?: @"?", target.bundleIdentifier, target.originalEntitlements.sourcePath ?: @"?");
+        target.plannedEntitlements = target.originalEntitlements;
+        return;
+    }
     // Frameworks/dylibs are not app containers. Their minimal signatures must
     // remain minimal, while app and extension executables receive a stable
     // per-bundle container identity.
