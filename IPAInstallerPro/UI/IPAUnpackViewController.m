@@ -352,7 +352,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         UTType *localIPAType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
         UTType *extensionIPAType = [UTType typeWithFilenameExtension:@"ipa"];
         NSMutableArray<UTType *> *ipaTypes = [NSMutableArray array];
-        for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null]]) {
+        for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null], UTType.data ?: [NSNull null]]) {
             if (![type isKindOfClass:UTType.class] || [ipaTypes containsObject:type]) continue;
             [ipaTypes addObject:type];
         }
@@ -397,14 +397,6 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
             if (fileName.length == 0) {
                 [url getResourceValue:&fileName forKey:NSURLNameKey error:nil];
             }
-            NSString *extension = fileName.pathExtension.lowercaseString ?: @"";
-            if (![extension isEqualToString:@"ipa"]) {
-                NSLog(@"[IPAExtractor] post-selection rejected non-IPA filename=%@ url=%@", fileName, url);
-                rejected++;
-                if (accessed) [url stopAccessingSecurityScopedResource];
-                continue;
-            }
-            NSString *safeName = fileName.length > 0 ? fileName : @"Imported.ipa";
             NSString *temporary = [importDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@".importing-%@.ipa", NSUUID.UUID.UUIDString]];
             __block NSError *coordinationError = nil;
             __block BOOL copied = NO;
@@ -416,9 +408,31 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
             }];
             if (accessed) [url stopAccessingSecurityScopedResource];
             if (!copied) {
-                NSLog(@"[IPAExtractor] import failed filename=%@ error=%@", safeName, coordinationError);
+                NSLog(@"[IPAExtractor] import failed filename=%@ error=%@", fileName, coordinationError);
                 [fm removeItemAtPath:temporary error:nil];
                 continue;
+            }
+            BOOL hasIPAExtension = [fileName.pathExtension.lowercaseString isEqualToString:@"ipa"];
+            BOOL zipSignature = NO;
+            NSFileHandle *headerHandle = [NSFileHandle fileHandleForReadingAtPath:temporary];
+            NSData *header = [headerHandle readDataOfLength:4];
+            [headerHandle closeFile];
+            if (header.length == 4) {
+                const unsigned char *bytes = header.bytes;
+                zipSignature = (bytes[0] == 'P' && bytes[1] == 'K' &&
+                                ((bytes[2] == 3 && bytes[3] == 4) ||
+                                 (bytes[2] == 5 && bytes[3] == 6) ||
+                                 (bytes[2] == 7 && bytes[3] == 8)));
+            }
+            if (!hasIPAExtension && !zipSignature) {
+                NSLog(@"[IPAExtractor] rejected non-IPA/non-ZIP provider item filename=%@ url=%@", fileName, url);
+                rejected++;
+                [fm removeItemAtPath:temporary error:nil];
+                continue;
+            }
+            NSString *safeName = fileName.length > 0 ? fileName : @"Imported.ipa";
+            if (![safeName.pathExtension.lowercaseString isEqualToString:@"ipa"]) {
+                safeName = [safeName stringByAppendingPathExtension:@"ipa"];
             }
             NSString *destination = [importDirectory stringByAppendingPathComponent:safeName];
             if ([fm fileExistsAtPath:destination]) {
@@ -461,7 +475,7 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
             [self updateSectionHeader];
             [self.tableView reloadData];
             NSLog(@"[IPAExtractor] post-selection import complete accepted=%lu rejected=%lu", (unsigned long)added, (unsigned long)rejected);
-            if (added == 0 && pickedURLs.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ يجب أن يكون الامتداد .ipa."];
+            if (added == 0 && pickedURLs.count > 0) [self showMessage:@"لم يتم قبول أي ملف؛ اختر IPA صالحًا أو ملف ZIP يحتوي على بنية IPA."];
         });
     });
 }

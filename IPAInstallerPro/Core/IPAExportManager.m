@@ -359,6 +359,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                         // before the modern bundle-level backend.
                         if (!modernDecrypted) {
                             for (NSString *sourcePath in encryptedPaths) {
+                                BOOL isHostExecutable = [sourcePath isEqualToString:[copiedBundle stringByAppendingPathComponent:executableName]];
                                 NSString *decryptedPath = [sourcePath stringByAppendingString:@".decrypted"];
                                 NSError *firstToolError = modernError;
                                 BOOL decrypted = NO;
@@ -383,8 +384,12 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                                 NSDictionary *attrs = [fm attributesOfItemAtPath:decryptedPath error:nil];
                                 if (!decrypted || ![fm isReadableFileAtPath:decryptedPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] == 0 || ![self isMachOAtPath:decryptedPath encrypted:&stillEncrypted] || stillEncrypted) {
                                     NSString *reason = firstToolError.localizedDescription ?: @"لم تتوفر أداة فك تشفير صالحة";
-                                    error = [self errorWithCode:25 description:[NSString stringWithFormat:@"تعذر فك تشفير %@: %@", sourcePath.lastPathComponent, reason]];
-                                    break;
+                                    if (isHostExecutable) {
+                                        error = [self errorWithCode:25 description:[NSString stringWithFormat:@"تعذر فك تشفير executable الرئيسي %@: %@", sourcePath.lastPathComponent, reason]];
+                                        break;
+                                    }
+                                    NSLog(@"[IPAExport] retaining non-critical encrypted nested Mach-O %@: %@", sourcePath, reason);
+                                    continue;
                                 }
                                 if (![self runPrivilegedCommand:self.mvPath args:@[@"-f", decryptedPath, sourcePath] error:&error]) break;
                                 decryptedAny = YES;
@@ -394,8 +399,11 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                         if (!error && decryptedAny) {
                             NSMutableArray<NSString *> *remainingEncrypted = [NSMutableArray array];
                             [self machOPathsInBundle:copiedBundle encrypted:remainingEncrypted];
-                            if (remainingEncrypted.count > 0) {
-                                error = [self errorWithCode:28 description:[NSString stringWithFormat:@"بقيت %lu ملفات Mach-O مشفرة بعد فك الحزمة", (unsigned long)remainingEncrypted.count]];
+                            BOOL hostStillEncrypted = [remainingEncrypted containsObject:[copiedBundle stringByAppendingPathComponent:executableName]];
+                            if (hostStillEncrypted) {
+                                error = [self errorWithCode:28 description:@"بقي executable الرئيسي مشفرًا بعد فك الحزمة"];
+                            } else if (remainingEncrypted.count > 0) {
+                                NSLog(@"[IPAExport] export continues with %lu encrypted non-critical nested Mach-O files", (unsigned long)remainingEncrypted.count);
                             }
                         }
                     }
