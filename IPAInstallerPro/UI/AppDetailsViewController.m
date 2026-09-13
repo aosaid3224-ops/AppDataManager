@@ -226,30 +226,55 @@
     sender.enabled = NO;
     [sender setTitle:@"جارٍ استخراج IPA…" forState:UIControlStateNormal];
     NSString *suggestedName = self.appInfo.name.length > 0 ? self.appInfo.name : self.appInfo.bundleID;
+    NSUInteger progressGeneration = ++self.cloneProgressGeneration;
+    IPAExportProgressView *progressView = [[IPAExportProgressView alloc] initWithFrame:self.view.bounds];
+    self.cloneProgressView = progressView;
+    [progressView setAppIcon:self.appInfo.icon name:suggestedName];
+    [progressView showInView:self.view animated:YES];
+    [progressView setStage:@"جارٍ التحضير..." detail:@"تهيئة مساحة العمل للاستخراج" progress:0.03];
+    __weak typeof(self) weakSelf = self;
     [[IPAExportManager sharedManager] exportApplicationAtPath:self.appInfo.bundlePath
                                                 suggestedName:suggestedName
+                                                     progress:^(double progress, NSString *stage, NSString *detail) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.cloneProgressGeneration != progressGeneration || !strongSelf.cloneProgressView) return;
+        [strongSelf.cloneProgressView setStage:stage detail:detail progress:progress];
+        [strongSelf.cloneProgressView setStats:[NSString stringWithFormat:@"%.0f%% • جاري العمل", progress * 100.0]];
+    }
                                                    completion:^(NSURL *ipaURL, NSError *error) {
-        sender.enabled = YES;
-        [sender setTitle:@"استخراج IPA" forState:UIControlStateNormal];
-        if (!ipaURL || error) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"فشل استخراج IPA"
-                message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA" preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-            return;
-        }
-
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ipaURL]
-                                                                             applicationActivities:nil];
-        share.excludedActivityTypes = @[UIActivityTypeAssignToContact, UIActivityTypeAddToReadingList];
-        share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
-            [[NSFileManager defaultManager] removeItemAtURL:ipaURL error:nil];
-        };
-        if (share.popoverPresentationController) {
-            share.popoverPresentationController.sourceView = sender;
-            share.popoverPresentationController.sourceRect = sender.bounds;
-        }
-        [self presentViewController:share animated:YES completion:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sender.enabled = YES;
+            [sender setTitle:@"استخراج IPA" forState:UIControlStateNormal];
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            IPAExportProgressView *activeProgress = strongSelf.cloneProgressView;
+            if (!ipaURL || error) {
+                [activeProgress markCompletedWithSuccess:NO message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA"];
+                [activeProgress dismissWithCompletion:nil];
+                strongSelf.cloneProgressView = nil;
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"فشل استخراج IPA"
+                    message:error.localizedDescription ?: @"تعذر إنشاء ملف IPA" preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"حسناً" style:UIAlertActionStyleDefault handler:nil]];
+                [strongSelf presentViewController:alert animated:YES completion:nil];
+                return;
+            }
+            [activeProgress setStats:@"100% • اكتمل الاستخراج"];
+            [activeProgress markCompletedWithSuccess:YES message:@"تم إنشاء IPA بنجاح"];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [activeProgress dismissWithCompletion:^{
+                    strongSelf.cloneProgressView = nil;
+                    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[ipaURL] applicationActivities:nil];
+                    share.excludedActivityTypes = @[UIActivityTypeAssignToContact, UIActivityTypeAddToReadingList];
+                    share.completionWithItemsHandler = ^(UIActivityType activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+                        [[NSFileManager defaultManager] removeItemAtURL:ipaURL error:nil];
+                    };
+                    if (share.popoverPresentationController) {
+                        share.popoverPresentationController.sourceView = sender;
+                        share.popoverPresentationController.sourceRect = sender.bounds;
+                    }
+                    [strongSelf presentViewController:share animated:YES completion:nil];
+                }];
+            });
+        });
     }];
 }
 

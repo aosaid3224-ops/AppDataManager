@@ -10,6 +10,10 @@ typedef void (^IPAExportProgress)(double progress, NSString *stage, NSString *de
 - (void)exportApplicationAtPath:(NSString *)bundlePath
                     suggestedName:(NSString *)suggestedName
                        completion:(IPAExportCompletion)completion;
+- (void)exportApplicationAtPath:(NSString *)bundlePath
+                    suggestedName:(NSString *)suggestedName
+                         progress:(nullable IPAExportProgress)progress
+                       completion:(IPAExportCompletion)completion;
 
 // Creates a side-by-side clone IPA with an independent bundle identifier.
 // The original installed application is never modified.
