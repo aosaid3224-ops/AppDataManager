@@ -108,8 +108,8 @@ jobs:
           if [ -f /tmp/libroot/include/rootless.h ]; then
             cp /tmp/libroot/include/rootless.h "$THEOS/include/"
             echo "✅ libroot installed from GitHub"
-          elif [ -f source/rootless.h ]; then
-            cp source/rootless.h "$THEOS/include/rootless.h"
+          elif [ -f source/IPAInstallerPro/rootless.h ]; then
+            cp source/IPAInstallerPro/rootless.h "$THEOS/include/rootless.h"
             echo "✅ libroot installed from local stub"
           else
             echo "❌ rootless.h not found anywhere"
@@ -118,25 +118,25 @@ jobs:
 
       - name: Fix script permissions
         run: |
-          chmod +x source/layout/DEBIAN/postinst 2>/dev/null || true
-          chmod +x source/layout/DEBIAN/prerm 2>/dev/null || true
-          ls -la source/layout/DEBIAN/ 2>/dev/null || echo "No layout/DEBIAN"
+          chmod +x source/IPAInstallerPro/layout/DEBIAN/postinst 2>/dev/null || true
+          chmod +x source/IPAInstallerPro/layout/DEBIAN/prerm 2>/dev/null || true
+          ls -la source/IPAInstallerPro/layout/DEBIAN/ 2>/dev/null || echo "No layout/DEBIAN"
 
       - name: Build AppDataManager
         run: |
           echo "=== Building AppDataManager (Dev) ==="
           export PATH="$THEOS/bin:$PATH"
-          cd source
-          make clean
+          cd source/IPAInstallerPro
+          make clean || true
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
           echo ""
           echo "=== Build output ==="
-          ls -la packages/ 2>/dev/null || echo "No packages directory"
+          ls -la source/IPAInstallerPro/packages/ 2>/dev/null || echo "No packages directory"
 
       - name: Validate .deb
         run: |
           echo "=== Validating .deb ==="
-          DEB_FILE=$(ls -t source/packages/*.deb 2>/dev/null | head -1)
+          DEB_FILE=$(ls -t source/IPAInstallerPro/packages/*.deb 2>/dev/null | head -1)
           if [ -z "$DEB_FILE" ]; then
             echo "❌ FATAL: No .deb file found"
             exit 1
@@ -145,9 +145,9 @@ jobs:
           dpkg-deb -I "$DEB_FILE" || { echo "❌ dpkg-deb -I failed"; exit 1; }
           dpkg-deb -I "$DEB_FILE" | grep -q "Architecture: iphoneos-arm64" || { echo "❌ Wrong architecture"; exit 1; }
           echo "✅ Architecture is iphoneos-arm64"
-          dpkg-deb -I "$DEB_FILE" | grep -q "Package: com.aosaid.appdatamgr" || { echo "❌ Wrong package name"; exit 1; }
+          dpkg-deb -I "$DEB_FILE" | grep -q "Package: com.aosaid.ipainstallerpro" || { echo "❌ Wrong package name"; exit 1; }
           echo "✅ Package name correct"
-          EXPECTED_VERSION=$(awk '$1 == "Version:" { print $2; exit }' source/control)
+          EXPECTED_VERSION=$(awk '$1 == "Version:" { print $2; exit }' source/IPAInstallerPro/control)
           ACTUAL_VERSION=$(dpkg-deb -f "$DEB_FILE" Version)
           test "$ACTUAL_VERSION" = "$EXPECTED_VERSION" || {
             echo "❌ Version mismatch: expected $EXPECTED_VERSION, got $ACTUAL_VERSION"
@@ -166,7 +166,7 @@ jobs:
           git config --global user.name "GitHub CI"
 
           mkdir -p repo-dev/pool/main/iphoneos-arm64
-          cp source/packages/*.deb repo-dev/pool/main/iphoneos-arm64/
+          cp source/IPAInstallerPro/packages/*.deb repo-dev/pool/main/iphoneos-arm64/
           echo "✅ .deb copied to repo-dev/pool/"
           ls -la repo-dev/pool/main/iphoneos-arm64/
 
@@ -185,7 +185,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "ℹ️ repo-dev is already synchronized"
           else
-            VERSION=$(awk '$1 == "Version:" { print $2; exit }' ../source/control)
+            VERSION=$(awk '$1 == "Version:" { print $2; exit }' ../source/IPAInstallerPro/control)
             git commit -m "AppDataManager v${VERSION} — dev build"
             git push origin main
           fi
