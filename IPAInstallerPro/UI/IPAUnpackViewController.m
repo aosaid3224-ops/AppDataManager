@@ -352,7 +352,8 @@ static NSString * const kIPAExtractorPersistedItemsKey = @"IPAExtractor.Persiste
         UTType *localIPAType = [UTType typeWithIdentifier:@"com.aosaid.ipainstallerpro.ipa"];
         UTType *extensionIPAType = [UTType typeWithFilenameExtension:@"ipa"];
         NSMutableArray<UTType *> *ipaTypes = [NSMutableArray array];
-        for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null], UTType.data ?: [NSNull null]]) {
+        UTType *genericDataType = [UTType typeWithIdentifier:@"public.data"];
+        for (UTType *type in @[appleIPAType ?: [NSNull null], localIPAType ?: [NSNull null], extensionIPAType ?: [NSNull null], genericDataType ?: [NSNull null]]) {
             if (![type isKindOfClass:UTType.class] || [ipaTypes containsObject:type]) continue;
             [ipaTypes addObject:type];
         }
