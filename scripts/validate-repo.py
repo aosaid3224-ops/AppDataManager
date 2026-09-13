@@ -97,7 +97,7 @@ def validate_repo(repo_root):
             ('Version field', r'^Version:\s+\S+'),
             ('Architecture field', r'^Architecture:\s+iphoneos-arm64'),
             ('Maintainer field', r'^Maintainer:\s+\S+'),
-            ('Filename field', r'^Filename:\s+pool/main/iphoneos-arm64/'),
+            ('Filename field', r'^Filename:\s+pool/main/iphoneos-arm64e?/'),
             ('Size field', r'^Size:\s+[1-9]\d*'),
             ('MD5sum field', r'^MD5sum:\s+[a-f0-9]{32}'),
             ('SHA256 field', r'^SHA256:\s+[a-f0-9]{64}'),
@@ -131,8 +131,8 @@ def validate_repo(repo_root):
         else:
             for entry in entries:
                 filename = entry.get('Filename', '')
-                expected_prefix = 'pool/main/iphoneos-arm64/'
-                if not filename.startswith(expected_prefix):
+                expected_prefixes = ('pool/main/iphoneos-arm64/', 'pool/main/iphoneos-arm64e/')
+                if not filename.startswith(expected_prefixes):
                     errors += 1
                     fail(f"Unsafe or invalid Filename field: {filename}")
                     continue
