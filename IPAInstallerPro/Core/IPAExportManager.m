@@ -293,12 +293,23 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 - (void)exportApplicationAtPath:(NSString *)bundlePath
                   suggestedName:(NSString *)suggestedName
                      completion:(IPAExportCompletion)completion {
+    [self exportApplicationAtPath:bundlePath suggestedName:suggestedName progress:nil completion:completion];
+}
+
+- (void)exportApplicationAtPath:(NSString *)bundlePath
+                  suggestedName:(NSString *)suggestedName
+                        progress:(IPAExportProgress)progress
+                      completion:(IPAExportCompletion)completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSFileManager *fm = [NSFileManager defaultManager];
         NSError *error = nil;
         NSString *workDirectory = nil;
         NSURL *resultURL = nil;
         @try {
+            void (^report)(double, NSString *, NSString *) = ^(double value, NSString *stage, NSString *detail) {
+                if (progress) progress(value, stage ?: @"", detail ?: @"");
+            };
+            report(0.03, @"جارٍ التحضير...", @"التحقق من التطبيق وتهيئة مساحة العمل");
             if (bundlePath.length == 0 || ![self isDirectoryWithoutSymlinkAtPath:bundlePath]) {
                 error = [self errorWithCode:1 description:@"مسار التطبيق غير صالح أو غير متاح للقراءة"];
             }
@@ -322,6 +333,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 if (!error && ![self runCommand:self.cpPath args:@[@"-Rp", bundlePath, copiedBundle] workingDirectory:nil error:&error]) {
                     if (!error) error = [self errorWithCode:6 description:@"فشل نسخ التطبيق إلى مساحة التصدير"];
                 }
+                if (!error) report(0.22, @"جارٍ نسخ التطبيق...", @"تم نسخ Bundle الأصلي");
 
                 NSMutableArray<NSString *> *encryptedPaths = [NSMutableArray array];
                 NSArray<NSString *> *machOPaths = error ? @[] : [self machOPathsInBundle:copiedBundle encrypted:encryptedPaths];
@@ -406,6 +418,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                                 NSLog(@"[IPAExport] export continues with %lu encrypted non-critical nested Mach-O files", (unsigned long)remainingEncrypted.count);
                             }
                         }
+                        if (!error) report(0.48, @"جارٍ تجهيز الملفات...", @"اكتمل فحص وفك الملفات التنفيذية");
                     }
                 }
 
@@ -418,10 +431,12 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                 if (!error && decryptedAny && ![self removeCodeSignaturesFromBundle:copiedBundle error:&error]) {
                     if (!error) error = [self errorWithCode:27 description:@"تعذر إزالة التواقيع القديمة بعد فك التشفير"];
                 }
+                if (!error) report(0.66, @"جارٍ تنظيف التوقيعات...", @"تجهيز النسخة لإعادة الاستخدام");
 
                 NSString *copiedInfoPath = [copiedBundle stringByAppendingPathComponent:@"Info.plist"];
                 NSString *copiedExecutablePath = executableName.length > 0 ? [copiedBundle stringByAppendingPathComponent:executableName] : nil;
                 if (!error && (![fm fileExistsAtPath:copiedInfoPath] || ![fm isReadableFileAtPath:copiedExecutablePath])) error = [self errorWithCode:7 description:@"فشل التحقق من النسخة قبل إنشاء IPA"];
+                if (!error) report(0.78, @"جارٍ التحقق...", @"تم التحقق من Info.plist وملف التشغيل الرئيسي");
 
                 NSString *safeName = suggestedName.length > 0 ? suggestedName : (info[@"CFBundleIdentifier"] ?: bundleName.stringByDeletingPathExtension);
                 safeName = [safeName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
@@ -437,12 +452,14 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                     outputPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@ (%lu).ipa", stem, (unsigned long)collision++]];
                 }
                 if (!error) {
+                    report(0.88, @"جارٍ إنشاء IPA...", @"ضغط Payload إلى ملف IPA");
                     BOOL zipped = [self runCommand:self.zipPath args:@[@"-qry", outputPath, @"Payload"] workingDirectory:workDirectory error:&error];
                     NSDictionary *attrs = [fm attributesOfItemAtPath:outputPath error:nil];
                     if (!zipped || ![fm isReadableFileAtPath:outputPath] || [attrs[@"NSFileSize"] unsignedLongLongValue] < 22) {
                         if (!error) error = [self errorWithCode:8 description:@"تم إنشاء أرشيف غير صالح أو فارغ"];
                     } else {
                         resultURL = [NSURL fileURLWithPath:outputPath];
+                        report(0.98, @"جارٍ الإنهاء...", @"تم إنشاء الأرشيف والتحقق من حجمه");
                     }
                 }
             }
@@ -459,6 +476,14 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
 - (void)cloneApplicationAtPath:(NSString *)bundlePath
                    suggestedName:(NSString *)suggestedName
                  bundleIdentifier:(NSString *)bundleIdentifier
+                       completion:(IPAExportCompletion)completion {
+    [self cloneApplicationAtPath:bundlePath suggestedName:suggestedName bundleIdentifier:bundleIdentifier progress:nil completion:completion];
+}
+
+- (void)cloneApplicationAtPath:(NSString *)bundlePath
+                   suggestedName:(NSString *)suggestedName
+                 bundleIdentifier:(NSString *)bundleIdentifier
+                         progress:(IPAExportProgress)progress
                        completion:(IPAExportCompletion)completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSURL *cloneURL = nil;
@@ -489,10 +514,13 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
             }
 
             if (!error) {
+                if (progress) progress(0.02, @"جارٍ التحضير...", @"التحقق من بيانات النسخة");
                 dispatch_semaphore_t exportSemaphore = dispatch_semaphore_create(0);
                 __block NSURL *exportedURL = nil;
                 __block NSError *exportError = nil;
-                [self exportApplicationAtPath:bundlePath suggestedName:sourceName completion:^(NSURL *ipaURL, NSError *exportedError) {
+                [self exportApplicationAtPath:bundlePath suggestedName:sourceName progress:^(double value, NSString *stage, NSString *detail) {
+                    if (progress) progress(MIN(0.70, value * 0.70), stage, detail);
+                } completion:^(NSURL *ipaURL, NSError *exportedError) {
                     exportedURL = ipaURL;
                     exportError = exportedError;
                     dispatch_semaphore_signal(exportSemaphore);
@@ -510,6 +538,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                     if (!error && ![self runCommand:self.unzipPath args:@[@"-q", exportedURL.path, @"-d", workDirectory] workingDirectory:nil error:&error]) {
                         if (!error) error = [self errorWithCode:47 description:@"تعذر فتح IPA المجهز للتكرار"];
                     }
+                    if (!error && progress) progress(0.74, @"جارٍ فتح IPA...", @"تحضير Payload للتعديل");
                     NSString *cloneApp = nil;
                     if (!error) {
                         for (NSString *item in [fm contentsOfDirectoryAtPath:payloadDirectory error:nil]) {
@@ -560,6 +589,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                         }
                     }
 
+                    if (!error && progress) progress(0.82, @"جارٍ تحديث الهوية...", @"تحديث Bundle ID والامتدادات");
                     if (!error && ![self removeCodeSignaturesFromBundle:cloneApp error:&error]) {
                         if (!error) error = [self errorWithCode:51 description:@"تعذر إزالة التواقيع القديمة من النسخة المكررة"];
                     }
@@ -571,6 +601,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                         }
                     }
                     if (!error) {
+                        if (progress) progress(0.88, @"جارٍ تجهيز النسخة...", @"تحديث الملفات التنفيذية والصلاحيات");
                         NSString *safe = [sourceName stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
                         safe = [safe stringByReplacingOccurrencesOfString:@"\\" withString:@"-"];
                         safe = [safe stringByReplacingOccurrencesOfString:@":" withString:@"-"];
@@ -587,6 +618,7 @@ static NSString *IPAExportErrorDomain = @"com.aosaid.ipainstallerpro.export";
                             if (!error) error = [self errorWithCode:53 description:@"تعذر إعادة حزم IPA المكررة"];
                         } else {
                             cloneURL = [NSURL fileURLWithPath:outputPath];
+                            if (progress) progress(0.98, @"جارٍ التحقق النهائي...", @"اكتملت إعادة حزم IPA");
                         }
                     }
                     [fm removeItemAtURL:exportedURL error:nil];

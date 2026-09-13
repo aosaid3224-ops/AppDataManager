@@ -11,6 +11,7 @@
 @property (nonatomic, strong, readwrite) UIView *cardView;
 @property (nonatomic, strong) UIView *backdropView;
 @property (nonatomic, strong) UIActivityIndicatorView *spinner;
+@property (nonatomic, strong) UILabel *successMark;
 @property (nonatomic, strong) NSDate *startTime;
 @property (nonatomic, strong) NSTimer *statsTimer;
 @end
@@ -114,6 +115,16 @@
     [self.cardView addSubview:self.spinner];
     [self.spinner startAnimating];
 
+    self.successMark = [[UILabel alloc] init];
+    self.successMark.translatesAutoresizingMaskIntoConstraints = NO;
+    self.successMark.text = @"✓";
+    self.successMark.textColor = [UIColor colorWithRed:0.25 green:0.82 blue:0.55 alpha:1.0];
+    self.successMark.font = [UIFont systemFontOfSize:30 weight:UIFontWeightBold];
+    self.successMark.textAlignment = NSTextAlignmentCenter;
+    self.successMark.alpha = 0.0;
+    self.successMark.transform = CGAffineTransformMakeScale(0.4, 0.4);
+    [self.cardView addSubview:self.successMark];
+
     // Close Button (hidden by default, shown on completion)
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.closeButton.translatesAutoresizingMaskIntoConstraints = NO;
@@ -165,6 +176,11 @@
 
         [self.spinner.topAnchor constraintEqualToAnchor:self.statsLabel.bottomAnchor constant:14],
         [self.spinner.centerXAnchor constraintEqualToAnchor:self.cardView.centerXAnchor],
+
+        [self.successMark.centerXAnchor constraintEqualToAnchor:self.spinner.centerXAnchor],
+        [self.successMark.centerYAnchor constraintEqualToAnchor:self.spinner.centerYAnchor],
+        [self.successMark.widthAnchor constraintEqualToConstant:42],
+        [self.successMark.heightAnchor constraintEqualToConstant:42],
 
         [self.closeButton.topAnchor constraintEqualToAnchor:self.spinner.bottomAnchor constant:16],
         [self.closeButton.leadingAnchor constraintEqualToAnchor:self.cardView.leadingAnchor constant:24],
@@ -257,6 +273,15 @@
         self.detailLabel.text = message ?: @"";
         self.progressBar.progressTintColor = success ? [UIColor colorWithRed:0.25 green:0.82 blue:0.55 alpha:1.0] : [UIColor colorWithRed:0.95 green:0.35 blue:0.3 alpha:1.0];
         [self.progressBar setProgress:1.0 animated:YES];
+        if (success) {
+            self.successMark.alpha = 1.0;
+            [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.58 initialSpringVelocity:0.2 options:UIViewAnimationOptionCurveEaseOut animations:^{
+                self.successMark.transform = CGAffineTransformIdentity;
+                self.appIconView.transform = CGAffineTransformMakeScale(1.06, 1.06);
+            } completion:^(BOOL finished) {
+                [UIView animateWithDuration:0.24 animations:^{ self.appIconView.transform = CGAffineTransformIdentity; }];
+            }];
+        }
         self.closeButton.hidden = NO;
     });
 }

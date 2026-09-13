@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^IPAExportCompletion)(NSURL * _Nullable ipaURL, NSError * _Nullable error);
+typedef void (^IPAExportProgress)(double progress, NSString *stage, NSString *detail);
 
 @interface IPAExportManager : NSObject
 + (instancetype)sharedManager;
@@ -15,6 +16,11 @@ typedef void (^IPAExportCompletion)(NSURL * _Nullable ipaURL, NSError * _Nullabl
 - (void)cloneApplicationAtPath:(NSString *)bundlePath
                    suggestedName:(NSString *)suggestedName
                    bundleIdentifier:(NSString *)bundleIdentifier
+                       completion:(IPAExportCompletion)completion;
+- (void)cloneApplicationAtPath:(NSString *)bundlePath
+                   suggestedName:(NSString *)suggestedName
+                   bundleIdentifier:(NSString *)bundleIdentifier
+                         progress:(nullable IPAExportProgress)progress
                        completion:(IPAExportCompletion)completion;
 @end
 

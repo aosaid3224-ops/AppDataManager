@@ -316,26 +316,17 @@
         self.cloneProgressView = progressView;
         [progressView setAppIcon:self.appInfo.icon name:requestedName];
         [progressView showInView:self.view animated:YES];
-        NSArray<NSDictionary *> *cloneStages = @[
-            @{ @"p": @0.05, @"s": @"جارٍ التحضير...", @"d": @"تهيئة مساحة العمل للنسخ" },
-            @{ @"p": @0.20, @"s": @"جارٍ نسخ التطبيق...", @"d": @"نسخ Bundle الأصلي" },
-            @{ @"p": @0.40, @"s": @"جارٍ تعديل Info.plist...", @"d": @"تحديث Bundle ID واسم العرض" },
-            @{ @"p": @0.55, @"s": @"جارٍ تعديل الملفات...", @"d": @"تحديث الروابط الداخلية" },
-            @{ @"p": @0.75, @"s": @"جارٍ إعادة التوقيع...", @"d": @"توقيع النسخة بـ ldid" },
-            @{ @"p": @0.90, @"s": @"جارٍ إنشاء IPA...", @"d": @"ضغط النسخة إلى ملف .ipa" },
-            @{ @"p": @0.98, @"s": @"جارٍ التحقق...", @"d": @"التحقق من سلامة النسخة" }
-        ];
+        [progressView setStage:@"جارٍ التحضير..." detail:@"تهيئة مساحة العمل للنسخ" progress:0.02];
         __weak typeof(self) weakSelf = self;
-        [cloneStages enumerateObjectsUsingBlock:^(NSDictionary *stage, NSUInteger idx, BOOL *stop) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((idx + 1) * 0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                __strong typeof(weakSelf) strongSelf = weakSelf;
-                if (!strongSelf || strongSelf.cloneProgressGeneration != progressGeneration || !strongSelf.cloneProgressView) return;
-                [strongSelf.cloneProgressView setStage:stage[@"s"] detail:stage[@"d"] progress:[stage[@"p"] doubleValue]];
-            });
-        }];
         [[IPAExportManager sharedManager] cloneApplicationAtPath:self.appInfo.bundlePath
                                                    suggestedName:requestedName
                                                  bundleIdentifier:requestedID
+                                                         progress:^(double progress, NSString *stage, NSString *detail) {
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf || strongSelf.cloneProgressGeneration != progressGeneration || !strongSelf.cloneProgressView) return;
+            [strongSelf.cloneProgressView setStage:stage detail:detail progress:progress];
+            [strongSelf.cloneProgressView setStats:[NSString stringWithFormat:@"%.0f%% • جاري العمل", progress * 100.0]];
+        }
                                                        completion:^(NSURL *ipaURL, NSError *error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 sender.enabled = YES;
