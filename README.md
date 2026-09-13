@@ -7,9 +7,10 @@
 وايضا يتضمن عدة ادوات ومنها Spaider الاصليه ب اسم ipainstaller pro
 ونسخه اخرى اخره منها ممستقله مخصوصه لبيئه Relaxin\Roothide ب اسم spaider roothide 
 
-**Developer:** ZAIN  
+**Developer:** ZAIN **
 **X:** [@Zainqkvd]
-
+# القناة الرسميه على التليكرام :
+https://t.me/sedx12a
 ---
 
 ## Tools
