@@ -95,7 +95,7 @@
         @{@"title": @"معرّف الحزمة", @"value": self.appInfo.bundleID},
         @{@"title": @"الإصدار", @"value": self.appInfo.version},
         @{@"title": @"النوع", @"value": self.appInfo.isSystemApp ? @"نظام" : @"مستخدم"},
-        @{@"title": @"الحماية", @"value": self.appInfo.isProtected ? @"محمي ✓" : @"غير محمي"},
+        @{@"title": @"الحماية", @"value": self.appInfo.isProtected ? @"محمي ✓" : @"غير معروف"},
     ];
     for (NSDictionary *d in details) {
         UILabel *tl = [[UILabel alloc] initWithFrame:CGRectZero];
